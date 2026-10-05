@@ -1,18 +1,18 @@
 from datetime import date, datetime, timezone
 from typing import Any, Literal
-
 from pydantic import BaseModel, Field, field_validator
 
 
 class GeoPoint(BaseModel):
-    latitude: float
-    longitude: float
+    latitude: float = Field(ge=-90, le=90)
+    longitude: float = Field(ge=-180, le=180)
 
 
 class Parcel(BaseModel):
     id: str
     location: GeoPoint
-    area_ha: float | None = None
+    area_ha: float | None = Field(default=None, gt=0)
+    boundary: list[GeoPoint] = Field(default_factory=list)
     administrative_area: dict[str, str] = Field(default_factory=dict)
 
 
