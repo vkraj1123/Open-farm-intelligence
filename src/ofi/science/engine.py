@@ -32,3 +32,35 @@ def water_balance_observation(snapshot: FarmSnapshot, *, latitude_deg: float, we
         },
         quality=0.8, confidence=0.65, crop_cycle_id=snapshot.active_crop.id,
     )
+
+
+def derive_water_balance_from_snapshot(snapshot: FarmSnapshot) -> Observation | None:
+    weather_obs = next((o for o in snapshot.recent_observations if o.kind == "weather"), None)
+    soil_obs = next((o for o in snapshot.recent_observations if o.kind == "soil"), None)
+    if not weather_obs or not soil_obs:
+        return None
+
+    weather = WeatherDay(
+        date=snapshot.as_of.date(),
+        tmin_c=float(weather_obs.value.get("temperature_min_c", 25.0)),
+        tmax_c=float(weather_obs.value.get("temperature_max_c", weather_obs.value.get("temperature_c", 35.0))),
+        rh_min_pct=float(weather_obs.value.get("humidity_min_pct", 30.0)),
+        rh_max_pct=float(weather_obs.value.get("humidity_max_pct", weather_obs.value.get("humidity_pct", 60.0))),
+        wind_2m_ms=float(weather_obs.value.get("wind_speed_ms", 2.0)),
+        solar_mj_m2_day=float(weather_obs.value.get("solar_mj_m2_day", 20.0)),
+    )
+    moisture = float(soil_obs.value.get("moisture_pct", 20.0))
+    soil = SoilWaterProfile(
+        root_depth_m=float(soil_obs.value.get("root_depth_m", 0.6)),
+        field_capacity_pct=float(soil_obs.value.get("field_capacity_pct", 28.0)),
+        wilting_point_pct=float(soil_obs.value.get("wilting_point_pct", 12.0)),
+        initial_moisture_pct=moisture,
+    )
+    rain = float(weather_obs.value.get("rainfall_mm_last_7d", 0.0)) * 0.2
+    return water_balance_observation(
+        snapshot,
+        latitude_deg=snapshot.parcel_location.latitude,
+        weather=weather,
+        soil=soil,
+        effective_rain_mm=rain,
+    )
