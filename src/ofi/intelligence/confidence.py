@@ -3,56 +3,88 @@ from collections import defaultdict
 from ofi.domain.models import Evidence, Hypothesis
 
 
+RULES = {
+    "water_stress": {
+        "label": "Possible water stress",
+        "support": [
+            ("soil", "moisture_pct", lambda x: x < 25, 1.0),
+            ("weather", "rainfall_mm_next_3d", lambda x: x < 5, 0.8),
+            ("satellite", "ndvi_trend", lambda x: x < -0.05, 0.8),
+            ("satellite", "ndwi", lambda x: x < -0.10, 0.6),
+        ],
+        "contradict": [
+            ("soil", "moisture_pct", lambda x: x >= 35, 0.8),
+            ("weather", "rainfall_mm_last_7d", lambda x: x >= 30, 0.6),
+        ],
+    },
+    "disease_stress": {
+        "label": "Possible disease-related stress",
+        "support": [
+            ("image", "disease_signs", lambda x: bool(x), 1.0),
+            ("soil", "moisture_pct", lambda x: x >= 25, 0.4),
+            ("satellite", "ndvi_trend", lambda x: x < -0.05, 0.7),
+        ],
+        "contradict": [
+            ("image", "disease_signs", lambda x: not bool(x), 0.7),
+        ],
+    },
+}
+
+
 def rank_hypotheses(evidence: list[Evidence], observations: dict[str, dict]) -> list[Hypothesis]:
-    """Small deterministic MVP rule engine.
+    """Transparent MVP agronomic rule engine.
 
-    These scores are engineering heuristics, not calibrated agronomic probabilities.
-    They establish a testable substrate before scientific models are connected.
+    Thresholds are explicit engineering hypotheses, not calibrated probabilities.
+    Scientific crop/region models can replace these rules behind the same interface.
     """
-    by_obs = {item_id: observations[item_id] for item_id in observations}
-    scores = defaultdict(float)
-    support: dict[str, list[str]] = defaultdict(list)
-    contradict: dict[str, list[str]] = defaultdict(list)
+    by_kind: dict[str, list[dict]] = defaultdict(list)
+    for item in observations.values():
+        by_kind[item["kind"]].append(item)
 
-    def obs(kind: str, key: str, expected=None):
-        for item in by_obs.values():
-            if item.get("kind") == kind and key in item.get("value", {}):
-                value = item["value"][key]
-                if expected is None or expected(value):
-                    return item
-        return None
-
-    moisture = obs("soil", "moisture_pct", lambda x: x < 25)
-    rain = obs("weather", "rainfall_mm_next_3d", lambda x: x < 5)
-    ndvi = obs("satellite", "ndvi_trend", lambda x: x < -0.05)
-    disease = obs("image", "disease_signs", lambda x: bool(x))
-    adequate_moisture = obs("soil", "moisture_pct", lambda x: x >= 25)
-
-    for code, matches in {
-        "water_stress": [moisture, rain, ndvi],
-        "disease_stress": [disease, adequate_moisture, ndvi],
-    }.items():
-        for match in matches:
-            if match:
-                ev = next((e for e in evidence if match["id"] in e.observation_ids), None)
-                if ev:
-                    scores[code] += ev.score
-                    support[code].append(ev.id)
-
-    labels = {
-        "water_stress": "Possible water stress",
-        "disease_stress": "Possible disease-related stress",
+    evidence_by_observation = {
+        obs_id: item for item in evidence for obs_id in item.observation_ids
     }
-    results = []
-    for code, score in scores.items():
-        normalized = min(1.0, score / 2.4)
-        results.append(
-            Hypothesis(
-                code=code,
-                label=labels[code],
-                score=round(normalized, 3),
-                supporting_evidence=support[code],
-                contradicting_evidence=contradict[code],
-            )
-        )
-    return sorted(results, key=lambda x: x.score, reverse=True)
+    results: list[Hypothesis] = []
+
+    for code, rule in RULES.items():
+        support_ids: list[str] = []
+        contradict_ids: list[str] = []
+        support_score = 0.0
+        support_weight = 0.0
+        contradict_score = 0.0
+
+        for kind, key, predicate, weight in rule["support"]:
+            for item in by_kind.get(kind, []):
+                if key in item.get("value", {}) and predicate(item["value"][key]):
+                    ev = evidence_by_observation.get(item["id"])
+                    if ev:
+                        support_ids.append(ev.id)
+                        support_score += ev.score * weight
+                        support_weight += weight
+                        break
+
+        for kind, key, predicate, weight in rule["contradict"]:
+            for item in by_kind.get(kind, []):
+                if key in item.get("value", {}) and predicate(item["value"][key]):
+                    ev = evidence_by_observation.get(item["id"])
+                    if ev:
+                        contradict_ids.append(ev.id)
+                        contradict_score += ev.score * weight
+                        break
+
+        if support_weight == 0:
+            continue
+
+        support = support_score / sum(weight for _, _, _, weight in rule["support"])
+        penalty = min(0.8, contradict_score / 2.0)
+        score = max(0.0, min(1.0, support * (1.0 - penalty)))
+
+        results.append(Hypothesis(
+            code=code,
+            label=rule["label"],
+            score=round(score, 3),
+            supporting_evidence=support_ids,
+            contradicting_evidence=contradict_ids,
+        ))
+
+    return sorted(results, key=lambda item: item.score, reverse=True)
