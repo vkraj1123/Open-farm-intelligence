@@ -10,7 +10,7 @@ SOURCE_RELIABILITY = {
     "satellite": 0.85,
     "farmer_photo": 0.75,
     "farmer_report": 0.70,
-    "model": 0.60,
+    "model": 0.60,\n    "weather_model": 0.75,\n    "weather_station": 0.90,\n    "soil_lab": 0.95,\n    "soil_sensor": 0.85,\n    "sentinel": 0.85,
 }
 
 
