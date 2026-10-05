@@ -1,6 +1,7 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from ofi.domain.models import CaseOutcome, CropCycle, Farm, FarmCase, GeoPoint, Observation, Parcel
+from ofi.providers.base import EvidenceProvider
 from ofi.providers.registry import default_mock_registry
 from ofi.services.case_manager import CaseManager
 
@@ -17,6 +18,23 @@ def case():
         query="yellowing",
     )
 
+
+
+
+class HistoricalSatelliteProvider(EvidenceProvider):
+    name = "historical_satellite"
+    capabilities = frozenset({"satellite", "vegetation_index"})
+
+    def collect(self, snapshot):
+        now = datetime.now(timezone.utc)
+        return [
+            Observation(id="sat-old", kind="satellite", timestamp=now - timedelta(days=10),
+                        value={"ndvi": 0.58, "ndwi": 0.04}, source="sentinel",
+                        crop_cycle_id=snapshot.active_crop.id),
+            Observation(id="sat-new", kind="satellite", timestamp=now,
+                        value={"ndvi": 0.38, "ndwi": -0.12}, source="sentinel",
+                        crop_cycle_id=snapshot.active_crop.id),
+        ]
 
 def test_case_lifecycle():
     m = CaseManager()
@@ -51,6 +69,17 @@ def test_provider_evidence_enters_case_and_twin():
     snapshot = m.farm_twin.snapshot("f1")
     assert len(snapshot.recent_observations) == 3
 
+
+
+def test_historical_satellite_series_creates_derived_trend():
+    m = CaseManager()
+    m.create(case())
+    registry = default_mock_registry()
+    registry.register(HistoricalSatelliteProvider())
+    r = m.collect_evidence("c1", registry)
+    derived = [item for item in r.case.observations if item.source == "ofi_geospatial_analytics"]
+    assert len(derived) == 1
+    assert derived[0].value["ndvi_trend"] < 0
 
 def test_outcome_evidence_enters_twin():
     m = CaseManager()
