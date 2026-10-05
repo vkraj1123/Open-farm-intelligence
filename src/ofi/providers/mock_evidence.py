@@ -1,53 +1,50 @@
-from datetime import datetime, timezone
-
 from ofi.domain.models import FarmSnapshot, Observation
 from ofi.providers.base import EvidenceProvider
+from ofi.providers.normalizers import satellite_observation, soil_observation, weather_observation
 
 
 class MockWeatherProvider(EvidenceProvider):
     name = "mock_weather"
+    capabilities = frozenset({"weather"})
 
     def collect(self, snapshot: FarmSnapshot) -> list[Observation]:
-        return [Observation(
-            id=f"{self.name}-{snapshot.farm_id}",
-            kind="weather",
-            timestamp=datetime.now(timezone.utc),
-            value={"rainfall_mm_next_3d": 0.0, "temperature_c": 34.0},
-            source="weather_model",
-            quality=0.8,
-            confidence=0.8,
-            
-            crop_cycle_id=snapshot.active_crop.id,
-        )]
+        return [weather_observation(snapshot, provider=self.name, payload={
+            "source": "weather_model",
+            "rainfall_mm_next_3d": 0.0,
+            "rainfall_mm_last_7d": 4.0,
+            "temperature_c": 34.0,
+            "humidity_pct": 31.0,
+            "quality": 0.8,
+            "confidence": 0.8,
+        })]
 
 
 class MockSatelliteProvider(EvidenceProvider):
     name = "mock_satellite"
+    capabilities = frozenset({"satellite", "vegetation_index"})
 
     def collect(self, snapshot: FarmSnapshot) -> list[Observation]:
-        return [Observation(
-            id=f"{self.name}-{snapshot.farm_id}",
-            kind="satellite",
-            timestamp=datetime.now(timezone.utc),
-            value={"ndvi_trend": -0.08, "ndvi": 0.41},
-            source="satellite",
-            quality=0.85,
-            confidence=0.85,
-            crop_cycle_id=snapshot.active_crop.id,
-        )]
+        return [satellite_observation(snapshot, provider=self.name, payload={
+            "source": "satellite",
+            "ndvi_trend": -0.08,
+            "ndvi": 0.41,
+            "ndwi": -0.18,
+            "cloud_cover_pct": 8.0,
+            "quality": 0.85,
+            "confidence": 0.85,
+        })]
 
 
 class MockSoilProvider(EvidenceProvider):
     name = "mock_soil"
+    capabilities = frozenset({"soil"})
 
     def collect(self, snapshot: FarmSnapshot) -> list[Observation]:
-        return [Observation(
-            id=f"{self.name}-{snapshot.farm_id}",
-            kind="soil",
-            timestamp=datetime.now(timezone.utc),
-            value={"moisture_pct": 19.0, "ph": 7.8},
-            source="soil_lab",
-            quality=0.75,
-            confidence=0.7,
-            crop_cycle_id=snapshot.active_crop.id,
-        )]
+        return [soil_observation(snapshot, provider=self.name, payload={
+            "source": "soil_lab",
+            "moisture_pct": 19.0,
+            "ph": 7.8,
+            "organic_carbon_pct": 0.38,
+            "quality": 0.75,
+            "confidence": 0.7,
+        })]
