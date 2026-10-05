@@ -1,10 +1,13 @@
 from datetime import date, datetime, timezone
 from typing import Any, Literal
-from pydantic import BaseModel, Field
+
+from pydantic import BaseModel, Field, field_validator
+
 
 class GeoPoint(BaseModel):
     latitude: float
     longitude: float
+
 
 class Parcel(BaseModel):
     id: str
@@ -12,12 +15,14 @@ class Parcel(BaseModel):
     area_ha: float | None = None
     administrative_area: dict[str, str] = Field(default_factory=dict)
 
+
 class LandParty(BaseModel):
     party_id: str
     role: Literal["owner", "cultivator", "manager", "lessor"]
     valid_from: date
     valid_to: date | None = None
     verification: Literal["declared", "corroborated", "verified"] = "declared"
+
 
 class ProductionContract(BaseModel):
     """Optional seasonal production relationship; it does not imply possession."""
@@ -28,6 +33,7 @@ class ProductionContract(BaseModel):
     valid_to: date
     arrangement: str | None = None
 
+
 class CropCycle(BaseModel):
     id: str
     crop: str
@@ -35,7 +41,8 @@ class CropCycle(BaseModel):
     sowing_date: date | None = None
     harvest_date: date | None = None
     irrigation_method: str | None = None
-    status: Literal["planned","active","harvested","failed"] = "active"
+    status: Literal["planned", "active", "harvested", "failed"] = "active"
+
 
 class Farm(BaseModel):
     id: str
@@ -45,7 +52,12 @@ class Farm(BaseModel):
     parties: list[LandParty] = Field(default_factory=list)
     contracts: list[ProductionContract] = Field(default_factory=list)
 
-ObservationKind = Literal["farmer_report","image","soil","weather","satellite","market","sensor","expert"]
+
+ObservationKind = Literal[
+    "farmer_report", "image", "soil", "weather", "satellite",
+    "market", "sensor", "expert"
+]
+
 
 class Observation(BaseModel):
     id: str
@@ -58,7 +70,22 @@ class Observation(BaseModel):
     location: GeoPoint | None = None
     crop_cycle_id: str | None = None
 
-CaseStatus = Literal["reported","triaged","actioned","observing","resolved","escalated"]
+    @field_validator("timestamp")
+    @classmethod
+    def timestamp_must_be_timezone_aware(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("timestamp must be timezone-aware")
+        return value.astimezone(timezone.utc)
+
+
+class CaseStatus:
+    REPORTED = "reported"
+    TRIAGED = "triaged"
+    ACTIONED = "actioned"
+    OBSERVING = "observing"
+    RESOLVED = "resolved"
+    ESCALATED = "escalated"
+
 
 class CaseEvent(BaseModel):
     id: str
@@ -67,14 +94,23 @@ class CaseEvent(BaseModel):
     actor: str
     payload: dict[str, Any] = Field(default_factory=dict)
 
+
 class FarmCase(BaseModel):
     id: str
     farm: Farm
     query: str
     observations: list[Observation] = Field(default_factory=list)
-    status: CaseStatus = "reported"
+    status: Literal["reported", "triaged", "actioned", "observing", "resolved", "escalated"] = "reported"
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    @field_validator("created_at", "updated_at")
+    @classmethod
+    def case_timestamps_aware(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("case timestamps must be timezone-aware")
+        return value.astimezone(timezone.utc)
+
 
 class Evidence(BaseModel):
     id: str
@@ -84,6 +120,7 @@ class Evidence(BaseModel):
     freshness: float = Field(ge=0.0, le=1.0)
     quality: float = Field(ge=0.0, le=1.0)
 
+
 class Hypothesis(BaseModel):
     code: str
     label: str
@@ -91,7 +128,9 @@ class Hypothesis(BaseModel):
     supporting_evidence: list[str] = Field(default_factory=list)
     contradicting_evidence: list[str] = Field(default_factory=list)
 
-Action = Literal["ADVISE","ASK_FARMER","REQUEST_TEST","ESCALATE_EXPERT","ROUTE_SERVICE"]
+
+Action = Literal["ADVISE", "ASK_FARMER", "REQUEST_TEST", "ESCALATE_EXPERT", "ROUTE_SERVICE"]
+
 
 class Decision(BaseModel):
     action: Action
@@ -100,17 +139,20 @@ class Decision(BaseModel):
     next_questions: list[str] = Field(default_factory=list)
     services: list[str] = Field(default_factory=list)
 
+
 class ReasoningResult(BaseModel):
     case_id: str
     evidence: list[Evidence]
     hypotheses: list[Hypothesis]
     decision: Decision
 
+
 class CaseOutcome(BaseModel):
-    outcome: Literal["improved","unchanged","worsened","resolved","unknown"]
+    outcome: Literal["improved", "unchanged", "worsened", "resolved", "unknown"]
     observed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     notes: str = ""
     evidence: list[Observation] = Field(default_factory=list)
+
 
 class CaseRecord(BaseModel):
     case: FarmCase
@@ -118,10 +160,12 @@ class CaseRecord(BaseModel):
     outcome: CaseOutcome | None = None
     events: list[CaseEvent] = Field(default_factory=list)
 
+
 class FarmSnapshot(BaseModel):
     """Time-bounded view used by reasoning engines."""
     farm_id: str
     as_of: datetime
     active_crop: CropCycle
     active_parties: list[LandParty] = Field(default_factory=list)
+    active_contracts: list[ProductionContract] = Field(default_factory=list)
     recent_observations: list[Observation] = Field(default_factory=list)
