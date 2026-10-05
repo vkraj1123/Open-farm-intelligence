@@ -60,7 +60,7 @@ def test_outcome_evidence_enters_twin():
         source="farmer_report",
     )
     m.record_outcome("c1", CaseOutcome(outcome="resolved", evidence=[evidence]))
-    assert snapshot := m.farm_twin.snapshot("f1")
+    snapshot = m.farm_twin.snapshot("f1")
     assert snapshot.recent_observations[0].id == "outcome-1"
 
 
