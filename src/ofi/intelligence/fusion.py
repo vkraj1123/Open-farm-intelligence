@@ -20,38 +20,24 @@ SOURCE_RELIABILITY = {
 
 
 def freshness(timestamp: datetime, kind: str) -> float:
-    age_days = max(
-        0.0,
-        (datetime.now(timezone.utc) - timestamp.astimezone(timezone.utc)).total_seconds() / 86400,
-    )
-    windows = {
-        "weather": 3.0,
-        "sensor": 7.0,
-        "soil": 60.0,
-        "satellite": 14.0,
-        "image": 7.0,
-        "farmer_report": 7.0,
-        "market": 2.0,
-    }
-    window = windows.get(kind, 14.0)
+    age_days = max(0.0, (datetime.now(timezone.utc) - timestamp.astimezone(timezone.utc)).total_seconds() / 86400)
+    window = {
+        "weather": 3.0, "sensor": 7.0, "soil": 60.0, "satellite": 14.0,
+        "image": 7.0, "farmer_report": 7.0, "market": 2.0,
+    }.get(kind, 14.0)
     return max(0.0, 1.0 - age_days / window)
 
 
 def make_evidence(case: FarmCase) -> list[Evidence]:
-    return [
-        Evidence(
+    result = []
+    for obs in case.observations:
+        fresh = freshness(obs.timestamp, obs.kind)
+        result.append(Evidence(
             id=f"ev-{obs.id}",
             proposition=f"observation:{obs.id}",
             observation_ids=[obs.id],
-            score=round(
-                SOURCE_RELIABILITY.get(obs.source, 0.60)
-                * obs.quality
-                * obs.confidence
-                * freshness(obs.timestamp, obs.kind),
-                3,
-            ),
-            freshness=round(freshness(obs.timestamp, obs.kind), 3),
+            score=round(SOURCE_RELIABILITY.get(obs.source, 0.60) * obs.quality * obs.confidence * fresh, 3),
+            freshness=round(fresh, 3),
             quality=obs.quality,
-        )
-        for obs in case.observations
-    ]
+        ))
+    return result
