@@ -11,10 +11,12 @@ RULES = {
             ("weather", "rainfall_mm_next_3d", lambda x: x < 5, 0.8),
             ("satellite", "ndvi_trend", lambda x: x < -0.05, 0.8),
             ("satellite", "ndwi", lambda x: x < -0.10, 0.6),
+            ("model", "stress_fraction", lambda x: x >= 0.5, 1.0),
         ],
         "contradict": [
             ("soil", "moisture_pct", lambda x: x >= 35, 0.8),
             ("weather", "rainfall_mm_last_7d", lambda x: x >= 30, 0.6),
+            ("model", "stress_fraction", lambda x: x < 0.2, 0.8),
         ],
     },
     "disease_stress": {
