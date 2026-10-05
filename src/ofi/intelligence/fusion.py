@@ -43,3 +43,30 @@ def make_evidence(case: FarmCase) -> list[Evidence]:
             quality=obs.quality,
         ))
     return result
+
+
+def value_conflict(observations: list, *, kind: str, field: str, tolerance: float = 0.15) -> bool:
+    """Detect material disagreement between recent observations of one variable."""
+    values = [
+        float(obs.value[field])
+        for obs in observations
+        if obs.kind == kind and field in obs.value
+    ]
+    if len(values) < 2:
+        return False
+    baseline = max(abs(sum(values) / len(values)), 1.0)
+    return (max(values) - min(values)) / baseline > tolerance
+
+
+def conflict_flags(case: FarmCase) -> list[str]:
+    """Return explicit data-quality conflicts for downstream reasoning."""
+    flags: list[str] = []
+    for kind, field, tolerance in (
+        ("weather", "temperature_c", 0.25),
+        ("weather", "rainfall_mm_last_7d", 0.50),
+        ("satellite", "ndvi", 0.20),
+        ("soil", "moisture_pct", 0.25),
+    ):
+        if value_conflict(case.observations, kind=kind, field=field, tolerance=tolerance):
+            flags.append(f"{kind}.{field}:source_disagreement")
+    return flags
