@@ -4,6 +4,7 @@ from math import cos, radians
 from typing import Iterable
 
 from ofi.domain.models import FarmCase, GeoPoint, Observation
+from ofi.geospatial.spatial import parcel_spatial_alignment
 
 
 @dataclass(frozen=True)
@@ -76,6 +77,12 @@ def comparable_pairs(observations: Iterable[Observation], *, kind: str, field: s
 
 def alignment_flags(case: FarmCase) -> list[str]:
     flags: list[str] = []
+
+    # First validate every geolocated observation against the actual farm parcel.
+    for observation in case.observations:
+        result = parcel_spatial_alignment(case.farm.parcel, observation.location)
+        flags.extend(f"parcel:{observation.id}:{reason}" for reason in result.reasons if reason == "observation_outside_parcel")
+
     checks = (
         ("weather", "temperature_c"),
         ("weather", "rainfall_mm_last_7d"),
