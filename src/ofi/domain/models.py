@@ -69,6 +69,9 @@ class Observation(BaseModel):
     confidence: float = Field(default=1.0, ge=0.0, le=1.0)
     location: GeoPoint | None = None
     crop_cycle_id: str | None = None
+    unit: str | None = None
+    spatial_scope: str | None = None
+    provenance: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("timestamp")
     @classmethod
