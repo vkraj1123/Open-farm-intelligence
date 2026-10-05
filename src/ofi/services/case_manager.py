@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from ofi.domain.models import CaseEvent, CaseOutcome, CaseRecord, FarmCase, Observation
 from ofi.intelligence.orchestrator import Orchestrator
 from ofi.geospatial.analytics import derived_ndvi_observation
-from ofi.science.engine import derive_water_balance_from_snapshot
+from ofi.science.registry import default_scientific_registry
 from ofi.twin.farm_twin import FarmTwinStore
 
 
@@ -33,10 +33,11 @@ class InMemoryCaseStore:
 
 
 class CaseManager:
-    def __init__(self, store=None, orchestrator=None, farm_twin=None):
+    def __init__(self, store=None, orchestrator=None, farm_twin=None, scientific_models=None):
         self.store = store or InMemoryCaseStore()
         self.orchestrator = orchestrator or Orchestrator()
         self.farm_twin = farm_twin or FarmTwinStore()
+        self.scientific_models = scientific_models or default_scientific_registry()
 
     def create(self, case: FarmCase) -> CaseRecord:
         record = self.store.create(case)
@@ -77,11 +78,11 @@ class CaseManager:
             record.case.observations.append(derived)
             self.farm_twin.add_observation(record.case.farm.id, derived)
             self._event(record, "observation_derived", "geospatial_analytics", {"observation_id": derived.id})
-        scientific = derive_water_balance_from_snapshot(self.farm_twin.snapshot(record.case.farm.id))
-        if scientific:
+        scientific_observations = self.scientific_models.run(self.farm_twin.snapshot(record.case.farm.id))
+        for scientific in scientific_observations:
             record.case.observations.append(scientific)
             self.farm_twin.add_observation(record.case.farm.id, scientific)
-            self._event(record, "observation_derived", "scientific_engine", {"observation_id": scientific.id})
+            self._event(record, "observation_derived", scientific.source, {"observation_id": scientific.id})
         if observations and record.case.status == "reported":
             record.case.status = "triaged"
         return self.store.save(record)
