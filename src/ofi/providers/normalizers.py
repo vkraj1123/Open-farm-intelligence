@@ -28,7 +28,8 @@ def weather_observation(snapshot: FarmSnapshot, *, provider: str, payload: dict[
         quality=float(payload.get("quality", 1.0)),
         confidence=float(payload.get("confidence", 1.0)),
         crop_cycle_id=snapshot.active_crop.id,
-        spatial_scope="farm",
+        unit=payload.get("unit"),
+        spatial_scope=payload.get("spatial_scope", "farm"),
         provenance={"provider": provider, "provider_source_id": payload.get("source_id")},
     )
 
