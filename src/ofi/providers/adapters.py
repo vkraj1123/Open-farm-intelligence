@@ -43,6 +43,8 @@ class WeatherAdapter(EvidenceProvider):
             "source_id": envelope.source_id,
             "quality": envelope.quality,
             "confidence": envelope.confidence,
+            "unit": envelope.unit,
+            "spatial_scope": envelope.spatial_scope,
         })]
 
 
