@@ -75,7 +75,7 @@ def rank_hypotheses(evidence: list[Evidence], observations: dict[str, dict]) -> 
         if support_weight == 0:
             continue
 
-        support = support_score / sum(weight for _, _, _, weight in rule["support"])
+        support = support_score / support_weight
         penalty = min(0.8, contradict_score / 2.0)
         score = max(0.0, min(1.0, support * (1.0 - penalty)))
 
