@@ -43,8 +43,8 @@ def escalate(case_id: str):
 def collect_evidence(farm_id: str):
     try:
         snapshot = case_manager.farm_twin.snapshot(farm_id)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail="farm not found") from exc
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(status_code=404, detail="farm snapshot not available") from exc
     observations = provider_registry.collect(snapshot)
     for observation in observations:
         case_manager.farm_twin.add_observation(farm_id, observation)
