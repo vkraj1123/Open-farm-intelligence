@@ -1,6 +1,6 @@
 from ofi.domain.models import Decision, FarmCase, ReasoningResult
 from ofi.intelligence.confidence import rank_hypotheses
-from ofi.intelligence.fusion import make_evidence
+from ofi.intelligence.fusion import conflict_flags, make_evidence
 
 
 class Orchestrator:
@@ -11,6 +11,22 @@ class Orchestrator:
             for item in case.observations
         }
         hypotheses = rank_hypotheses(evidence, observations)
+        conflicts = conflict_flags(case)
+
+        if conflicts:
+            decision = Decision(
+                action="REQUEST_TEST",
+                confidence=max(0.0, (hypotheses[0].score if hypotheses else 0.0) * 0.7),
+                rationale="Evidence cannot yet be treated as directly comparable: " + "; ".join(conflicts[:4]),
+                next_questions=["Can the measurement location and observation time be confirmed?"],
+                services=["evidence_verification"],
+            )
+            return ReasoningResult(
+                case_id=case.id,
+                evidence=evidence,
+                hypotheses=hypotheses,
+                decision=decision,
+            )
 
         if not hypotheses:
             decision = Decision(
