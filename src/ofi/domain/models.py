@@ -55,7 +55,7 @@ class Farm(BaseModel):
 
 ObservationKind = Literal[
     "farmer_report", "image", "soil", "weather", "satellite",
-    "market", "sensor", "expert"
+    "market", "sensor", "model", "expert"
 ]
 
 
