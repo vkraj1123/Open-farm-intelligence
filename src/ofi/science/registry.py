@@ -1,6 +1,6 @@
 from ofi.domain.models import FarmSnapshot, Observation
 from ofi.science.engine import derive_water_balance_from_snapshot
-from ofi.science.models import ScientificModel
+from ofi.science.models import ScientificModel, ScientificModelRegistry
 
 
 class FAO56WaterBalanceModel(ScientificModel):
@@ -11,5 +11,5 @@ class FAO56WaterBalanceModel(ScientificModel):
         return derive_water_balance_from_snapshot(snapshot)
 
 
-def default_scientific_registry() -> list[ScientificModel]:
-    return [FAO56WaterBalanceModel()]
+def default_scientific_registry() -> ScientificModelRegistry:
+    return ScientificModelRegistry([FAO56WaterBalanceModel()])
