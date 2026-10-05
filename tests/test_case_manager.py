@@ -61,8 +61,9 @@ def test_provider_evidence_enters_case_and_twin():
     m = CaseManager()
     m.create(case())
     r = m.collect_evidence("c1", default_mock_registry())
-    assert len(r.case.observations) == 3
-    assert {item.kind for item in r.case.observations} == {"weather", "satellite", "soil"}
+    assert len(r.case.observations) == 5
+    assert {"weather", "satellite", "soil", "model"} <= {item.kind for item in r.case.observations}
+    assert any(item.source == "ofi_geospatial_analytics" for item in r.case.observations)
     reasoning = m.reason("c1")
     assert reasoning.latest_reasoning is not None
     assert reasoning.latest_reasoning.decision.action in {"REQUEST_TEST", "ESCALATE_EXPERT", "ADVISE"}
@@ -107,3 +108,12 @@ def test_duplicate_case_rejected():
     except ValueError:
         return
     assert False
+
+
+def test_provider_provenance_is_retained():
+    m = CaseManager()
+    m.create(case())
+    r = m.collect_evidence("c1", default_mock_registry())
+    external = [item for item in r.case.observations if item.kind == "weather"][0]
+    assert external.spatial_scope == "farm"
+    assert external.provenance["provider"] == "mock_weather"
