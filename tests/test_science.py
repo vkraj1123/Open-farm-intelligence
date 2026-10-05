@@ -1,5 +1,5 @@
 from datetime import date, datetime, timezone
-from ofi.domain.models import CropCycle, FarmSnapshot
+from ofi.domain.models import CropCycle, FarmSnapshot, GeoPoint
 from ofi.science.engine import crop_stage_fraction, water_balance_observation
 from ofi.science.water_balance import SoilWaterProfile, WeatherDay, crop_coefficient, fao56_et0, root_zone_water_balance
 
@@ -21,6 +21,7 @@ def test_root_zone_balance_exposes_stress():
 def test_scientific_observation_is_traceable():
     snapshot = FarmSnapshot(
         farm_id="f1", as_of=datetime(2026,8,15,tzinfo=timezone.utc),
+        parcel_location=GeoPoint(latitude=27.0, longitude=72.0),
         active_crop=CropCycle(id="c1", crop="bajra", sowing_date=date(2026,7,1), harvest_date=date(2026,10,15)),
     )
     obs = water_balance_observation(
