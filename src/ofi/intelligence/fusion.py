@@ -16,6 +16,7 @@ SOURCE_RELIABILITY = {
     "farmer_photo": 0.75,
     "farmer_report": 0.70,
     "model": 0.60,
+    "ofi_fao56_water_balance": 0.80,
 }
 
 
@@ -23,7 +24,7 @@ def freshness(timestamp: datetime, kind: str) -> float:
     age_days = max(0.0, (datetime.now(timezone.utc) - timestamp.astimezone(timezone.utc)).total_seconds() / 86400)
     window = {
         "weather": 3.0, "sensor": 7.0, "soil": 60.0, "satellite": 14.0,
-        "image": 7.0, "farmer_report": 7.0, "market": 2.0,
+        "image": 7.0, "farmer_report": 7.0, "market": 2.0,\n        "model": 7.0,
     }.get(kind, 14.0)
     return max(0.0, 1.0 - age_days / window)
 
