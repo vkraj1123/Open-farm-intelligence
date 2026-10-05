@@ -166,6 +166,7 @@ class FarmSnapshot(BaseModel):
     farm_id: str
     as_of: datetime
     active_crop: CropCycle
+    parcel_location: GeoPoint
     active_parties: list[LandParty] = Field(default_factory=list)
     active_contracts: list[ProductionContract] = Field(default_factory=list)
     recent_observations: list[Observation] = Field(default_factory=list)
