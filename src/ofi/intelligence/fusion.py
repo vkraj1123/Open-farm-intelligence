@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 
 from ofi.domain.models import Evidence, FarmCase
+from ofi.intelligence.alignment import alignment_flags
 
 
 SOURCE_RELIABILITY = {
@@ -69,4 +70,4 @@ def conflict_flags(case: FarmCase) -> list[str]:
     ):
         if value_conflict(case.observations, kind=kind, field=field, tolerance=tolerance):
             flags.append(f"{kind}.{field}:source_disagreement")
-    return flags
+    return sorted(set(flags + alignment_flags(case)))
