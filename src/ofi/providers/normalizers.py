@@ -14,30 +14,43 @@ def _timestamp(value: str | datetime | None) -> datetime:
     return value.astimezone(timezone.utc)
 
 
+def _provenance(provider: str, payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "provider": provider,
+        "provider_source_id": payload.get("source_id"),
+        **({"scene_id": payload["scene_id"]} if "scene_id" in payload else {}),
+    }
+
+
 def weather_observation(snapshot: FarmSnapshot, *, provider: str, payload: dict[str, Any]) -> Observation:
     timestamp = _timestamp(payload.get("timestamp"))
+    supported = (
+        "rainfall_mm_next_3d", "rainfall_mm_last_7d", "temperature_c",
+        "temperature_min_c", "temperature_max_c", "humidity_pct",
+        "humidity_min_pct", "humidity_max_pct", "solar_mj_m2_day",
+        "wind_speed_ms",
+    )
     return Observation(
         id=f"{provider}-weather-{snapshot.farm_id}-{int(timestamp.timestamp())}",
         kind="weather",
         timestamp=timestamp,
         source=payload.get("source", provider),
-        value={key: payload[key] for key in (
-            "rainfall_mm_next_3d", "rainfall_mm_last_7d", "temperature_c",
-            "humidity_pct", "wind_speed_ms"
-        ) if key in payload},
+        value={key: payload[key] for key in supported if key in payload},
         quality=float(payload.get("quality", 1.0)),
         confidence=float(payload.get("confidence", 1.0)),
+        location=snapshot.parcel_location,
         crop_cycle_id=snapshot.active_crop.id,
         unit=payload.get("unit"),
         spatial_scope=payload.get("spatial_scope", "farm"),
-        provenance={"provider": provider, "provider_source_id": payload.get("source_id")},
+        provenance=_provenance(provider, payload),
     )
 
 
 def satellite_observation(snapshot: FarmSnapshot, *, provider: str, payload: dict[str, Any]) -> Observation:
     timestamp = _timestamp(payload.get("timestamp"))
     value = {key: payload[key] for key in (
-        "ndvi", "ndvi_trend", "evi", "ndwi", "cloud_cover_pct"
+        "ndvi", "ndvi_trend", "evi", "ndwi", "cloud_cover_pct",
+        "mean_ndvi", "median_ndvi", "valid_pixel_fraction",
     ) if key in payload}
     if not value:
         raise ValueError("satellite payload contains no supported vegetation indices")
@@ -49,9 +62,10 @@ def satellite_observation(snapshot: FarmSnapshot, *, provider: str, payload: dic
         value=value,
         quality=float(payload.get("quality", 1.0)),
         confidence=float(payload.get("confidence", 1.0)),
+        location=snapshot.parcel_location,
         crop_cycle_id=snapshot.active_crop.id,
-        spatial_scope="farm",
-        provenance={"provider": provider, "provider_source_id": payload.get("source_id")},
+        spatial_scope=payload.get("spatial_scope", "farm"),
+        provenance=_provenance(provider, payload),
     )
 
 
@@ -71,7 +85,8 @@ def soil_observation(snapshot: FarmSnapshot, *, provider: str, payload: dict[str
         value=value,
         quality=float(payload.get("quality", 1.0)),
         confidence=float(payload.get("confidence", 1.0)),
+        location=snapshot.parcel_location,
         crop_cycle_id=snapshot.active_crop.id,
-        spatial_scope="farm",
-        provenance={"provider": provider, "provider_source_id": payload.get("source_id")},
+        spatial_scope=payload.get("spatial_scope", "farm"),
+        provenance=_provenance(provider, payload),
     )
