@@ -78,8 +78,11 @@ def test_historical_satellite_series_creates_derived_trend():
     registry.register(HistoricalSatelliteProvider())
     r = m.collect_evidence("c1", registry)
     derived = [item for item in r.case.observations if item.source == "ofi_geospatial_analytics"]
+    scientific = [item for item in r.case.observations if item.source == "ofi_fao56_water_balance"]
     assert len(derived) == 1
+    assert len(scientific) == 1
     assert derived[0].value["ndvi_trend"] < 0
+    assert scientific[0].value["stress_fraction"] >= 0
 
 def test_outcome_evidence_enters_twin():
     m = CaseManager()
