@@ -1,12 +1,14 @@
 from abc import ABC, abstractmethod
-from datetime import datetime
 from typing import Any
 
 from ofi.domain.models import FarmSnapshot, Observation
 
 
 class EvidenceProvider(ABC):
+    """Adapter boundary between an external evidence source and OFI."""
+
     name: str
+    capabilities: frozenset[str] = frozenset()
 
     @abstractmethod
     def collect(self, snapshot: FarmSnapshot) -> list[Observation]:
@@ -30,6 +32,12 @@ class ProviderRegistry:
         except KeyError as exc:
             raise KeyError(f"provider not registered: {name}") from exc
 
+    def providers_for(self, capability: str) -> list[EvidenceProvider]:
+        return [
+            provider for provider in self._providers.values()
+            if capability in provider.capabilities
+        ]
+
     def collect(self, snapshot: FarmSnapshot) -> list[Observation]:
         observations: list[Observation] = []
         for provider in self._providers.values():
@@ -38,7 +46,7 @@ class ProviderRegistry:
 
 
 class AgricultureProvider(ABC):
-    """Network/service adapter retained for VISTAAR-style request/response APIs."""
+    """Network/service adapter retained for VISTAAR-style APIs."""
 
     @abstractmethod
     def search(self, payload: dict[str, Any]) -> dict[str, Any]:
