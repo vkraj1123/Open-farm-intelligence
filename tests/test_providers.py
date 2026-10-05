@@ -35,3 +35,33 @@ def test_satellite_normalizer_rejects_empty_payload():
         assert "vegetation indices" in str(exc)
         return
     assert False
+
+
+def test_canonical_satellite_adapter_preserves_provenance():
+    from ofi.providers.adapters import SatelliteAdapter
+
+    adapter = SatelliteAdapter(lambda _: {
+        "timestamp": "2026-08-15T06:00:00+00:00",
+        "source": "sentinel-2",
+        "source_id": "S2_TILE_001",
+        "values": {"ndvi": 0.52, "ndwi": -0.05, "cloud_cover_pct": 4},
+        "spatial_scope": "parcel",
+        "quality": 0.92,
+        "confidence": 0.88,
+    })
+    obs = adapter.collect(snapshot())[0]
+    assert obs.source == "sentinel-2"
+    assert obs.provenance["provider_source_id"] == "S2_TILE_001"
+    assert obs.spatial_scope == "parcel"
+    assert obs.value["ndvi"] == 0.52
+
+
+def test_canonical_adapter_rejects_missing_required_value():
+    from ofi.providers.adapters import AdapterError, canonical_payload
+
+    try:
+        canonical_payload({"source": "test"}, required=("ndvi",))
+    except AdapterError as exc:
+        assert "ndvi" in str(exc)
+        return
+    assert False
