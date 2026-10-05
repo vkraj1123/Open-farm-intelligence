@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
-from ofi.domain.models import CropCycle, FarmSnapshot, Observation
+from ofi.domain.models import CropCycle, FarmSnapshot, GeoPoint, Observation
 from ofi.geospatial.analytics import derived_ndvi_observation, ndvi_trend, vegetation_stress_index
 
 
@@ -28,6 +28,7 @@ def test_derived_ndvi_observation():
     now = datetime.now(timezone.utc)
     snapshot = FarmSnapshot(
         farm_id="farm-1", as_of=now,
+        parcel_location=GeoPoint(latitude=27.0, longitude=72.0),
         active_crop=CropCycle(id="crop-1", crop="bajra"),
         recent_observations=observations(),
     )
