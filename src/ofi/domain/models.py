@@ -1,7 +1,7 @@
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class GeoPoint(BaseModel):
@@ -43,11 +43,34 @@ class Observation(BaseModel):
     confidence: float = Field(default=1.0, ge=0.0, le=1.0)
 
 
+CaseStatus = Literal[
+    "reported", "triaged", "actioned", "observing", "resolved", "escalated"
+]
+
+
+class CaseEvent(BaseModel):
+    id: str
+    event_type: str
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    actor: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
 class FarmCase(BaseModel):
     id: str
     farm: Farm
     query: str
     observations: list[Observation] = Field(default_factory=list)
+    status: CaseStatus = "reported"
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    events: list[CaseEvent] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_timestamps(self):
+        if self.updated_at < self.created_at:
+            raise ValueError("updated_at cannot precede created_at")
+        return self
 
 
 class Evidence(BaseModel):
@@ -85,3 +108,16 @@ class ReasoningResult(BaseModel):
     evidence: list[Evidence]
     hypotheses: list[Hypothesis]
     decision: Decision
+
+
+class CaseOutcome(BaseModel):
+    outcome: Literal["improved", "unchanged", "worsened", "resolved", "unknown"]
+    observed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    notes: str = ""
+    evidence: list[Observation] = Field(default_factory=list)
+
+
+class CaseRecord(BaseModel):
+    case: FarmCase
+    latest_reasoning: ReasoningResult | None = None
+    outcome: CaseOutcome | None = None
