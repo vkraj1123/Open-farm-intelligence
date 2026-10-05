@@ -32,3 +32,9 @@ def test_scientific_observation_is_traceable():
     assert obs.kind == "model"
     assert obs.source == "ofi_fao56_water_balance"
     assert obs.value["stress_fraction"] > 0
+
+
+def test_scientific_model_registry_discovers_water_balance():
+    from ofi.science.registry import default_scientific_registry
+    registry = default_scientific_registry()
+    assert registry.models_for("water_balance")[0].name == "ofi_fao56_water_balance"
