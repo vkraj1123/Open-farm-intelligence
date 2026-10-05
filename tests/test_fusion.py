@@ -45,3 +45,30 @@ def test_alignment_rejects_spatially_distant_observations():
     result = align(a, b, max_distance_km=5)
     assert result.usable is False
     assert "spatial_mismatch" in result.reasons
+
+
+def test_alignment_flags_reject_observation_outside_parcel():
+    from ofi.intelligence.fusion import conflict_flags
+
+    now = datetime.now(timezone.utc)
+    farm = Farm(
+        id="f", farmer_id="u",
+        parcel=Parcel(
+            id="p", location=GeoPoint(latitude=27, longitude=72),
+            boundary=[
+                GeoPoint(latitude=27, longitude=72),
+                GeoPoint(latitude=27, longitude=72.01),
+                GeoPoint(latitude=27.01, longitude=72.01),
+                GeoPoint(latitude=27.01, longitude=72),
+            ],
+        ),
+        crop_cycle=CropCycle(crop="bajra"),
+    )
+    case = FarmCase(id="c", farm=farm, query="test", observations=[
+        Observation(
+            id="s1", kind="soil", timestamp=now,
+            value={"moisture_pct": 20}, source="soil_lab",
+            location=GeoPoint(latitude=27.02, longitude=72.02),
+        )
+    ])
+    assert any(flag.startswith("parcel:s1:observation_outside_parcel") for flag in conflict_flags(case))
