@@ -1,15 +1,12 @@
-from datetime import date, datetime
+from datetime import date
 from statistics import mean
 from typing import Iterable
 
-from ofi.domain.models import CropCycle, Observation
+from ofi.domain.models import CropCycle, FarmSnapshot, Observation
 
 
 def ndvi_trend(observations: Iterable[Observation]) -> float | None:
-    """Estimate a simple linear NDVI slope per observation interval.
-
-    This is a screening indicator, not a crop-growth model.
-    """
+    """Estimate NDVI slope per day; screening indicator, not a crop-growth model."""
     points = sorted(
         (
             (obs.timestamp, float(obs.value["ndvi"]))
@@ -33,7 +30,6 @@ def ndvi_trend(observations: Iterable[Observation]) -> float | None:
 
 
 def vegetation_stress_index(observations: Iterable[Observation]) -> float | None:
-    """Combine recent NDVI and NDWI into a bounded screening indicator."""
     recent = sorted(
         (
             obs for obs in observations
@@ -59,3 +55,25 @@ def crop_age_days(crop_cycle: CropCycle, as_of: date) -> int | None:
     if crop_cycle.sowing_date is None or as_of < crop_cycle.sowing_date:
         return None
     return (as_of - crop_cycle.sowing_date).days
+
+
+def derived_ndvi_observation(snapshot: FarmSnapshot) -> Observation | None:
+    trend = ndvi_trend(snapshot.recent_observations)
+    if trend is None:
+        return None
+    return Observation(
+        id=f"ofi-derived-ndvi-trend-{snapshot.farm_id}-{int(snapshot.as_of.timestamp())}",
+        kind="satellite",
+        timestamp=snapshot.as_of,
+        source="ofi_geospatial_analytics",
+        value={
+            "ndvi_trend": trend,
+            "derived_from": [
+                obs.id for obs in snapshot.recent_observations
+                if obs.kind == "satellite" and "ndvi" in obs.value
+            ],
+        },
+        quality=0.8,
+        confidence=0.75,
+        crop_cycle_id=snapshot.active_crop.id,
+    )
