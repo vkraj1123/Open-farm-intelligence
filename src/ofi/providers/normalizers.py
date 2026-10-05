@@ -49,6 +49,8 @@ def satellite_observation(snapshot: FarmSnapshot, *, provider: str, payload: dic
         quality=float(payload.get("quality", 1.0)),
         confidence=float(payload.get("confidence", 1.0)),
         crop_cycle_id=snapshot.active_crop.id,
+        spatial_scope="farm",
+        provenance={"provider": provider, "provider_source_id": payload.get("source_id")},
     )
 
 
@@ -69,4 +71,6 @@ def soil_observation(snapshot: FarmSnapshot, *, provider: str, payload: dict[str
         quality=float(payload.get("quality", 1.0)),
         confidence=float(payload.get("confidence", 1.0)),
         crop_cycle_id=snapshot.active_crop.id,
+        spatial_scope="farm",
+        provenance={"provider": provider, "provider_source_id": payload.get("source_id")},
     )
