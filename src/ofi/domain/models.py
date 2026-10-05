@@ -10,19 +10,42 @@ class Parcel(BaseModel):
     id: str
     location: GeoPoint
     area_ha: float | None = None
+    administrative_area: dict[str, str] = Field(default_factory=dict)
+
+class LandParty(BaseModel):
+    party_id: str
+    role: Literal["owner", "cultivator", "manager", "lessor"]
+    valid_from: date
+    valid_to: date | None = None
+    verification: Literal["declared", "corroborated", "verified"] = "declared"
+
+class ProductionContract(BaseModel):
+    """Optional seasonal production relationship; it does not imply possession."""
+    contract_id: str
+    owner_id: str
+    cultivator_id: str
+    valid_from: date
+    valid_to: date
+    arrangement: str | None = None
 
 class CropCycle(BaseModel):
+    id: str
     crop: str
     season: str | None = None
     sowing_date: date | None = None
+    harvest_date: date | None = None
+    irrigation_method: str | None = None
+    status: Literal["planned","active","harvested","failed"] = "active"
 
 class Farm(BaseModel):
     id: str
     farmer_id: str
     parcel: Parcel
     crop_cycle: CropCycle
+    parties: list[LandParty] = Field(default_factory=list)
+    contracts: list[ProductionContract] = Field(default_factory=list)
 
-ObservationKind = Literal["farmer_report","image","soil","weather","satellite","market","sensor"]
+ObservationKind = Literal["farmer_report","image","soil","weather","satellite","market","sensor","expert"]
 
 class Observation(BaseModel):
     id: str
@@ -32,6 +55,8 @@ class Observation(BaseModel):
     source: str
     quality: float = Field(default=1.0, ge=0.0, le=1.0)
     confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+    location: GeoPoint | None = None
+    crop_cycle_id: str | None = None
 
 CaseStatus = Literal["reported","triaged","actioned","observing","resolved","escalated"]
 
@@ -92,3 +117,11 @@ class CaseRecord(BaseModel):
     latest_reasoning: ReasoningResult | None = None
     outcome: CaseOutcome | None = None
     events: list[CaseEvent] = Field(default_factory=list)
+
+class FarmSnapshot(BaseModel):
+    """Time-bounded view used by reasoning engines."""
+    farm_id: str
+    as_of: datetime
+    active_crop: CropCycle
+    active_parties: list[LandParty] = Field(default_factory=list)
+    recent_observations: list[Observation] = Field(default_factory=list)
