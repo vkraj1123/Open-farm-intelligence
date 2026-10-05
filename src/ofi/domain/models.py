@@ -1,25 +1,20 @@
 from datetime import date, datetime, timezone
 from typing import Any, Literal
-
-from pydantic import BaseModel, Field, model_validator
-
+from pydantic import BaseModel, Field
 
 class GeoPoint(BaseModel):
     latitude: float
     longitude: float
-
 
 class Parcel(BaseModel):
     id: str
     location: GeoPoint
     area_ha: float | None = None
 
-
 class CropCycle(BaseModel):
     crop: str
     season: str | None = None
     sowing_date: date | None = None
-
 
 class Farm(BaseModel):
     id: str
@@ -27,11 +22,7 @@ class Farm(BaseModel):
     parcel: Parcel
     crop_cycle: CropCycle
 
-
-ObservationKind = Literal[
-    "farmer_report", "image", "soil", "weather", "satellite", "market", "sensor"
-]
-
+ObservationKind = Literal["farmer_report","image","soil","weather","satellite","market","sensor"]
 
 class Observation(BaseModel):
     id: str
@@ -42,11 +33,7 @@ class Observation(BaseModel):
     quality: float = Field(default=1.0, ge=0.0, le=1.0)
     confidence: float = Field(default=1.0, ge=0.0, le=1.0)
 
-
-CaseStatus = Literal[
-    "reported", "triaged", "actioned", "observing", "resolved", "escalated"
-]
-
+CaseStatus = Literal["reported","triaged","actioned","observing","resolved","escalated"]
 
 class CaseEvent(BaseModel):
     id: str
@@ -54,7 +41,6 @@ class CaseEvent(BaseModel):
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     actor: str
     payload: dict[str, Any] = Field(default_factory=dict)
-
 
 class FarmCase(BaseModel):
     id: str
@@ -64,14 +50,6 @@ class FarmCase(BaseModel):
     status: CaseStatus = "reported"
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    events: list[CaseEvent] = Field(default_factory=list)
-
-    @model_validator(mode="after")
-    def validate_timestamps(self):
-        if self.updated_at < self.created_at:
-            raise ValueError("updated_at cannot precede created_at")
-        return self
-
 
 class Evidence(BaseModel):
     id: str
@@ -81,7 +59,6 @@ class Evidence(BaseModel):
     freshness: float = Field(ge=0.0, le=1.0)
     quality: float = Field(ge=0.0, le=1.0)
 
-
 class Hypothesis(BaseModel):
     code: str
     label: str
@@ -89,11 +66,7 @@ class Hypothesis(BaseModel):
     supporting_evidence: list[str] = Field(default_factory=list)
     contradicting_evidence: list[str] = Field(default_factory=list)
 
-
-Action = Literal[
-    "ADVISE", "ASK_FARMER", "REQUEST_TEST", "ESCALATE_EXPERT", "ROUTE_SERVICE"
-]
-
+Action = Literal["ADVISE","ASK_FARMER","REQUEST_TEST","ESCALATE_EXPERT","ROUTE_SERVICE"]
 
 class Decision(BaseModel):
     action: Action
@@ -102,22 +75,20 @@ class Decision(BaseModel):
     next_questions: list[str] = Field(default_factory=list)
     services: list[str] = Field(default_factory=list)
 
-
 class ReasoningResult(BaseModel):
     case_id: str
     evidence: list[Evidence]
     hypotheses: list[Hypothesis]
     decision: Decision
 
-
 class CaseOutcome(BaseModel):
-    outcome: Literal["improved", "unchanged", "worsened", "resolved", "unknown"]
+    outcome: Literal["improved","unchanged","worsened","resolved","unknown"]
     observed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     notes: str = ""
     evidence: list[Observation] = Field(default_factory=list)
-
 
 class CaseRecord(BaseModel):
     case: FarmCase
     latest_reasoning: ReasoningResult | None = None
     outcome: CaseOutcome | None = None
+    events: list[CaseEvent] = Field(default_factory=list)
