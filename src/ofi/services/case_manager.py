@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 
 from ofi.domain.models import CaseEvent, CaseOutcome, CaseRecord, FarmCase, Observation
 from ofi.intelligence.orchestrator import Orchestrator
+from ofi.geospatial.analytics import derived_ndvi_observation
 from ofi.twin.farm_twin import FarmTwinStore
 
 
@@ -69,6 +70,11 @@ class CaseManager:
             record.case.observations.append(observation)
             self.farm_twin.add_observation(record.case.farm.id, observation)
             self._event(record, "observation_added", actor, {"observation_id": observation.id, "source": observation.source})
+        derived = derived_ndvi_observation(self.farm_twin.snapshot(record.case.farm.id))
+        if derived:
+            record.case.observations.append(derived)
+            self.farm_twin.add_observation(record.case.farm.id, derived)
+            self._event(record, "observation_derived", "geospatial_analytics", {"observation_id": derived.id})
         if observations and record.case.status == "reported":
             record.case.status = "triaged"
         return self.store.save(record)
