@@ -65,3 +65,25 @@ def test_canonical_adapter_rejects_missing_required_value():
         assert "ndvi" in str(exc)
         return
     assert False
+
+
+def test_weather_normalizer_preserves_scientific_fields():
+    from ofi.providers.normalizers import weather_observation
+
+    obs = weather_observation(snapshot(), provider="weather", payload={
+        "timestamp": "2026-08-15T06:00:00+00:00",
+        "rainfall_mm_last_7d": 12,
+        "temperature_c": 34,
+        "temperature_min_c": 25,
+        "temperature_max_c": 39,
+        "humidity_min_pct": 28,
+        "humidity_max_pct": 62,
+        "solar_mj_m2_day": 23.5,
+        "wind_speed_ms": 3.2,
+        "spatial_scope": "parcel",
+    })
+    assert obs.value["temperature_min_c"] == 25
+    assert obs.value["temperature_max_c"] == 39
+    assert obs.value["solar_mj_m2_day"] == 23.5
+    assert obs.spatial_scope == "parcel"
+    assert obs.location == snapshot().parcel_location
