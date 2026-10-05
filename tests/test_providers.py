@@ -1,6 +1,6 @@
 from datetime import date, datetime, timezone
 
-from ofi.domain.models import CropCycle, FarmSnapshot
+from ofi.domain.models import CropCycle, FarmSnapshot, GeoPoint
 from ofi.providers.base import ProviderRegistry
 from ofi.providers.mock_evidence import MockSatelliteProvider, MockSoilProvider, MockWeatherProvider
 from ofi.providers.normalizers import satellite_observation
@@ -10,6 +10,7 @@ def snapshot():
     return FarmSnapshot(
         farm_id="farm-1",
         as_of=datetime.now(timezone.utc),
+        parcel_location=GeoPoint(latitude=27.0, longitude=72.0),
         active_crop=CropCycle(id="crop-1", crop="bajra", sowing_date=date(2026, 7, 1)),
     )
 
