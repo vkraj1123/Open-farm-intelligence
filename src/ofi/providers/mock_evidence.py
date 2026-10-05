@@ -16,7 +16,7 @@ class MockWeatherProvider(EvidenceProvider):
             source="weather_model",
             quality=0.8,
             confidence=0.8,
-            location=snapshot.active_parties[0].__class__ and None,
+            
             crop_cycle_id=snapshot.active_crop.id,
         )]
 
