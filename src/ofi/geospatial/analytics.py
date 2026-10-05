@@ -6,23 +6,17 @@ from ofi.domain.models import CropCycle, FarmSnapshot, Observation
 
 
 def ndvi_trend(observations: Iterable[Observation]) -> float | None:
-    """Estimate NDVI slope per day; screening indicator, not a crop-growth model."""
     points = sorted(
-        (
-            (obs.timestamp, float(obs.value["ndvi"]))
-            for obs in observations
-            if obs.kind == "satellite" and "ndvi" in obs.value
-        ),
+        ((obs.timestamp, float(obs.value["ndvi"])) for obs in observations
+         if obs.kind == "satellite" and "ndvi" in obs.value),
         key=lambda item: item[0],
     )
     if len(points) < 2:
         return None
-
     start = points[0][0]
     xs = [(timestamp - start).total_seconds() / 86400.0 for timestamp, _ in points]
     ys = [value for _, value in points]
-    x_mean = mean(xs)
-    y_mean = mean(ys)
+    x_mean, y_mean = mean(xs), mean(ys)
     denominator = sum((x - x_mean) ** 2 for x in xs)
     if denominator == 0:
         return 0.0
@@ -31,17 +25,12 @@ def ndvi_trend(observations: Iterable[Observation]) -> float | None:
 
 def vegetation_stress_index(observations: Iterable[Observation]) -> float | None:
     recent = sorted(
-        (
-            obs for obs in observations
-            if obs.kind == "satellite"
-            and ("ndvi" in obs.value or "ndwi" in obs.value)
-        ),
-        key=lambda item: item.timestamp,
-        reverse=True,
+        (obs for obs in observations if obs.kind == "satellite"
+         and ("ndvi" in obs.value or "ndwi" in obs.value)),
+        key=lambda item: item.timestamp, reverse=True,
     )
     if not recent:
         return None
-
     latest = recent[0].value
     signals = []
     if "ndvi" in latest:
@@ -61,18 +50,16 @@ def derived_ndvi_observation(snapshot: FarmSnapshot) -> Observation | None:
     trend = ndvi_trend(snapshot.recent_observations)
     if trend is None:
         return None
+    source_ids = [
+        obs.id for obs in snapshot.recent_observations
+        if obs.kind == "satellite" and "ndvi" in obs.value
+    ]
     return Observation(
         id=f"ofi-derived-ndvi-trend-{snapshot.farm_id}-{int(snapshot.as_of.timestamp())}",
         kind="satellite",
         timestamp=snapshot.as_of,
         source="ofi_geospatial_analytics",
-        value={
-            "ndvi_trend": trend,
-            "derived_from": [
-                obs.id for obs in snapshot.recent_observations
-                if obs.kind == "satellite" and "ndvi" in obs.value
-            ],
-        },
+        value={"ndvi_trend": trend, "derived_from": source_ids},
         quality=0.8,
         confidence=0.75,
         crop_cycle_id=snapshot.active_crop.id,
