@@ -1,9 +1,10 @@
 from fastapi import FastAPI, HTTPException
 from ofi.domain.models import CaseOutcome, FarmCase, Observation, CaseRecord
 from ofi.services.case_manager import CaseManager
+from ofi.providers.registry import default_mock_registry
 
 app = FastAPI(title="Open Farm Intelligence", version="0.2.0", description="Farm-level intelligence and orchestration layer for Indian agriculture.")
-case_manager = CaseManager()
+case_manager = CaseManager()\nprovider_registry = default_mock_registry()
 
 @app.get("/health")
 def health(): return {"status":"ok"}
@@ -37,3 +38,14 @@ def record_outcome(case_id: str, outcome: CaseOutcome):
 def escalate(case_id: str):
     try: return case_manager.escalate(case_id)
     except KeyError as exc: raise HTTPException(status_code=404, detail="case not found") from exc
+
+@app.post("/farms/{farm_id}/collect-evidence")
+def collect_evidence(farm_id: str):
+    try:
+        snapshot = case_manager.farm_twin.snapshot(farm_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="farm not found") from exc
+    observations = provider_registry.collect(snapshot)
+    for observation in observations:
+        case_manager.farm_twin.add_observation(farm_id, observation)
+    return {"farm_id": farm_id, "observations": observations}
