@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 
 from ofi.domain.models import CaseEvent, CaseOutcome, CaseRecord, FarmCase, Observation
+from ofi.twin.farm_twin import FarmTwinStore
 from ofi.intelligence.orchestrator import Orchestrator
 
 
@@ -18,12 +19,12 @@ class InMemoryCaseStore:
 
 
 class CaseManager:
-    def __init__(self, store=None, orchestrator=None):
-        self.store = store or InMemoryCaseStore(); self.orchestrator = orchestrator or Orchestrator()
+    def __init__(self, store=None, orchestrator=None, farm_twin=None):
+        self.store = store or InMemoryCaseStore(); self.orchestrator = orchestrator or Orchestrator(); self.farm_twin = farm_twin or FarmTwinStore()
     def create(self, case):
-        record=self.store.create(case); self._event(record,"reported","system",{"query":case.query}); return self.store.save(record)
+        record=self.store.create(case); self.farm_twin.upsert(case.farm); self._event(record,"reported","system",{"query":case.query}); return self.store.save(record)
     def add_observation(self, case_id, observation, actor="system"):
-        record=self.store.get(case_id); record.case.observations.append(observation)
+        record=self.store.get(case_id); record.case.observations.append(observation); self.farm_twin.add_observation(record.case.farm.id, observation)
         self._event(record,"observation_added",actor,{"observation_id":observation.id})
         if record.case.status=="reported": record.case.status="triaged"
         return self.store.save(record)
