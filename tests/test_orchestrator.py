@@ -35,3 +35,20 @@ def test_uncertain_case_escalates():
     ])
     result = Orchestrator().reason(case)
     assert result.decision.action == "ASK_FARMER"
+
+
+def test_orchestrator_does_not_advise_on_temporally_misaligned_evidence():
+    from datetime import datetime, timedelta, timezone
+    from ofi.domain.models import Farm, FarmCase, CropCycle, GeoPoint, Observation, Parcel
+    from ofi.intelligence.orchestrator import Orchestrator
+
+    now = datetime.now(timezone.utc)
+    farm = Farm(id="f-align", farmer_id="u", parcel=Parcel(id="p", location=GeoPoint(latitude=27, longitude=72)),
+                crop_cycle=CropCycle(id="c", crop="bajra"))
+    case = FarmCase(id="case-align", farm=farm, query="water stress", observations=[
+        Observation(id="w-now", kind="weather", timestamp=now, value={"temperature_c": 35}, source="weather_station"),
+        Observation(id="w-old", kind="weather", timestamp=now-timedelta(days=10), value={"temperature_c": 10}, source="weather_model"),
+    ])
+    result = Orchestrator().reason(case)
+    assert result.decision.action == "REQUEST_TEST"
+    assert "temporal_mismatch" in result.decision.rationale
