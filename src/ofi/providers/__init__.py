@@ -1,0 +1,1 @@
+"""External agricultural network adapters."""
