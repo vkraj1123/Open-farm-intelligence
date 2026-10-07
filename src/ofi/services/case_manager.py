@@ -189,13 +189,11 @@ class CaseManager:
         self._event(record, "escalated", actor, {"services": ["KVK", "agriculture_extension"]})
         return self.store.save(record)
 
-    @staticmethod
-    def _event(record, event_type, actor, payload):
-        record.case.events.append(
-            CaseEvent(
-                id=f"evt-{len(record.case.events) + 1}",
-                event_type=event_type,
-                actor=actor,
-                payload=payload,
-            )
+    def _event(self, record, event_type, actor, payload):
+        event = CaseEvent(
+            id=f"evt-{len(record.case.events) + 1}",
+            event_type=event_type,
+            actor=actor,
+            payload=payload,
         )
+        self.store.append_event(record.case.id, event)
