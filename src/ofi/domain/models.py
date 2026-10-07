@@ -165,11 +165,16 @@ class CaseRecord(BaseModel):
 
 
 class FarmSnapshot(BaseModel):
-    """Time-bounded view used by reasoning engines."""
+    """Time-bounded view used by reasoning engines.
+
+    The parcel boundary is carried through the snapshot so spatial evidence
+    validation does not have to reconstruct farm geometry from provider data.
+    """
     farm_id: str
     as_of: datetime
     active_crop: CropCycle
     parcel_location: GeoPoint
+    parcel_boundary: list[GeoPoint] = Field(default_factory=list)
     active_parties: list[LandParty] = Field(default_factory=list)
     active_contracts: list[ProductionContract] = Field(default_factory=list)
     recent_observations: list[Observation] = Field(default_factory=list)
