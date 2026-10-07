@@ -5,9 +5,10 @@ from ofi.intelligence.orchestrator import Orchestrator
 from ofi.geospatial.analytics import derived_ndvi_observation
 from ofi.science.registry import default_scientific_registry
 from ofi.twin.farm_twin import FarmTwinStore
+from ofi.services.case_repository import CaseRepository, InMemoryCaseRepository
 
 
-class InMemoryCaseStore:
+class InMemoryCaseStore(InMemoryCaseRepository):
     """MVP store; replaceable by Postgres/PostGIS later."""
 
     def __init__(self):
@@ -34,7 +35,7 @@ class InMemoryCaseStore:
 
 class CaseManager:
     def __init__(self, store=None, orchestrator=None, farm_twin=None, scientific_models=None):
-        self.store = store or InMemoryCaseStore()
+        self.store: CaseRepository = store or InMemoryCaseRepository()
         self.orchestrator = orchestrator or Orchestrator()
         self.farm_twin = farm_twin or FarmTwinStore()
         self.scientific_models = scientific_models or default_scientific_registry()
