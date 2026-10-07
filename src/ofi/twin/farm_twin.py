@@ -91,6 +91,7 @@ class FarmTwinStore:
             as_of=moment,
             active_crop=active_crop,
             parcel_location=self.get(farm_id).parcel.location,
+            parcel_boundary=list(self.get(farm_id).parcel.boundary),
             active_parties=parties,
             active_contracts=contracts,
             recent_observations=sorted(
