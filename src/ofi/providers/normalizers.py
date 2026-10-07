@@ -54,7 +54,7 @@ def satellite_observation(snapshot: FarmSnapshot, *, provider: str, payload: dic
     timestamp = _timestamp(payload.get("timestamp"))
     value = {key: payload[key] for key in (
         "ndvi", "ndvi_trend", "evi", "ndwi", "cloud_cover_pct",
-        "mean_ndvi", "median_ndvi", "valid_pixel_fraction",
+        "mean_ndvi", "median_ndvi", "valid_pixel_fraction", "cloud_fraction", "pixel_count",
     ) if key in payload}
     if not value:
         raise ValueError("satellite payload contains no supported vegetation indices")
