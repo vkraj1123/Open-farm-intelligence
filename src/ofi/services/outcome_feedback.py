@@ -11,6 +11,7 @@ Effectiveness = Literal["positive", "neutral", "negative", "unknown"]
 @dataclass(frozen=True)
 class ActionOutcome:
     action_id: str
+    service: str
     case_id: str
     farm_id: str
     effectiveness: Effectiveness
@@ -55,6 +56,8 @@ class OutcomeFeedbackService:
         if action.id != outcome.action_id:
             raise ValueError("action and outcome IDs do not match")
         signal = self.SIGNALS[outcome.effectiveness]
+        if outcome.service != action.service:
+            raise ValueError("action and outcome services do not match")
         return LearningSignal(
             action_id=action.id,
             service=action.service,
@@ -72,7 +75,7 @@ class OutcomeFeedbackService:
         weights: dict[str, float] = {}
         for outcome in outcomes:
             signal = self.SIGNALS[outcome.effectiveness]
-            service = outcome.action_id.split("-action-", 1)[0]
+            service = outcome.service
             totals[service] = totals.get(service, 0.0) + signal * outcome.attribution_confidence
             weights[service] = weights.get(service, 0.0) + outcome.attribution_confidence
         return {
