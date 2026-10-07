@@ -1,5 +1,7 @@
 from datetime import date, datetime, timezone
 
+from ofi.twin.repository import FarmTwinRepository
+
 from ofi.domain.models import (
     CropCycle,
     Farm,
@@ -10,7 +12,7 @@ from ofi.domain.models import (
 )
 
 
-class FarmTwinStore:
+class FarmTwinStore(FarmTwinRepository):
     """MVP temporal farm twin; persistence can move to PostGIS later."""
 
     def __init__(self):
