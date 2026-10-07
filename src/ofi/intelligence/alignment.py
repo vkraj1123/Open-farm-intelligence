@@ -5,6 +5,7 @@ from typing import Iterable
 
 from ofi.domain.models import FarmCase, GeoPoint, Observation
 from ofi.geospatial.spatial import parcel_spatial_alignment
+from ofi.intelligence.units import compatible_units
 
 
 @dataclass(frozen=True)
@@ -38,9 +39,7 @@ def spatial_match(a: Observation, b: Observation, max_distance_km: float = 5.0) 
 
 
 def unit_match(a: Observation, b: Observation) -> float:
-    if not a.unit or not b.unit:
-        return 1.0
-    return 1.0 if a.unit == b.unit else 0.0
+    return 1.0 if compatible_units(a.unit, b.unit) else 0.0
 
 
 def align(a: Observation, b: Observation, *, time_window_hours: float = 72, max_distance_km: float = 5.0) -> Alignment:
