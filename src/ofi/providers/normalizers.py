@@ -18,7 +18,11 @@ def _provenance(provider: str, payload: dict[str, Any]) -> dict[str, Any]:
     return {
         "provider": provider,
         "provider_source_id": payload.get("source_id"),
-        **({"scene_id": payload["scene_id"]} if "scene_id" in payload else {}),
+        **({"scene_id": payload["scene_id"]} if payload.get("scene_id") else {}),
+        **({"tile_id": payload["tile_id"]} if payload.get("tile_id") else {}),
+        **({"acquisition_time": payload["acquisition_time"]} if payload.get("acquisition_time") else {}),
+        **({"cloud_cover_pct": payload["cloud_cover_pct"]} if "cloud_cover_pct" in payload else {}),
+        **({"footprint": payload["footprint"]} if payload.get("footprint") else {}),
     }
 
 
