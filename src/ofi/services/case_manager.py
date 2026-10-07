@@ -87,6 +87,28 @@ class CaseManager:
             record.case.status = "triaged"
         return self.store.save(record)
 
+    def plan_actions(self, case_id: str, action_planner=None):
+        """Create auditable action requests from the latest reasoning."""
+        from ofi.services.action_planning import ActionPlanningService
+
+        record = self.store.get(case_id)
+        if record.latest_reasoning is None:
+            raise ValueError(f"case has no reasoning result: {case_id}")
+        planner = action_planner or ActionPlanningService()
+        plan = planner.plan(
+            case_id=record.case.id,
+            farm_id=record.case.farm.id,
+            decision=record.latest_reasoning.decision,
+        )
+        for request in plan.requests:
+            self._event(record, "action_planned", "action_planner", {
+                "action_id": request.id,
+                "service": request.service,
+                "action": request.action,
+                "urgency": request.urgency,
+            })
+        return self.store.save(record), plan
+
     def record_outcome(self, case_id: str, outcome: CaseOutcome, actor: str = "farmer") -> CaseRecord:
         record = self.store.get(case_id)
         record.outcome = outcome
