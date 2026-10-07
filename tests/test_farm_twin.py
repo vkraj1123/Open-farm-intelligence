@@ -51,3 +51,17 @@ def test_crop_history_switches_active_cycle():
     ))
     snap = twin.snapshot("farm-1", datetime(2026,12,1,tzinfo=timezone.utc))
     assert snap.active_crop.crop == "wheat"
+
+
+def test_snapshot_carries_parcel_boundary():
+    twin = FarmTwinStore()
+    farm = make_farm()
+    farm.parcel.boundary = [
+        GeoPoint(latitude=27.0, longitude=72.0),
+        GeoPoint(latitude=27.0, longitude=72.01),
+        GeoPoint(latitude=27.01, longitude=72.01),
+        GeoPoint(latitude=27.01, longitude=72.0),
+    ]
+    twin.upsert(farm)
+    snap = twin.snapshot("farm-1", datetime(2026, 7, 15, tzinfo=timezone.utc))
+    assert len(snap.parcel_boundary) == 4
