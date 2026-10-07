@@ -119,6 +119,23 @@ class CaseManager:
         self._event(record, "outcome_recorded", actor, {"outcome": outcome.outcome})
         return self.store.save(record)
 
+    def record_action_outcome(self, case_id: str, action, outcome, feedback_service=None):
+        """Attach an observed action outcome and generate a bounded learning signal."""
+        from ofi.services.outcome_feedback import OutcomeFeedbackService
+
+        record = self.store.get(case_id)
+        service = feedback_service or OutcomeFeedbackService()
+        signal = service.evaluate(action, outcome)
+        self._event(record, "action_outcome_recorded", "outcome_feedback", {
+            "action_id": action.id,
+            "service": action.service,
+            "effectiveness": outcome.effectiveness,
+            "attribution_confidence": outcome.attribution_confidence,
+            "learning_signal": signal.signal,
+            "learning_weight": signal.weight,
+        })
+        return self.store.save(record), signal
+
     def escalate(self, case_id: str, actor: str = "system") -> CaseRecord:
         record = self.store.get(case_id)
         record.case.status = "escalated"
