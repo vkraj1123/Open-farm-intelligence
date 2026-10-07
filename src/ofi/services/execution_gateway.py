@@ -41,12 +41,14 @@ class ExecutionRequest:
     actor: ActorIdentity
     consent: ConsentGrant | None
     idempotency_key: str
+    provider_id: str
 
 
 @dataclass(frozen=True)
 class ExecutionReceipt:
     action_id: str
     service: str
+    provider_id: str
     status: ExecutionStatus
     external_reference: str | None
     submitted_at: datetime
@@ -57,6 +59,7 @@ class ExecutionReceipt:
 
 class ServiceAdapter(Protocol):
     name: str
+    provider_id: str
 
     def execute(self, request: ExecutionRequest) -> ExecutionReceipt:
         ...
@@ -67,17 +70,22 @@ class ExecutionError(Exception):
 
 
 class ServiceExecutionGateway:
-    """Safe execution boundary with idempotent, traceable transactions."""
+    """Safe execution boundary with provider-specific routing and idempotency."""
 
     def __init__(self, adapters: list[ServiceAdapter] | None = None):
-        self._adapters = {adapter.name: adapter for adapter in adapters or []}
+        self._adapters = {}
+        self._service_adapters = {}
+        for adapter in adapters or []:
+            self.register(adapter)
+
         self._transactions: dict[str, ServiceTransaction] = {}
         self._idempotency: dict[str, str] = {}
 
     def register(self, adapter: ServiceAdapter) -> None:
-        if adapter.name in self._adapters:
-            raise ValueError(f"service adapter already registered: {adapter.name}")
-        self._adapters[adapter.name] = adapter
+        if adapter.provider_id in self._adapters:
+            raise ValueError(f"provider adapter already registered: {adapter.provider_id}")
+        self._adapters[adapter.provider_id] = adapter
+        self._service_adapters.setdefault(adapter.name, adapter)
 
     def submit(
         self,
@@ -96,20 +104,31 @@ class ServiceExecutionGateway:
         if consent is not None and not consent.active():
             raise ExecutionError("consent is not active")
 
-        key = idempotency_key or f"{action.id}:{route.service}"
+        key = idempotency_key or f"{action.id}:{provider_id or route.service}"
         existing_id = self._idempotency.get(key)
         if existing_id:
-            return self._receipt_from_transaction(self._transactions[existing_id], route.service)
+            return self._receipt_from_transaction(
+                self._transactions[existing_id], route.service
+            )
 
-        adapter = self._adapters.get(route.service)
+        adapter = self._adapters.get(provider_id) if provider_id else None
         if adapter is None:
-            raise ExecutionError(f"no execution adapter registered: {route.service}")
+            adapter = self._service_adapters.get(route.service)
+        if adapter is None:
+            raise ExecutionError(
+                f"no execution adapter registered for provider={provider_id!r}, "
+                f"service={route.service!r}"
+            )
+
+        selected_provider = provider_id or adapter.provider_id
+        if provider_id and adapter.provider_id != provider_id:
+            raise ExecutionError("provider adapter identity mismatch")
 
         transaction = ServiceTransaction(
             transaction_id=f"txn:{action.id}:{len(self._transactions) + 1}",
             idempotency_key=key,
             action_id=action.id,
-            provider_id=provider_id,
+            provider_id=selected_provider,
         )
         self._transactions[transaction.transaction_id] = transaction
         self._idempotency[key] = transaction.transaction_id
@@ -121,6 +140,7 @@ class ServiceExecutionGateway:
             actor=actor,
             consent=consent,
             idempotency_key=key,
+            provider_id=selected_provider,
         )
         receipt = adapter.execute(request)
         if receipt.status != "submitted":
@@ -132,6 +152,7 @@ class ServiceExecutionGateway:
         return ExecutionReceipt(
             action_id=receipt.action_id,
             service=receipt.service,
+            provider_id=selected_provider,
             status=receipt.status,
             external_reference=receipt.external_reference,
             submitted_at=receipt.submitted_at,
@@ -170,6 +191,7 @@ class ServiceExecutionGateway:
         return ExecutionReceipt(
             action_id=transaction.action_id,
             service=service,
+            provider_id=transaction.provider_id or "",
             status=transaction.status,
             external_reference=transaction.external_reference,
             submitted_at=transaction.events[0].occurred_at,
@@ -182,13 +204,15 @@ class ServiceExecutionGateway:
 class MockServiceAdapter:
     """Deterministic adapter; it never contacts an external service."""
 
-    def __init__(self, name: str):
+    def __init__(self, name: str, provider_id: str | None = None):
         self.name = name
+        self.provider_id = provider_id or f"mock-provider:{name}"
 
     def execute(self, request: ExecutionRequest) -> ExecutionReceipt:
         return ExecutionReceipt(
             action_id=request.action.id,
             service=self.name,
+            provider_id=self.provider_id,
             status="submitted",
             external_reference=f"mock:{request.action.id}",
             submitted_at=datetime.now(timezone.utc),
