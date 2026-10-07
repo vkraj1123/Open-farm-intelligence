@@ -109,6 +109,52 @@ class CaseManager:
             })
         return self.store.save(record), plan
 
+    def record_provider_selection(self, case_id: str, selection) -> CaseRecord:
+        """Persist which provider was selected for a planned action."""
+        record = self.store.get(case_id)
+        self._event(record, "provider_selected", "service_orchestrator", {
+            "request_id": selection.request.request_id,
+            "action_id": selection.request.action_id,
+            "service": selection.request.service,
+            "capability": selection.request.capability,
+            "provider_id": selection.provider_id,
+            "rationale": selection.rationale,
+            "constraints": selection.request.constraints,
+        })
+        return self.store.save(record)
+
+    def record_execution(self, case_id: str, receipt, actor_id: str) -> CaseRecord:
+        """Persist the execution receipt as part of the case audit trail."""
+        record = self.store.get(case_id)
+        event_type = "service_execution"
+        self._event(record, event_type, actor_id, {
+            "action_id": receipt.action_id,
+            "service": receipt.service,
+            "provider_id": receipt.provider_id,
+            "status": receipt.status,
+            "transaction_id": receipt.transaction_id,
+            "idempotency_key": receipt.idempotency_key,
+            "external_reference": receipt.external_reference,
+            "message": receipt.message,
+        })
+        return self.store.save(record)
+
+    def record_transaction_status(self, case_id: str, transaction, actor: str = "service_provider") -> CaseRecord:
+        """Persist an external transaction status transition."""
+        record = self.store.get(case_id)
+        latest = transaction.events[-1] if transaction.events else None
+        if latest is None:
+            raise ValueError("transaction has no events")
+        self._event(record, "service_transaction_status", actor, {
+            "transaction_id": transaction.transaction_id,
+            "action_id": transaction.action_id,
+            "provider_id": transaction.provider_id,
+            "status": transaction.status,
+            "external_reference": transaction.external_reference,
+            "message": latest.message,
+        })
+        return self.store.save(record)
+
     def record_outcome(self, case_id: str, outcome: CaseOutcome, actor: str = "farmer") -> CaseRecord:
         record = self.store.get(case_id)
         record.outcome = outcome
