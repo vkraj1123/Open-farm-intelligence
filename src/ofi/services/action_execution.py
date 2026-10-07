@@ -14,14 +14,16 @@ from ofi.services.action_router import ActionRequest
 class ExecutionEvent:
     action_id: str
     service: str
+    provider_id: str
     status: str
     actor_id: str
     external_reference: str | None
+    transaction_id: str
     recorded_at: datetime
 
 
 class ActionExecutionService:
-    """Execute planned actions and expose an auditable receipt."""
+    """Execute a planned action through a selected provider."""
 
     def __init__(self, gateway: ServiceExecutionGateway):
         self.gateway = gateway
@@ -32,6 +34,7 @@ class ActionExecutionService:
         action: ActionRequest,
         actor: ActorIdentity,
         consent: ConsentGrant | None = None,
+        provider_id: str | None = None,
     ) -> tuple[ExecutionReceipt, ExecutionEvent]:
         route = self._route(action)
         receipt = self.gateway.submit(
@@ -39,13 +42,16 @@ class ActionExecutionService:
             route=route,
             actor=actor,
             consent=consent,
+            provider_id=provider_id,
         )
         return receipt, ExecutionEvent(
             action_id=action.id,
             service=action.service,
+            provider_id=receipt.provider_id,
             status=receipt.status,
             actor_id=actor.actor_id,
             external_reference=receipt.external_reference,
+            transaction_id=receipt.transaction_id,
             recorded_at=datetime.now(timezone.utc),
         )
 
