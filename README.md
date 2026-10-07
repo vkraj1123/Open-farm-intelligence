@@ -63,5 +63,16 @@ The current agronomic thresholds are **engineering heuristics, not calibrated ag
 2. Geospatial and temporal field analytics
 3. Service routing and human escalation
 4. VISTAAR ecosystem integration
-5. Persistent PostGIS-backed farm twin (schema + repository boundary now defined)
+5. Persistent PostGIS-backed farm twin (schema + repository boundary + optional implementation)
 6. AI layer for retrieval, multimodal interpretation, multilingual interaction and adaptive questioning — without making the LLM the source of agronomic truth
+
+
+### Persistence
+
+The domain depends on `FarmTwinRepository`. The default in-memory implementation remains
+lightweight for tests and local development. An optional PostGIS implementation is
+available in `ofi.twin.postgis.PostGISFarmTwinStore`; install the `postgres`
+extra and run `src/ofi/twin/schema.sql` against PostgreSQL with PostGIS enabled.
+
+The PostGIS adapter accepts an injected connection factory so credentials, pooling,
+TLS, retries and deployment-specific connection management stay outside the domain.
