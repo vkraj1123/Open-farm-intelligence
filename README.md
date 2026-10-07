@@ -63,5 +63,5 @@ The current agronomic thresholds are **engineering heuristics, not calibrated ag
 2. Geospatial and temporal field analytics
 3. Service routing and human escalation
 4. VISTAAR ecosystem integration
-5. Persistent PostGIS-backed farm twin
+5. Persistent PostGIS-backed farm twin (schema + repository boundary now defined)
 6. AI layer for retrieval, multimodal interpretation, multilingual interaction and adaptive questioning — without making the LLM the source of agronomic truth
