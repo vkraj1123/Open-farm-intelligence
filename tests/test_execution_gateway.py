@@ -147,3 +147,20 @@ def test_action_status_uses_explicit_transaction_creation_time():
     older.created_at, newer.created_at = newer.created_at, older.created_at
 
     assert gateway.action_status(action().id) == "routed"
+
+
+def test_idempotency_key_cannot_be_reused_for_different_request():
+    gateway = ServiceExecutionGateway([
+        MockServiceAdapter("soil_test", provider_id="lab-01"),
+        MockServiceAdapter("soil_test", provider_id="lab-02"),
+    ])
+    actor = ActorIdentity("u1", "farmer")
+    gateway.submit(
+        action=action(), route=route(), actor=actor, consent=consent(),
+        provider_id="lab-01", idempotency_key="same-key",
+    )
+    with pytest.raises(ExecutionError, match="idempotency key was reused"):
+        gateway.submit(
+            action=action(), route=route(), actor=actor, consent=consent(),
+            provider_id="lab-02", idempotency_key="same-key",
+        )
