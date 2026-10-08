@@ -152,6 +152,12 @@ class ServiceExecutionGateway:
             )
         transaction = creation.transaction
 
+        transaction = self._transactions.transition(
+            transaction.transaction_id,
+            "submitted",
+            message="Execution submitted to provider boundary.",
+        )
+
         request = ExecutionRequest(
             action=action,
             route=route,
@@ -161,14 +167,6 @@ class ServiceExecutionGateway:
             provider_id=selected_provider,
         )
         receipt = adapter.execute(request)
-
-        if transaction.status == "planned":
-            transaction = self._transactions.transition(
-                transaction.transaction_id,
-                "submitted",
-                external_reference=receipt.external_reference,
-                message=receipt.message,
-            )
 
         if receipt.status != "submitted":
             transaction = self._transactions.transition(
