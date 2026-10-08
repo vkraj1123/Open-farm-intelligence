@@ -5,6 +5,7 @@ from typing import Any, Callable
 
 from ofi.domain.models import CaseEvent, CaseOutcome, CaseRecord, FarmCase, ReasoningResult
 from ofi.services.case_repository import CaseRepository
+from ofi.services.db_context import connection_scope
 
 
 class PostgresCaseRepository(CaseRepository):
@@ -20,7 +21,7 @@ class PostgresCaseRepository(CaseRepository):
 
     def create(self, case: FarmCase) -> CaseRecord:
         record = CaseRecord(case=case)
-        with self._connection_factory() as conn:
+        with connection_scope(self._connection_factory) as conn:
             with conn.transaction():
                 with conn.cursor() as cur:
                     cur.execute(
@@ -40,7 +41,7 @@ class PostgresCaseRepository(CaseRepository):
         return record
 
     def get(self, case_id: str) -> CaseRecord:
-        with self._connection_factory() as conn:
+        with connection_scope(self._connection_factory) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -82,7 +83,7 @@ class PostgresCaseRepository(CaseRepository):
     def save(self, record: CaseRecord) -> CaseRecord:
         working = record.model_copy(deep=True)
         working.case.updated_at = datetime.now(timezone.utc)
-        with self._connection_factory() as conn:
+        with connection_scope(self._connection_factory) as conn:
             with conn.transaction():
                 next_version = self._save_record(conn, working)
         working.version = next_version
@@ -105,7 +106,7 @@ class PostgresCaseRepository(CaseRepository):
         working.case.updated_at = datetime.now(timezone.utc)
 
         try:
-            with self._connection_factory() as conn:
+            with connection_scope(self._connection_factory) as conn:
                 with conn.transaction():
                     next_version = self._save_record(conn, working)
                     with conn.cursor() as cur:

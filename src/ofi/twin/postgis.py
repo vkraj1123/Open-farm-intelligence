@@ -9,6 +9,7 @@ from ofi.domain.models import (
     Parcel, ProductionContract,
 )
 from ofi.twin.repository import FarmTwinRepository
+from ofi.services.db_context import connection_scope
 
 
 class PostGISFarmTwinStore(FarmTwinRepository):
@@ -18,7 +19,7 @@ class PostGISFarmTwinStore(FarmTwinRepository):
         self._connection_factory = connection_factory
 
     def upsert(self, farm: Farm) -> Farm:
-        with self._connection_factory() as conn:
+        with connection_scope(self._connection_factory) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -55,11 +56,10 @@ class PostGISFarmTwinStore(FarmTwinRepository):
                     self._insert_party(cur, farm.id, party)
                 for contract in farm.contracts:
                     self._insert_contract(cur, farm.id, contract)
-            conn.commit()
         return farm
 
     def get(self, farm_id: str) -> Farm:
-        with self._connection_factory() as conn:
+        with connection_scope(self._connection_factory) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -78,27 +78,24 @@ class PostGISFarmTwinStore(FarmTwinRepository):
 
     def register_crop_cycle(self, farm_id: str, crop_cycle: CropCycle) -> None:
         self.get(farm_id)
-        with self._connection_factory() as conn:
+        with connection_scope(self._connection_factory) as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT 1 FROM crop_cycles WHERE id=%s", (crop_cycle.id,))
                 if cur.fetchone():
                     raise ValueError(f"crop cycle already registered: {crop_cycle.id}")
                 self._upsert_crop_cycle(cur, farm_id, crop_cycle)
-            conn.commit()
 
     def add_land_party(self, farm_id: str, party: LandParty) -> None:
         self.get(farm_id)
-        with self._connection_factory() as conn:
+        with connection_scope(self._connection_factory) as conn:
             with conn.cursor() as cur:
                 self._insert_party(cur, farm_id, party)
-            conn.commit()
 
     def add_contract(self, farm_id: str, contract: ProductionContract) -> None:
         self.get(farm_id)
-        with self._connection_factory() as conn:
+        with connection_scope(self._connection_factory) as conn:
             with conn.cursor() as cur:
                 self._insert_contract(cur, farm_id, contract)
-            conn.commit()
 
     def add_observation(self, farm_id: str, observation: Observation) -> None:
         self.get(farm_id)
@@ -108,7 +105,7 @@ class PostGISFarmTwinStore(FarmTwinRepository):
                 f"SRID=4326;POINT({observation.location.longitude} "
                 f"{observation.location.latitude})"
             )
-        with self._connection_factory() as conn:
+        with connection_scope(self._connection_factory) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -138,12 +135,11 @@ class PostGISFarmTwinStore(FarmTwinRepository):
                         json.dumps(observation.value), json.dumps(observation.provenance),
                     ),
                 )
-            conn.commit()
 
     def snapshot(self, farm_id: str, as_of: datetime | None = None) -> FarmSnapshot:
         moment = self._utc(as_of or datetime.now(timezone.utc))
         farm = self.get(farm_id)
-        with self._connection_factory() as conn:
+        with connection_scope(self._connection_factory) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
