@@ -4,6 +4,7 @@ from ofi.domain.models import CaseOutcome, CropCycle, Farm, FarmCase, GeoPoint, 
 from ofi.providers.base import EvidenceProvider
 from ofi.providers.registry import default_mock_registry
 from ofi.services.case_manager import CaseManager
+from ofi.twin.farm_twin import FarmTwinStore
 
 
 def case():
@@ -116,3 +117,46 @@ def test_provider_provenance_is_retained():
     external = [item for item in r.case.observations if item.kind == "weather"][0]
     assert external.spatial_scope == "farm"
     assert external.provenance["provider"] == "mock_weather"
+
+
+class FailingTwin(FarmTwinStore):
+    def upsert(self, farm):
+        raise RuntimeError("twin write failed")
+
+
+class FailingScientificModel:
+    def run(self, snapshot):
+        raise RuntimeError("scientific model failed")
+
+
+def test_create_rolls_back_case_when_twin_write_fails():
+    m = CaseManager(farm_twin=FailingTwin())
+    try:
+        m.create(case())
+    except RuntimeError:
+        pass
+    else:
+        assert False, "twin failure should propagate"
+    assert m.store._records == {}
+
+
+def test_collect_evidence_rolls_back_case_and_twin_on_late_failure():
+    m = CaseManager(scientific_models=FailingScientificModel())
+    m.create(case())
+    before_record = m.store.get("c1")
+    before_case = before_record.model_copy(deep=True)
+    before_twin = m.farm_twin.snapshot("f1")
+
+    try:
+        m.collect_evidence("c1", default_mock_registry())
+    except RuntimeError:
+        pass
+    else:
+        assert False, "late evidence failure should propagate"
+
+    after_case = m.store.get("c1")
+    after_twin = m.farm_twin.snapshot("f1")
+    assert after_case is before_record
+    assert after_case.case.model_dump(mode="json") == before_case.case.model_dump(mode="json")
+    assert after_case.version == before_case.version
+    assert after_twin.recent_observations == before_twin.recent_observations
