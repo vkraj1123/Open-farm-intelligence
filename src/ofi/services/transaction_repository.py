@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from copy import deepcopy
-from datetime import datetime
+from dataclasses import dataclass
 from typing import Any, Callable
 
 from ofi.services.db_context import connection_scope
@@ -19,6 +19,12 @@ class TransactionConflictError(RuntimeError):
     """Raised when an idempotency key maps to a different request."""
 
 
+@dataclass(frozen=True)
+class TransactionCreateResult:
+    transaction: ServiceTransaction
+    created: bool
+
+
 class TransactionRepository(ABC):
     """Store for durable service transaction state and its append-only events."""
 
@@ -27,6 +33,32 @@ class TransactionRepository(ABC):
         """Create or idempotently recover a transaction by idempotency key."""
 
     @abstractmethod
+    def create_if_absent(self, transaction: ServiceTransaction) -> TransactionCreateResult:
+        """Create a transaction and report whether this caller won the race."""
+
+    @abstractmethod
+    def create_if_absent(self, transaction: ServiceTransaction) -> TransactionCreateResult:
+        existing_id = self._idempotency.get(transaction.idempotency_key)
+        if existing_id is not None:
+            existing = self._transactions[existing_id]
+            if existing.request_fingerprint != transaction.request_fingerprint:
+                raise TransactionConflictError(
+                    "idempotency key was reused for a different execution request"
+                )
+            return TransactionCreateResult(deepcopy(existing), False)
+        if transaction.transaction_id in self._transactions:
+            raise ValueError(f"transaction already exists: {transaction.transaction_id}")
+        stored = deepcopy(transaction)
+        self._transactions[stored.transaction_id] = stored
+        self._idempotency[stored.idempotency_key] = stored.transaction_id
+        return TransactionCreateResult(deepcopy(stored), True)
+
+    def create(self, transaction: ServiceTransaction) -> ServiceTransaction:
+        return self.create_if_absent(transaction).transaction
+
+    def create(self, transaction: ServiceTransaction) -> ServiceTransaction:
+        return self.create_if_absent(transaction).transaction
+
     def get(self, transaction_id: str) -> ServiceTransaction:
         """Return a transaction or raise KeyError."""
 
@@ -109,7 +141,7 @@ class PostgresTransactionRepository(TransactionRepository):
     def __init__(self, connection_factory: Callable[[], Any]):
         self._connection_factory = connection_factory
 
-    def create(self, transaction: ServiceTransaction) -> ServiceTransaction:
+    def create_if_absent(self, transaction: ServiceTransaction) -> TransactionCreateResult:
         with connection_scope(self._connection_factory) as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -152,9 +184,15 @@ class PostgresTransactionRepository(TransactionRepository):
                         raise TransactionConflictError(
                             "idempotency key was reused for a different execution request"
                         )
-                    return self._get_with_cursor(cur, row[0])
+                    return TransactionCreateResult(
+                        self._get_with_cursor(cur, row[0]),
+                        False,
+                    )
 
-                return self._get_with_cursor(cur, transaction.transaction_id)
+                return TransactionCreateResult(
+                    self._get_with_cursor(cur, transaction.transaction_id),
+                    True,
+                )
 
     def get(self, transaction_id: str) -> ServiceTransaction:
         with connection_scope(self._connection_factory) as conn:
