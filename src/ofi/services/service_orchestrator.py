@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
 from ofi.services.action_router import ActionRequest, ActionRouter
+from ofi.services.provider_selection import ProviderSelectionPolicy
 from ofi.services.service_directory import ServiceDirectory, ServiceRequest
 
 
@@ -14,8 +15,14 @@ class ServiceSelection:
 class ServiceOrchestrator:
     """Resolve a planned action to an available institutional provider."""
 
-    def __init__(self, directory: ServiceDirectory):
+    def __init__(
+        self,
+        directory: ServiceDirectory,
+        *,
+        selection_policy: ProviderSelectionPolicy | None = None,
+    ):
         self.directory = directory
+        self.selection_policy = selection_policy or ProviderSelectionPolicy()
 
     def select(
         self,
@@ -48,9 +55,16 @@ class ServiceOrchestrator:
             raise LookupError(
                 f"no provider for service={route.service}, capability={route.channel}"
             )
-        match = matches[0]
+
+        match, policy_rationale = self.selection_policy.select(
+            self.directory,
+            matches,
+            region=region,
+            language=language,
+            urgency=action.urgency,
+        )
         return ServiceSelection(
             request=request,
             provider_id=match.provider_id,
-            rationale="; ".join(match.reasons),
+            rationale=policy_rationale,
         )
