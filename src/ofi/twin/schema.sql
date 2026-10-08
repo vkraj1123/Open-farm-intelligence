@@ -171,3 +171,22 @@ CREATE TABLE IF NOT EXISTS service_transaction_callbacks (
 
 CREATE INDEX IF NOT EXISTS service_transaction_callbacks_transaction
     ON service_transaction_callbacks (transaction_id);
+
+
+-- Explicit external execution attempts. One transaction may have multiple
+-- attempts when a provider fails, times out, or remains externally unknown.
+CREATE TABLE IF NOT EXISTS service_execution_attempts (
+    attempt_id TEXT PRIMARY KEY,
+    transaction_id TEXT NOT NULL REFERENCES service_transactions(transaction_id) ON DELETE CASCADE,
+    attempt_number BIGINT NOT NULL,
+    provider_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
+    external_reference TEXT,
+    last_error TEXT,
+    UNIQUE (transaction_id, attempt_number)
+);
+
+CREATE INDEX IF NOT EXISTS service_execution_attempts_transaction
+    ON service_execution_attempts (transaction_id, attempt_number);

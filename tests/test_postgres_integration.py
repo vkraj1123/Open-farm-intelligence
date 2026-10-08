@@ -46,7 +46,7 @@ def database():
     yield
     with psycopg.connect(_dsn()) as conn:
         conn.execute(
-            "TRUNCATE service_transaction_callbacks, service_transaction_events, service_transactions, case_events, case_records, observations, "
+            "TRUNCATE service_execution_attempts, service_transaction_callbacks, service_transaction_events, service_transactions, case_events, case_records, observations, "
             "production_contracts, land_parties, crop_cycles, parcels, farms "
             "CASCADE"
         )
@@ -346,3 +346,36 @@ def test_real_postgres_provider_callback_is_exactly_once(database):
     )
     assert mismatched_replay.applied is False
     assert mismatched_replay.transaction.transaction_id == "txn-callback"
+
+
+def test_real_postgres_execution_attempts_and_unknown_state(database):
+    factory = lambda: psycopg.connect(_dsn())
+    repo = PostgresTransactionRepository(factory)
+    repo.create(ServiceTransaction(
+        transaction_id="txn-attempt-integration",
+        idempotency_key="attempt-integration-key",
+        request_fingerprint="attempt-fp",
+        action_id="action-attempt",
+        provider_id="lab-01",
+        status="submitted",
+    ))
+    now = datetime.now(timezone.utc)
+    from ofi.services.service_transaction import ExecutionAttempt
+    repo.create_attempt(ExecutionAttempt(
+        attempt_id="attempt-integration-1",
+        transaction_id="txn-attempt-integration",
+        attempt_number=1,
+        provider_id="lab-01",
+        status="submitted",
+        created_at=now,
+        updated_at=now,
+    ))
+    repo.transition_attempt(
+        "attempt-integration-1",
+        "unknown",
+        last_error="provider timeout",
+    )
+    attempts = repo.list_attempts("txn-attempt-integration")
+    assert len(attempts) == 1
+    assert attempts[0].status == "unknown"
+    assert attempts[0].last_error == "provider timeout"

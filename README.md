@@ -1284,12 +1284,14 @@ The core closed-loop architecture is implemented and tested, but the project is 
 - [x] Signed provider callbacks
 - [x] Callback authentication
 - [x] External event idempotency
-- [ ] Retry policy
+- [x] Retry policy
 - [ ] Dead-letter handling
-- [ ] Multi-attempt execution model
+- [x] Explicit execution-attempt ledger
+- [x] Unknown external execution state
+- [ ] Multi-attempt retry orchestration
 - [ ] Real service adapter
 
-**Status: 🟡 Durable execution + authenticated callback boundary implemented; production webhook hardening and retry semantics remain**
+**Status: 🟡 Durable execution + authenticated callback boundary + explicit attempt ledger + safe retry policy implemented; reconciliation-driven retry orchestration and production webhook hardening remain**
 
 ---
 
@@ -1373,6 +1375,26 @@ The core closed-loop architecture is implemented and tested, but the project is 
 - [ ] Security audit
 
 **Status: 🟡 Architectural foundation only**
+
+---
+
+## Safe retry invariant
+
+An external execution timeout is not proof of failure. OFI must not create another external attempt while the provider's execution state is unknown.
+
+The retry policy therefore requires:
+
+```
+local attempt state
+      ↓
+provider reconciliation
+      ↓
+execution confirmed?
+  ├── yes → do not retry
+  └── no  → retry may be allowed
+```
+
+A local `failed`, `rejected`, or `unknown` state alone is insufficient to authorize a new external attempt. The policy is deterministic and side-effect free; actual reconciliation and retry orchestration remain separate implementation steps.
 
 ---
 
@@ -1613,7 +1635,7 @@ A production-oriented feature should eventually satisfy:
 
 Focus:
 
-1. execution-attempt semantics and unknown external state;
+1. multi-attempt retry orchestration and unknown external state;
 2. retry/idempotency policy across provider attempts;
 3. callback freshness, payload binding and secret rotation;
 4. consent scopes and revocation;
@@ -1900,7 +1922,7 @@ The following are explicitly known:
 4. The current provider-selection policy is intentionally simple.
 5. Cross-repository atomicity remains to be implemented.
 6. Production-grade event sequencing is implemented at the service-transaction boundary; broader event-stream replay/schema versioning remains.
-7. External callbacks are authenticated and exactly-once at the receipt boundary, but are not yet hardened as a complete production webhook subsystem.
+7. External callbacks are authenticated and exactly-once at the receipt boundary, while execution attempts now preserve unknown external state; complete production webhook hardening remains.
 8. Consent is foundational rather than complete governance.
 9. AI/LLM interaction is not yet the primary interface.
 10. No field deployment should be inferred from the existence of the prototype.

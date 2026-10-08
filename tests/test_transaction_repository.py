@@ -10,7 +10,7 @@ from ofi.services.execution_gateway import (
     ServiceExecutionGateway,
 )
 from ofi.services.action_router import ActionRequest, ActionRouter
-from ofi.services.service_transaction import ServiceTransaction
+from ofi.services.service_transaction import ExecutionAttempt, ServiceTransaction
 from ofi.services.transaction_repository import (
     InMemoryTransactionRepository,
     TransactionConflictError,
@@ -151,3 +151,62 @@ def test_gateway_uses_actual_provider_in_fingerprint_when_provider_is_implicit()
             consent=_consent(),
             idempotency_key="same-key",
         )
+
+
+def test_gateway_records_unknown_attempt_when_provider_execution_raises():
+    class TimeoutAdapter(MockServiceAdapter):
+        def execute(self, request):
+            raise TimeoutError("provider timeout")
+
+    repo = InMemoryTransactionRepository()
+    gateway = ServiceExecutionGateway(
+        [TimeoutAdapter("soil_test", provider_id="lab-01")],
+        transaction_repository=repo,
+    )
+
+    with pytest.raises(ExecutionError, match="outcome is unknown"):
+        gateway.submit(
+            action=_action(),
+            route=_route(),
+            actor=ActorIdentity("u1", "farmer"),
+            consent=_consent(),
+            provider_id="lab-01",
+            idempotency_key="timeout-key",
+        )
+
+    transactions = repo.list_for_action(_action().id)
+    attempts = repo.list_attempts(transactions[0].transaction_id)
+    assert transactions[0].status == "submitted"
+    assert len(attempts) == 1
+    assert attempts[0].status == "unknown"
+    assert attempts[0].last_error == "provider timeout"
+
+
+def test_attempt_numbers_are_monotonic():
+    repo = InMemoryTransactionRepository()
+    tx = ServiceTransaction(
+        transaction_id="txn-attempts",
+        idempotency_key="attempt-key",
+        request_fingerprint="attempt-fp",
+        action_id="action-1",
+        provider_id="lab-01",
+    )
+    repo.create(tx)
+    now = datetime.now(timezone.utc)
+    repo.create_attempt(ExecutionAttempt(
+        attempt_id="attempt-1", transaction_id=tx.transaction_id,
+        attempt_number=1, provider_id="lab-01", status="submitted",
+        created_at=now, updated_at=now,
+    ))
+    repo.create_attempt(ExecutionAttempt(
+        attempt_id="attempt-2", transaction_id=tx.transaction_id,
+        attempt_number=2, provider_id="lab-02", status="submitted",
+        created_at=now, updated_at=now,
+    ))
+    assert [a.attempt_number for a in repo.list_attempts(tx.transaction_id)] == [1, 2]
+    with pytest.raises(TransactionConflictError, match="expected attempt number 3"):
+        repo.create_attempt(ExecutionAttempt(
+            attempt_id="attempt-4", transaction_id=tx.transaction_id,
+            attempt_number=4, provider_id="lab-03", status="submitted",
+            created_at=now, updated_at=now,
+        ))

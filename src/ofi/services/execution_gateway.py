@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from ofi.services.action_router import ActionRequest, ActionRoute
 from ofi.services.service_transaction import (
+    ExecutionAttempt,
     ServiceTransaction,
     TransactionEvent,
     action_status_for_transaction,
@@ -181,6 +182,18 @@ class ServiceExecutionGateway:
                 creation.transaction, route.service
             )
         transaction = creation.transaction
+        now = datetime.now(timezone.utc)
+        self._transactions.create_attempt(
+            ExecutionAttempt(
+                attempt_id=f"attempt:{uuid4()}",
+                transaction_id=transaction.transaction_id,
+                attempt_number=1,
+                provider_id=selected_provider,
+                status="submitted",
+                created_at=now,
+                updated_at=now,
+            )
+        )
 
         request = ExecutionRequest(
             action=action,
@@ -190,13 +203,31 @@ class ServiceExecutionGateway:
             idempotency_key=key,
             provider_id=selected_provider,
         )
-        receipt = adapter.execute(request)
+        try:
+            receipt = adapter.execute(request)
+        except (TimeoutError, ConnectionError) as exc:
+            attempts = self._transactions.list_attempts(transaction.transaction_id)
+            self._transactions.transition_attempt(
+                attempts[-1].attempt_id,
+                "unknown",
+                last_error=str(exc),
+            )
+            raise ExecutionError(
+                "provider execution outcome is unknown; retry requires a new attempt"
+            ) from exc
 
+        attempts = self._transactions.list_attempts(transaction.transaction_id)
         if receipt.external_reference is not None:
             transaction = self._transactions.update_external_reference(
                 transaction.transaction_id,
                 receipt.external_reference,
             )
+
+        self._transactions.transition_attempt(
+            attempts[-1].attempt_id,
+            receipt.status,
+            external_reference=receipt.external_reference,
+        )
 
         if receipt.status != "submitted":
             transaction = self._transactions.transition(
@@ -243,6 +274,13 @@ class ServiceExecutionGateway:
             )
         except (KeyError, TransactionConflictError) as exc:
             raise ExecutionError(str(exc)) from exc
+        attempts = self._transactions.list_attempts(callback.transaction_id)
+        if attempts and result.applied and result.transaction.status != "submitted":
+            self._transactions.transition_attempt(
+                attempts[-1].attempt_id,
+                result.transaction.status,
+                external_reference=result.transaction.external_reference,
+            )
         return result.transaction
 
     def action_status(self, action_id: str) -> str:

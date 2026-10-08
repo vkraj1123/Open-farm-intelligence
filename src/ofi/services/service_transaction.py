@@ -5,6 +5,10 @@ from typing import Literal
 from ofi.services.action_router import ActionStatus
 
 
+AttemptStatus = Literal[
+    "submitted", "accepted", "in_progress", "completed", "rejected", "failed", "unknown",
+]
+
 TransactionStatus = Literal[
     "planned", "submitted", "accepted", "in_progress",
     "completed", "rejected", "failed", "cancelled",
@@ -20,6 +24,19 @@ _ALLOWED_TRANSITIONS = {
     "failed": set(),
     "cancelled": set(),
 }
+
+
+@dataclass
+class ExecutionAttempt:
+    attempt_id: str
+    transaction_id: str
+    attempt_number: int
+    provider_id: str
+    status: AttemptStatus
+    created_at: datetime
+    updated_at: datetime
+    external_reference: str | None = None
+    last_error: str | None = None
 
 
 @dataclass(frozen=True)
