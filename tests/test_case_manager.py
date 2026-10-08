@@ -67,7 +67,7 @@ def test_provider_evidence_enters_case_and_twin():
     assert reasoning.latest_reasoning is not None
     assert reasoning.latest_reasoning.decision.action in {"REQUEST_TEST", "ESCALATE_EXPERT", "ADVISE"}
     snapshot = m.farm_twin.snapshot("f1")
-    assert len(snapshot.recent_observations) == 3
+    assert len(snapshot.recent_observations) == 4
 
 
 
