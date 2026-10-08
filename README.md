@@ -1,141 +1,1986 @@
 # Open Farm Intelligence
 
-**Open Farm Intelligence (OFI)** is an open-source farm-level intelligence and orchestration layer for Indian agriculture.
+**Open Farm Intelligence (OFI)** is an open-source farm-level intelligence and orchestration system for Indian agriculture.
 
 > **Bharat-VISTAAR provides the agricultural digital network; Open Farm Intelligence provides the farm-level intelligence and orchestration layer that turns that network into a continuous farm decision system.**
 
-OFI is not another farmer chatbot. It maintains farm context, evaluates evidence, represents uncertainty, chooses the next action, routes work to services or experts, and learns from field outcomes.
+OFI is deliberately **not another farmer chatbot**. The project is building the infrastructure that can understand a farm as a changing system, collect and align evidence, reason under uncertainty, choose the next useful action, route that action to a service or human, observe the result, and feed the outcome back into future decisions.
 
-## Core loop
+This README is both the project description and the **engineering development tracker**. It records what exists, what is intentionally incomplete, and what must be proven before the system should be considered production-ready.
 
-```text
-Farm context → evidence → hypotheses → confidence/uncertainty
-     → next action → service/human → field outcome → feedback
+---
+
+## 1. Project thesis
+
+Agricultural problems are rarely single-variable problems.
+
+A farmer may simultaneously face:
+
+- uncertain weather;
+- soil and water constraints;
+- crop-stage effects;
+- disease or pest pressure;
+- changing market prices;
+- input availability;
+- credit or insurance constraints;
+- scheme eligibility;
+- tenancy/ownership complexity;
+- limited access to expert services;
+- incomplete or contradictory information.
+
+A useful intelligence system therefore cannot be built as:
+
+```
+Question → LLM → Answer
 ```
 
-## Architecture
+OFI is designed around:
 
-```text
-                     FARM DIGITAL TWIN
-                            │
-                            ▼
-                  ┌───────────────────┐
-                  │ OFI ORCHESTRATOR  │
-                  │ context           │
-                  │ evidence          │
-                  │ reasoning         │
-                  │ uncertainty       │
-                  │ decision          │
-                  └─────────┬─────────┘
-                            │
-             ┌──────────────┼──────────────┐
-             ▼              ▼              ▼
-        Data providers   VISTAAR       Science models
-        weather/soil/    services      agronomy/
-        satellite                       water balance
-             │              │              │
-             └──────────────┼──────────────┘
-                            ▼
-                     Farm decision
-                            │
-                            ▼
-                    Service / human
-                            │
-                            ▼
-                       Field result
-                            │
-                            └──────► feedback
+```
+Farm context
+    ↓
+Evidence
+    ↓
+Alignment + provenance + freshness
+    ↓
+Hypotheses
+    ↓
+Confidence + contradiction + uncertainty
+    ↓
+Next best action
+    ↓
+Service / expert / farmer action
+    ↓
+Execution
+    ↓
+Field outcome
+    ↓
+Empirical feedback
+    ↺
 ```
 
-The provider boundary is deliberate: external systems supply evidence or services; OFI owns farm context, evidence fusion, reasoning, uncertainty and orchestration.
+The core unit is therefore not a conversation. It is a **farm decision cycle**.
 
-## Current capabilities
+---
 
-- Temporal farm digital twin with parcel and crop-cycle context
-- Separate owner, cultivator and production-contract relationships
-- Case lifecycle with append-only events and optimistic versioning
-- Weather, satellite and soil provider interfaces
-- Evidence normalization, source reliability and freshness scoring
-- Spatial and temporal evidence-alignment checks
-- Transparent water-stress and disease-stress hypotheses
-- Conservative decisions: ask, advise, request test, escalate
-- Scientific-model registry with an FAO-56-style water-balance screening model
-- Deterministic service capability discovery and action routing
-- Service transactions with explicit lifecycle transitions
-- Consent, actor binding and idempotent execution gateway
-- Outcome feedback and empirical experience memory
-- Optional PostgreSQL/PostGIS persistence boundary
-- Automated pytest CI
+# 2. Design goals
 
-## Repository layout
+## Primary goals
 
-```text
-src/ofi/
-├── domain/          # Farm, crop, observation, case and decision models
-├── twin/            # Farm digital twin + optional PostGIS persistence
-├── providers/       # Provider contracts, adapters and normalization
-├── geospatial/      # Parcel/observation alignment and field analytics
-├── science/         # Scientific model interfaces and water-balance model
-├── intelligence/    # Evidence fusion, confidence and orchestration
-└── services/        # Cases, actions, service discovery, execution, feedback
+1. **Context before conversation**
+   - Maintain a structured representation of the farm, parcels, crop cycles, people, contracts and observations.
 
-tests/               # Unit and closed-loop regression tests
+2. **Evidence before generation**
+   - Reason from explicit observations and scientific models instead of allowing an LLM to invent facts.
+
+3. **Uncertainty as a first-class object**
+   - Represent source reliability, freshness, confidence, conflicts and insufficient evidence.
+
+4. **Decision before advice**
+   - Determine whether the correct response is to advise, ask for information, request a test, or escalate.
+
+5. **Actionability**
+   - A decision should be capable of becoming a service request or human task.
+
+6. **Closed-loop learning**
+   - Store outcomes and empirical experience rather than treating every interaction as isolated.
+
+7. **Provider neutrality**
+   - External data and service ecosystems should be replaceable through explicit interfaces.
+
+8. **Scientific safety**
+   - Scientific models must be distinguishable from heuristics and validated before being used for prescriptive recommendations.
+
+9. **Indian agricultural interoperability**
+   - The architecture should be able to connect to systems such as VISTAAR/Beckn-style networks, ICAR/KVKs, IMD, AgMarkNet and state systems without coupling the intelligence core to one provider.
+
+10. **Production-grade boundaries**
+    - Persistence, transactions, consent, idempotency, versioning and external execution must be explicit rather than hidden inside business logic.
+
+---
+
+# 3. Non-goals
+
+OFI is **not** intended to:
+
+- replace Bharat-VISTAAR;
+- replace ICAR, KVKs or agricultural scientists;
+- make unsupported agronomic prescriptions;
+- pretend heuristic scores are calibrated probabilities;
+- become a generic chatbot with an agriculture prompt;
+- automatically execute risky farm actions without appropriate authorization and human/service boundaries;
+- treat an LLM as the source of scientific truth;
+- claim production readiness before real-world validation.
+
+---
+
+# 4. System architecture
+
+```
+                         FARM DIGITAL TWIN
+                                │
+                                ▼
+                 ┌──────────────────────────┐
+                 │      OFI ORCHESTRATOR    │
+                 │                          │
+                 │ Context                 │
+                 │ Evidence                │
+                 │ Alignment               │
+                 │ Hypotheses              │
+                 │ Uncertainty              │
+                 │ Decision                 │
+                 │ Action planning          │
+                 └────────────┬─────────────┘
+                              │
+              ┌───────────────┼────────────────┐
+              │               │                │
+              ▼               ▼                ▼
+        Data Providers     Service Network   Science Engine
+        ─────────────     ───────────────    ─────────────
+        Weather           VISTAAR/Beckn      FAO-56-style
+        Satellite         KVK/extension     water balance
+        Soil              Diagnostics       other models
+        Sensors           Institutions
+        Farmer reports    Experts
+              │               │                │
+              └───────────────┼────────────────┘
+                              ▼
+                       FARM DECISION
+                              │
+                              ▼
+                    SERVICE / HUMAN ACTION
+                              │
+                              ▼
+                       FIELD OUTCOME
+                              │
+                              ▼
+                    EXPERIENCE / FEEDBACK
 ```
 
-## Quick start
+## Architectural rule
 
-Requires Python 3.11+.
+The intelligence layer owns:
 
-```bash
-git clone https://github.com/vkraj1123/Open-farm-intelligence.git
-cd Open-farm-intelligence
-python -m pip install -e ".[dev]"
-pytest -q
+- farm context;
+- evidence representation;
+- evidence alignment;
+- reasoning;
+- uncertainty;
+- decision policy;
+- action planning;
+- service selection policy.
+
+External systems own:
+
+- their source data;
+- their scientific/operational services;
+- execution of services;
+- institutional workflows.
+
+This separation allows OFI to remain testable even when external providers are unavailable.
+
+---
+
+# 5. Repository structure
+
+```
+Open-farm-intelligence/
+│
+├── src/ofi/
+│   ├── api.py
+│   │
+│   ├── domain/
+│   │   └── models.py
+│   │       # Core farm, parcel, crop, observation,
+│   │       # case, evidence, decision and outcome models
+│   │
+│   ├── twin/
+│   │   ├── repository.py
+│   │   ├── farm_twin.py
+│   │   ├── postgis.py
+│   │   └── schema.sql
+│   │       # Farm Digital Twin and persistence boundary
+│   │
+│   ├── providers/
+│   │   ├── base.py
+│   │   ├── registry.py
+│   │   ├── adapters.py
+│   │   ├── normalizers.py
+│   │   └── mock_evidence.py
+│   │       # Evidence provider contracts and canonicalization
+│   │
+│   ├── geospatial/
+│   │   ├── spatial.py
+│   │   └── analytics.py
+│   │       # Parcel alignment and field-level analytics
+│   │
+│   ├── science/
+│   │   ├── models.py
+│   │   ├── registry.py
+│   │   ├── engine.py
+│   │   └── water_balance.py
+│   │       # Scientific model interface and current screening model
+│   │
+│   ├── intelligence/
+│   │   ├── alignment.py
+│   │   ├── confidence.py
+│   │   ├── freshness.py
+│   │   ├── fusion.py
+│   │   └── orchestrator.py
+│   │       # Evidence → hypothesis → decision
+│   │
+│   └── services/
+│       ├── case_repository.py
+│       ├── postgres_case_repository.py
+│       ├── case_manager.py
+│       ├── evidence_coordinator.py
+│       ├── ingestion.py
+│       ├── reasoning_update.py
+│       ├── intelligence_cycle.py
+│       ├── action_router.py
+│       ├── action_planning.py
+│       ├── service_directory.py
+│       ├── service_orchestrator.py
+│       ├── service_transaction.py
+│       ├── execution_gateway.py
+│       ├── action_execution.py
+│       ├── outcome_feedback.py
+│       ├── experience_memory.py
+│       └── experience_summary.py
+│           # Decision execution, service routing and feedback
+│
+├── tests/
+│   # Unit, integration-boundary and closed-loop regression tests
+│
+├── pyproject.toml
+└── README.md
 ```
 
-Run the API:
+---
+
+# 6. Detailed implemented features
+
+## 6.1 Farm Digital Twin
+
+The Farm Digital Twin is the persistent context layer.
+
+Current domain objects include:
+
+- `Farm`
+- `Parcel`
+- `GeoPoint`
+- `CropCycle`
+- `LandParty`
+- `ProductionContract`
+- `Observation`
+- `FarmSnapshot`
+
+### Supported context
+
+- farm identity;
+- parcel area;
+- parcel geometry;
+- administrative location;
+- active crop;
+- crop-cycle dates;
+- land owner;
+- cultivator;
+- production relationship;
+- time-bounded contracts;
+- historical observations.
+
+### Important design choice
+
+Ownership and cultivation are represented separately.
+
+This allows future workflows to distinguish:
+
+```
+Legal ownership
+      ≠
+Actual cultivation
+      ≠
+Seasonal production contract
+```
+
+That distinction is important for Indian agricultural service delivery, insurance, credit and benefit workflows.
+
+---
+
+# 7. Observation and evidence architecture
+
+OFI represents observations using explicit types:
+
+- farmer report;
+- image;
+- soil;
+- weather;
+- satellite;
+- market;
+- sensor;
+- model;
+- expert.
+
+Observations can contain:
+
+- timestamp;
+- location;
+- crop-cycle association;
+- unit;
+- spatial scope;
+- quality;
+- confidence;
+- provenance;
+- source/provider metadata.
+
+The system therefore has a basis for answering:
+
+> What was observed, when, where, by whom/provider, with what quality, and how reliable is it?
+
+rather than only:
+
+> What did the model say?
+
+---
+
+# 8. Provider architecture
+
+The provider layer separates external evidence sources from intelligence logic.
+
+Current provider concepts include:
+
+```
+EvidenceProvider
+      │
+      ├── Weather
+      ├── Satellite
+      └── Soil
+```
+
+A provider produces evidence which is normalized into OFI's canonical representation.
+
+### Current capabilities
+
+- provider registration;
+- capability discovery;
+- provider collection;
+- provider-specific adapters;
+- canonical payload validation;
+- provenance preservation;
+- provider failure isolation.
+
+Mock providers are deliberately available so that the intelligence layer can be tested without external APIs.
+
+---
+
+# 9. Evidence normalization
+
+Different providers describe the same phenomenon differently.
+
+OFI therefore has a normalization layer for:
+
+- weather observations;
+- satellite observations;
+- soil observations;
+- provider/source identifiers;
+- satellite scene metadata.
+
+Satellite normalization can represent:
+
+- NDVI;
+- NDVI trend;
+- EVI;
+- NDWI;
+- cloud cover;
+- valid-pixel fraction;
+- pixel count;
+- mean/median vegetation indices.
+
+The objective is to prevent downstream reasoning code from becoming provider-specific.
+
+---
+
+# 10. Evidence fusion and uncertainty
+
+OFI does not currently treat evidence as equally trustworthy.
+
+A transparent reliability layer provides source-level weights and freshness windows.
+
+Example conceptual ordering:
+
+```
+expert / validated lab
+        ↓
+calibrated sensor
+        ↓
+satellite / station
+        ↓
+weather model
+        ↓
+farmer report
+        ↓
+generic model inference
+```
+
+These are **engineering heuristics**, not calibrated probabilities.
+
+Evidence scores combine factors such as:
+
+- source reliability;
+- observation quality;
+- stated confidence;
+- freshness.
+
+The system can also detect material disagreement between sources.
+
+### Example
+
+```
+Satellite: vegetation declining
+Soil: high moisture
+Weather: recent rainfall
+Model: low water stress
+```
+
+The correct behavior is not:
+
+> "I am 100% sure the crop is water stressed."
+
+Instead, OFI can recognize a conflict and request verification.
+
+---
+
+# 11. Spatial and temporal alignment
+
+Evidence is only useful if it refers to the correct:
+
+- place;
+- time;
+- unit;
+- crop/field context.
+
+Current alignment capabilities include:
+
+- point-in-parcel validation;
+- footprint overlap;
+- temporal matching;
+- comparable observation pairing;
+- unit compatibility;
+- parcel/raster alignment;
+- screening-level raster aggregation.
+
+Satellite evidence is explicitly checked against the actual farm parcel rather than blindly accepted because a provider returned a scene.
+
+---
+
+# 12. Geospatial analytics
+
+Current screening-level analytics include:
+
+- NDVI trend;
+- vegetation stress index;
+- crop age;
+- recent satellite selection;
+- parcel-level NDVI aggregation;
+- raster/parcel overlap concepts.
+
+The current implementation intentionally avoids claiming production-grade remote-sensing accuracy.
+
+The future production path should move computationally heavy geospatial operations toward:
+
+- PostGIS;
+- raster databases;
+- validated remote-sensing pipelines;
+- field-specific calibration.
+
+---
+
+# 13. Scientific engine
+
+OFI has a separate scientific model interface.
+
+```
+ScientificModel
+      │
+      ├── FAO-56-style water balance
+      ├── future disease models
+      ├── future crop models
+      └── future validated regional models
+```
+
+The current water-balance implementation includes:
+
+- ET0-style calculation;
+- crop coefficient stages;
+- root-zone water balance;
+- crop-stage interpretation;
+- soil/weather inputs.
+
+Initial crop coefficient screening values exist for selected crops including:
+
+- bajra;
+- wheat;
+- mustard.
+
+### Safety boundary
+
+The current scientific engine is a **screening model**.
+
+It is not yet:
+
+- Rajasthan calibrated;
+- crop-variety calibrated;
+- experimentally validated for local soil regimes;
+- suitable by itself for professional agronomic prescription.
+
+This distinction is intentional.
+
+---
+
+# 14. Hypothesis engine
+
+The intelligence layer converts evidence into competing hypotheses.
+
+Current hypothesis patterns include:
+
+### Water stress
+
+Potential supporting evidence:
+
+- low soil moisture;
+- low recent rainfall;
+- declining NDVI;
+- low NDWI;
+- scientific-model stress.
+
+Potential contradictory evidence:
+
+- high soil moisture;
+- recent rainfall;
+- low model-estimated stress.
+
+### Disease stress
+
+Potential supporting evidence:
+
+- image-based disease signs;
+- adequate moisture;
+- declining vegetation indices.
+
+The architecture allows additional hypotheses to be added without rewriting the whole decision system.
+
+---
+
+# 15. Decision policy
+
+Current decisions include:
+
+- `ADVISE`
+- `ASK_FARMER`
+- `REQUEST_TEST`
+- `ESCALATE_EXPERT`
+
+The current policy is intentionally conservative.
+
+Conceptually:
+
+```
+Strong evidence + sufficient margin
+        → ADVISE
+
+Moderate evidence
+        → REQUEST_TEST
+
+Conflicting evidence
+        → REQUEST_TEST / verification
+
+Weak or ambiguous evidence
+        → ASK_FARMER / ESCALATE_EXPERT
+```
+
+The thresholds are engineering rules, not learned/calibrated probabilities.
+
+---
+
+# 16. Case lifecycle
+
+A case represents an ongoing farm decision problem.
+
+The lifecycle supports:
+
+```
+Create case
+    ↓
+Add evidence
+    ↓
+Reason
+    ↓
+Plan action
+    ↓
+Execute / route
+    ↓
+Record outcome
+    ↓
+Learn from experience
+```
+
+Cases have:
+
+- durable event IDs;
+- version information;
+- reasoning state;
+- outcome state;
+- append-only event history.
+
+The architecture also supports optimistic version checks to prevent silent overwrites in persistent storage.
+
+---
+
+# 17. Action planning
+
+A decision is translated into an executable action.
+
+Current action categories include examples such as:
+
+- soil test;
+- crop disease diagnosis;
+- KVK referral;
+- agricultural extension;
+- evidence verification.
+
+The action planner separates:
+
+```
+Reasoning
+   ↓
+Decision
+   ↓
+Action plan
+   ↓
+External execution
+```
+
+This is important because deciding that a soil test is required is not the same thing as actually ordering one.
+
+---
+
+# 18. Service directory
+
+The service layer is provider-neutral.
+
+A service provider can advertise:
+
+- service;
+- capability;
+- supported action types;
+- region;
+- language;
+- operational status;
+- metadata.
+
+OFI can discover providers for a required capability.
+
+This provides a foundation for future integration with:
+
+- KVKs;
+- agricultural extension;
+- diagnostic laboratories;
+- FPOs;
+- cooperatives;
+- custom hiring centres;
+- banks;
+- insurance;
+- input/service providers;
+- VISTAAR/Beckn-style service networks.
+
+---
+
+# 19. Service selection
+
+The current implementation performs deterministic provider discovery.
+
+The next architectural step is an explicit selection policy rather than first-match behavior.
+
+Planned selection dimensions:
+
+```
+Capability
+   ↓
+Geography
+   ↓
+Language
+   ↓
+Availability / health
+   ↓
+Trust / verification
+   ↓
+Urgency / SLA
+   ↓
+Distance / cost where appropriate
+```
+
+The policy should remain explainable and deterministic before introducing opaque AI ranking.
+
+---
+
+# 20. Service transactions
+
+Service execution has its own lifecycle.
+
+Current transaction states include:
+
+```
+planned
+  ↓
+submitted
+  ↓
+accepted
+  ↓
+in_progress
+  ↓
+completed
+```
+
+Failure paths include:
+
+- rejected;
+- failed;
+- cancelled.
+
+Terminal states cannot be arbitrarily transitioned.
+
+This separates:
+
+```
+Action planning status
+        from
+External service execution status
+```
+
+A transaction can also be projected back into an action status.
+
+---
+
+# 21. Execution gateway
+
+The execution gateway is the boundary between OFI and external services.
+
+Current concepts include:
+
+- actor identity;
+- consent;
+- provider identity;
+- idempotency;
+- service adapters;
+- transaction creation;
+- execution receipts;
+- provider-aware status updates.
+
+Repeated submissions with the same idempotency key are intended to avoid accidental duplicate execution.
+
+The current mock adapter provides deterministic local execution for testing.
+
+---
+
+# 22. Consent and actor binding
+
+External execution must not become an unrestricted function call.
+
+The current execution boundary associates requests with:
+
+- actor identity;
+- consent;
+- service/provider;
+- action;
+- idempotency.
+
+Future production work must extend this toward:
+
+- explicit consent scopes;
+- purpose binding;
+- expiry;
+- revocation;
+- provider/service-specific authorization;
+- audit requirements.
+
+---
+
+# 23. Outcome feedback
+
+After an action is executed, the system can record the result.
+
+An outcome can produce a bounded learning signal:
+
+```
+positive → +1
+neutral  →  0
+negative → -1
+unknown  →  0
+```
+
+Attribution confidence can weight the signal.
+
+The system deliberately does **not** claim that an observed outcome proves causality.
+
+For example:
+
+> Yield improved after an irrigation-related action
+
+does not automatically prove:
+
+> The action caused the yield improvement.
+
+This distinction is essential for responsible agricultural learning systems.
+
+---
+
+# 24. Experience memory
+
+OFI maintains empirical experience memory based on contextual similarity.
+
+A context can include:
+
+- crop;
+- season;
+- irrigation;
+- hypotheses;
+- evidence;
+- administrative region.
+
+Experience memory is intended for:
+
+- retrieval;
+- comparison;
+- evaluation;
+- future decision support.
+
+It is **not autonomous model training**.
+
+This creates a path toward local adaptation without pretending that a small number of farm outcomes are sufficient for causal or statistical claims.
+
+---
+
+# 25. Persistence architecture
+
+The repository boundaries are intentionally explicit.
+
+Current persistence concepts:
+
+### Farm Twin
+
+```
+FarmTwinRepository
+      │
+      ├── In-memory implementation
+      └── PostgreSQL/PostGIS implementation
+```
+
+### Cases
+
+```
+CaseRepository
+      │
+      ├── In-memory implementation
+      └── PostgreSQL implementation
+```
+
+The PostGIS schema includes tables for:
+
+- farms;
+- parcels;
+- crop cycles;
+- observations;
+- land parties;
+- production contracts;
+- case records;
+- case events.
+
+Spatial data uses PostGIS geography types and spatial indexes.
+
+---
+
+# 26. Transactional integrity
+
+The project treats state and events as related durable information.
+
+The PostgreSQL case repository supports an atomic:
+
+```
+case state update
+       +
+case event append
+```
+
+operation.
+
+Optimistic versioning prevents an outdated case snapshot from silently overwriting a newer one.
+
+### Known next improvement
+
+A complete production architecture still needs a clear unit-of-work boundary when one operation modifies both:
+
+- Farm Digital Twin state; and
+- Case state.
+
+That cross-repository atomicity is therefore an explicit roadmap item.
+
+---
+
+# 27. API and application boundary
+
+The repository includes a FastAPI application entry point.
+
+Development startup:
 
 ```bash
 uvicorn ofi.api:app --reload
 ```
 
-## Persistence
+The API boundary is intentionally kept separate from domain and service logic so the same core can eventually support:
 
-The domain is repository-driven. The default in-memory farm twin is lightweight for tests and local development.
+- web applications;
+- mobile applications;
+- voice interfaces;
+- agents;
+- institutional dashboards;
+- VISTAAR-style network integrations.
 
-An optional PostGIS implementation is available as `ofi.twin.postgis.PostGISFarmTwinStore`. Install the optional PostgreSQL dependency and apply `src/ofi/twin/schema.sql` to PostgreSQL with PostGIS enabled.
+---
 
-The PostGIS adapter accepts an injected connection factory so credentials, pooling, TLS, retries and deployment-specific connection management stay outside the domain.
+# 28. AI / LLM architecture
 
-## Scientific safety boundary
+AI is deliberately **downstream of the evidence and science substrate**.
 
-Current agronomic thresholds are **engineering heuristics and screening models, not calibrated agronomic probabilities or professional crop advice**.
+Potential AI responsibilities:
 
-The intended production path is to place validated regional scientific models and datasets behind the existing interfaces. An LLM should help with retrieval, multilingual interaction, multimodal interpretation and adaptive questioning, but it should not become the source of agronomic truth.
+- multilingual interaction;
+- voice understanding;
+- retrieval;
+- adaptive questioning;
+- image interpretation;
+- explanation;
+- summarization;
+- planning;
+- translating technical evidence into farmer-friendly language.
 
-## Relationship to Bharat-VISTAAR
+AI should **not** independently become the authority for:
 
-OFI is designed to complement India's agricultural digital public infrastructure rather than replace it.
+- soil facts;
+- weather facts;
+- scientific thresholds;
+- crop diagnosis;
+- government eligibility;
+- transaction state.
 
-Potential future integration points include VISTAAR/Beckn-style provider discovery, ICAR/KVK scientific evidence and expert escalation, IMD weather, AgMarkNet, Soil Health Card data, state agriculture systems, schemes, and service providers.
+The desired architecture is:
 
-External integrations remain behind explicit provider/service interfaces so the intelligence layer stays testable and provider-neutral.
+```
+Trusted data + scientific models
+              ↓
+       OFI reasoning layer
+              ↓
+      AI interaction layer
+              ↓
+          farmer
+```
 
-## Roadmap
+not:
 
-1. Harden deterministic provider-selection policy
-2. Complete PostgreSQL/PostGIS integration tests
-3. Establish atomic unit-of-work boundaries across farm twin and case state
-4. Add durable event sequencing and idempotent external callbacks
-5. Validate/calibrate scientific models with Rajasthan-local data
-6. Add VISTAAR/Beckn-compatible service adapters
-7. Add multimodal and multilingual AI downstream of the evidence/science substrate
-8. Build production observability, consent scopes and governance controls
+```
+LLM
+ ↓
+invented agricultural answer
+```
 
-## Status
+---
 
-**Active engineering prototype.** Architecture and interfaces are the current focus. External agricultural integrations and production agronomic validation are intentionally not claimed yet.
+# 29. Relationship with Bharat-VISTAAR
 
-## License
+OFI is designed as a complementary intelligence layer.
 
-See the repository license file for current licensing terms.
+Conceptually:
+
+```
+Bharat-VISTAAR
+      │
+      │ digital agricultural network
+      ▼
+┌───────────────────────┐
+│ Open Farm Intelligence│
+│                       │
+│ farm context          │
+│ evidence fusion       │
+│ reasoning             │
+│ uncertainty           │
+│ decision              │
+│ action orchestration  │
+│ feedback              │
+└───────────┬───────────┘
+            │
+            ▼
+     Farmer / Service
+```
+
+Potential integration domains include:
+
+- VISTAAR/Beckn-style provider discovery;
+- ICAR scientific information;
+- KVK/expert escalation;
+- IMD weather;
+- AgMarkNet market data;
+- Soil Health Card information;
+- state agriculture systems;
+- schemes;
+- diagnostic services;
+- FPO/cooperative services.
+
+The integration should happen through adapters rather than contaminating the core domain with provider-specific assumptions.
+
+---
+
+# 30. Current development status
+
+## Overall status
+
+**Milestone: Architecture-complete functional prototype / pre-production foundation**
+
+The core closed-loop architecture is implemented and tested, but the project is **not production-ready**.
+
+### Status legend
+
+- ✅ Implemented and tested
+- 🟡 Implemented but requires hardening/validation
+- 🔵 Designed / integration-ready
+- ⬜ Not yet implemented
+- ⚠️ Explicit safety/validation boundary
+
+---
+
+## 31. Development tracker
+
+### A. Core domain
+
+- [x] Farm domain model
+- [x] Parcel geometry
+- [x] Crop-cycle model
+- [x] Owner/cultivator separation
+- [x] Production contract model
+- [x] Time-aware observations
+- [x] Observation provenance
+- [x] Farm snapshot
+- [x] Case model
+- [x] Evidence model
+- [x] Hypothesis model
+- [x] Decision model
+- [x] Outcome model
+
+**Status: ✅ Foundation complete**
+
+---
+
+### B. Farm Digital Twin
+
+- [x] In-memory Farm Twin
+- [x] Time-aware snapshot
+- [x] Active crop-cycle selection
+- [x] Active land-party selection
+- [x] Active contract selection
+- [x] Parcel location
+- [x] Parcel boundary
+- [x] Repository abstraction
+- [x] PostGIS persistence adapter
+- [x] PostGIS schema
+- [ ] Production migration system
+- [ ] Production backup/recovery strategy
+- [ ] Multi-farm tenant isolation validation
+- [ ] Full PostGIS integration test suite
+
+**Status: 🟡 Functional; production persistence remains**
+
+---
+
+### C. Evidence providers
+
+- [x] Provider interface
+- [x] Provider registry
+- [x] Capability discovery
+- [x] Weather adapter
+- [x] Satellite adapter
+- [x] Soil adapter
+- [x] Canonical payload validation
+- [x] Provenance retention
+- [x] Provider failure isolation
+- [x] Mock providers
+- [ ] IMD integration
+- [ ] Sentinel/Copernicus production integration
+- [ ] Soil laboratory integration
+- [ ] Sensor ingestion
+- [ ] Farmer image ingestion
+- [ ] Market provider integration
+- [ ] Provider authentication/credential management
+
+**Status: 🟡 Interface complete; real providers pending**
+
+---
+
+### D. Evidence intelligence
+
+- [x] Source reliability
+- [x] Evidence quality
+- [x] Freshness scoring
+- [x] Temporal alignment
+- [x] Spatial alignment
+- [x] Unit compatibility
+- [x] Conflict detection
+- [x] Evidence fusion
+- [x] NDVI-derived evidence
+- [ ] Calibrated reliability models
+- [ ] Statistical uncertainty estimation
+- [ ] Probabilistic evidence fusion
+- [ ] Production raster processing
+- [ ] Automated evidence provenance graph
+
+**Status: 🟡 Screening-level intelligence**
+
+---
+
+### E. Scientific engine
+
+- [x] Scientific model interface
+- [x] Scientific model registry
+- [x] ET0-style calculation
+- [x] Crop coefficient stages
+- [x] Root-zone water balance
+- [x] Water-stress signal
+- [x] Initial crop support
+- [ ] Rajasthan calibration
+- [ ] Variety-level calibration
+- [ ] Soil-specific calibration
+- [ ] Historical validation
+- [ ] Field-trial validation
+- [ ] Expert review protocol
+- [ ] Model versioning
+- [ ] Model performance monitoring
+
+**Status: ⚠️ Screening model only**
+
+---
+
+### F. Reasoning and decision engine
+
+- [x] Hypothesis generation
+- [x] Water-stress hypothesis
+- [x] Disease-stress hypothesis
+- [x] Contradiction handling
+- [x] Confidence scoring
+- [x] Conservative decision policy
+- [x] ASK_FARMER path
+- [x] ADVISE path
+- [x] REQUEST_TEST path
+- [x] ESCALATE_EXPERT path
+- [ ] Learned hypothesis ranking
+- [ ] Calibrated confidence
+- [ ] Causal reasoning
+- [ ] Counterfactual analysis
+- [ ] Multi-objective farm planning
+
+**Status: 🟡 Functional prototype**
+
+---
+
+### G. Case management
+
+- [x] Case creation
+- [x] Evidence updates
+- [x] Reasoning updates
+- [x] Outcome recording
+- [x] Escalation
+- [x] Action planning
+- [x] Durable event IDs
+- [x] Append-only event history
+- [x] Optimistic versioning
+- [x] Atomic case state + event persistence
+- [ ] Monotonic per-case event sequence
+- [ ] Full concurrency test suite
+- [ ] Event replay
+- [ ] Event schema versioning
+
+**Status: 🟡 Strong foundation; event infrastructure needs hardening**
+
+---
+
+### H. Action and service orchestration
+
+- [x] Action request model
+- [x] Action routing
+- [x] Service capabilities
+- [x] Service provider directory
+- [x] Provider discovery
+- [x] Service request
+- [x] Service response
+- [x] Service transaction
+- [x] Explicit transaction state machine
+- [x] Action-status projection
+- [x] Provider identity preservation
+- [ ] Deterministic provider-selection policy
+- [ ] Geography-aware selection
+- [ ] Language-aware selection
+- [ ] Availability/health-aware selection
+- [ ] Trust/verification scoring
+- [ ] SLA-aware routing
+- [ ] Cost/distance optimization
+
+**Status: 🟡 Core exists; selection policy is next**
+
+---
+
+### I. External execution
+
+- [x] Execution gateway
+- [x] Service adapter boundary
+- [x] Actor identity
+- [x] Consent boundary
+- [x] Idempotency
+- [x] Execution receipt
+- [x] Transaction lifecycle
+- [x] Mock execution adapter
+- [ ] Signed provider callbacks
+- [ ] Callback authentication
+- [ ] External event idempotency
+- [ ] Retry policy
+- [ ] Dead-letter handling
+- [ ] Multi-attempt execution model
+- [ ] Real service adapter
+
+**Status: 🟡 Safe local execution boundary; external execution pending**
+
+---
+
+### J. Feedback and learning
+
+- [x] Action outcome model
+- [x] Learning signal
+- [x] Attribution confidence
+- [x] Experience memory
+- [x] Context similarity
+- [x] Empirical effectiveness summary
+- [x] Explicit non-causal boundary
+- [ ] Longitudinal farm learning
+- [ ] Population-level evaluation
+- [ ] Causal inference framework
+- [ ] Model retraining pipeline
+- [ ] Drift detection
+- [ ] Outcome quality monitoring
+
+**Status: 🟡 Empirical memory exists; learning system is not yet statistical/causal**
+
+---
+
+### K. AI interaction layer
+
+- [ ] LLM integration
+- [ ] Retrieval layer
+- [ ] RAG/evidence grounding
+- [ ] Hindi/regional-language interaction
+- [ ] Voice input
+- [ ] Voice output
+- [ ] Image understanding
+- [ ] Adaptive questioning
+- [ ] Explanation generation
+- [ ] Human-in-the-loop review
+- [ ] AI evaluation suite
+- [ ] Prompt/version management
+- [ ] hallucination/grounding evaluation
+
+**Status: 🔵 Deliberately downstream; do not add before core evidence interfaces are stable**
+
+---
+
+### L. VISTAAR / ecosystem integration
+
+- [ ] VISTAAR service discovery adapter
+- [ ] Beckn-compatible adapter
+- [ ] Provider registration mapping
+- [ ] Service request mapping
+- [ ] Service response mapping
+- [ ] ICAR evidence adapter
+- [ ] KVK referral adapter
+- [ ] IMD adapter
+- [ ] AgMarkNet adapter
+- [ ] State agriculture adapter
+- [ ] Scheme-service adapter
+- [ ] Production integration testing
+
+**Status: 🔵 Architecture-ready; real integration pending**
+
+---
+
+### M. Governance and security
+
+- [x] Actor identity boundary
+- [x] Consent boundary
+- [x] Provider identity
+- [x] Provenance representation
+- [x] Versioning
+- [ ] Consent scopes
+- [ ] Purpose limitation
+- [ ] Consent expiry
+- [ ] Revocation
+- [ ] Encryption at rest
+- [ ] Encryption in transit configuration
+- [ ] Audit log
+- [ ] Role-based access control
+- [ ] Tenant isolation testing
+- [ ] Data retention policy
+- [ ] Privacy/data-sharing policy
+- [ ] Security audit
+
+**Status: 🟡 Architectural foundation only**
+
+---
+
+# 32. Engineering hardening backlog
+
+These are high-priority engineering issues rather than new features.
+
+## Priority 1 — Persistence consistency
+
+### Problem
+
+Farm Twin and Case Repository are separate persistence boundaries.
+
+A workflow can theoretically update one successfully and fail on the other.
+
+### Target
+
+Introduce an explicit unit-of-work boundary for operations requiring atomic updates across:
+
+```
+Farm Twin + Case + Event
+```
+
+---
+
+## Priority 2 — Case event ordering
+
+Current event IDs are durable, but UUID ordering is not chronological.
+
+### Target
+
+Introduce a monotonic per-case event sequence:
+
+```
+case_id + sequence
+```
+
+while retaining globally unique event IDs.
+
+---
+
+## Priority 3 — CaseManager mutation semantics
+
+Some mutations currently perform an atomic event/state operation followed by another save.
+
+### Target
+
+Refactor each mutation toward:
+
+```
+validate
+   ↓
+mutate state
+   ↓
+append event
+   ↓
+single atomic commit
+```
+
+This reduces unnecessary writes and makes persistence semantics easier to reason about.
+
+---
+
+## Priority 4 — Provider selection policy
+
+Replace first-match selection with a deterministic policy object.
+
+Candidate interface:
+
+```
+ProviderSelectionPolicy.select(
+    request,
+    candidates,
+    context
+)
+```
+
+Selection must be explainable.
+
+---
+
+## Priority 5 — Execution attempts
+
+A single action may eventually have:
+
+```
+Action
+ ├── Attempt 1 → Provider A → failed
+ └── Attempt 2 → Provider B → completed
+```
+
+The current implementation should evolve toward explicit attempt identity rather than relying on list insertion order.
+
+---
+
+# 33. Testing strategy
+
+Testing is organized around the architecture rather than only individual functions.
+
+## Current test categories
+
+- domain model validation;
+- provider contracts;
+- normalization;
+- evidence fusion;
+- freshness;
+- spatial alignment;
+- geospatial analytics;
+- scientific model behavior;
+- orchestrator decisions;
+- case lifecycle;
+- persistence behavior;
+- service discovery;
+- action routing;
+- transaction state transitions;
+- execution gateway;
+- idempotency;
+- feedback;
+- experience memory;
+- closed-loop workflows.
+
+## Desired test pyramid
+
+```
+                 E2E / field workflows
+                       ▲
+                       │
+               integration tests
+                       ▲
+                       │
+               service boundary tests
+                       ▲
+                       │
+                 unit tests
+                       ▲
+                       │
+             domain invariants
+```
+
+Future tests should increasingly focus on:
+
+- concurrency;
+- failure recovery;
+- provider timeouts;
+- duplicate callbacks;
+- stale evidence;
+- contradictory evidence;
+- invalid geospatial evidence;
+- transaction retries;
+- consent revocation;
+- model version changes.
+
+---
+
+# 34. Definition of done
+
+A feature is **not complete** merely because its Python code exists.
+
+A production-oriented feature should eventually satisfy:
+
+### Domain
+
+- [ ] explicit domain contract;
+- [ ] invariants documented;
+- [ ] serialization/versioning considered.
+
+### Evidence
+
+- [ ] provenance;
+- [ ] freshness;
+- [ ] quality;
+- [ ] spatial/temporal scope;
+- [ ] failure behavior.
+
+### Intelligence
+
+- [ ] uncertainty behavior;
+- [ ] contradiction behavior;
+- [ ] explainable decision path;
+- [ ] test coverage.
+
+### Execution
+
+- [ ] authorization;
+- [ ] consent;
+- [ ] idempotency;
+- [ ] retry behavior;
+- [ ] external status handling.
+
+### Persistence
+
+- [ ] transaction semantics;
+- [ ] concurrency behavior;
+- [ ] migration strategy;
+- [ ] recovery behavior.
+
+### Science
+
+- [ ] source/model provenance;
+- [ ] validation dataset;
+- [ ] calibration;
+- [ ] uncertainty;
+- [ ] expert review.
+
+### Production
+
+- [ ] observability;
+- [ ] security;
+- [ ] privacy;
+- [ ] governance;
+- [ ] operational runbook.
+
+---
+
+# 35. Development roadmap
+
+## Phase 0 — Architecture foundation
+
+**Status: ✅ Completed**
+
+- domain model;
+- Farm Digital Twin;
+- evidence abstraction;
+- scientific model boundary;
+- reasoning engine;
+- action layer;
+- service directory;
+- transaction model;
+- execution gateway;
+- feedback loop;
+- tests/CI.
+
+---
+
+## Phase 1 — Reliability hardening
+
+**Status: 🟡 Current**
+
+Focus:
+
+1. deterministic provider-selection policy;
+2. PostGIS integration tests;
+3. case event sequencing;
+4. cross-repository unit-of-work;
+5. execution-attempt semantics;
+6. callback idempotency;
+7. consent scopes;
+8. stronger concurrency tests.
+
+**Principle:**
+
+> Do not add more intelligence until the existing intelligence has reliable state and execution semantics.
+
+---
+
+## Phase 2 — Real agricultural evidence
+
+**Target**
+
+Connect real sources behind existing interfaces:
+
+- weather;
+- satellite;
+- soil;
+- market;
+- field observations;
+- diagnostic services.
+
+Then test the complete evidence pipeline using real historical cases.
+
+---
+
+## Phase 3 — Rajasthan scientific validation
+
+Build a validation program around:
+
+- Rajasthan agro-climatic zones;
+- soil classes;
+- irrigation regimes;
+- major crops;
+- crop varieties;
+- local weather;
+- field observations;
+- KVK/agricultural university expertise.
+
+The objective is not simply:
+
+> "Does the formula run?"
+
+It is:
+
+> "Does the system make materially better decisions for the agricultural conditions in which it will actually operate?"
+
+---
+
+## Phase 4 — VISTAAR/service integration
+
+Implement provider/service adapters without changing the intelligence core.
+
+Target:
+
+```
+OFI decision
+    ↓
+service capability
+    ↓
+provider discovery
+    ↓
+VISTAAR/Beckn-style network
+    ↓
+real service
+    ↓
+execution status
+    ↓
+outcome
+```
+
+---
+
+## Phase 5 — AI interface
+
+Only after the evidence and service substrate is stable:
+
+- multilingual AI;
+- voice;
+- image understanding;
+- adaptive questioning;
+- farmer-facing explanation;
+- agentic planning.
+
+The AI layer should consume structured evidence and return grounded explanations/actions.
+
+---
+
+## Phase 6 — Field pilot
+
+Start with a constrained problem rather than "all agriculture".
+
+For example:
+
+```
+Crop
++
+Region
++
+Problem
++
+Evidence sources
++
+Service pathway
++
+Outcome metric
+```
+
+A pilot should have measurable baselines.
+
+Possible evaluation dimensions:
+
+- diagnostic accuracy;
+- unnecessary service requests;
+- time-to-action;
+- farmer effort;
+- expert escalation rate;
+- outcome quality;
+- false confidence;
+- evidence freshness;
+- service completion rate.
+
+---
+
+# 36. Suggested first real pilot
+
+A realistic first pilot should be narrow enough to validate the architecture.
+
+Example:
+
+**Rajasthan semi-arid crop water-stress decision loop**
+
+```
+Farm parcel
+    +
+crop cycle
+    +
+weather
+    +
+soil moisture
+    +
+satellite vegetation indices
+    ↓
+water-stress hypothesis
+    ↓
+confidence / conflict
+    ↓
+farmer question OR soil/water verification
+    ↓
+expert/service
+    ↓
+field action
+    ↓
+follow-up observation
+    ↓
+outcome
+```
+
+This would test almost the entire OFI architecture without requiring every agricultural service on day one.
+
+---
+
+# 37. Research directions
+
+Once the foundation is stable, the project can evolve toward research questions such as:
+
+### Multimodal farm state estimation
+
+How can:
+
+```
+satellite + weather + soil + image + farmer observation
+```
+
+be fused into a reliable field state?
+
+### Decision-making under uncertainty
+
+How should an agricultural system choose between:
+
+```
+act
+ask
+measure
+wait
+escalate
+```
+
+when information is incomplete?
+
+### Active information acquisition
+
+What is the **next observation worth collecting**?
+
+This changes the system from passive prediction to:
+
+> prediction + information acquisition.
+
+### Local adaptation
+
+How can empirical farm outcomes improve recommendations without confusing correlation with causation?
+
+### Institutional intelligence
+
+How can the system select not just an answer, but the right:
+
+- person;
+- institution;
+- service;
+- diagnostic;
+- financial instrument;
+- market pathway?
+
+---
+
+# 38. Architectural principles to preserve
+
+These should be treated as project invariants.
+
+### 1. Evidence before language
+
+Never let generated language become the primary evidence layer.
+
+### 2. Context before query
+
+A farm is a temporal system, not a collection of independent questions.
+
+### 3. Uncertainty before confidence theater
+
+The system should be able to say:
+
+> "We do not know yet."
+
+### 4. Action before conversation completion
+
+The objective is not to end a chat. It is to improve the farm decision.
+
+### 5. Human escalation is a feature
+
+Expert escalation is not a system failure.
+
+### 6. Outcomes matter more than messages
+
+The valuable memory is:
+
+```
+decision → action → outcome
+```
+
+not merely:
+
+```
+user → message → response
+```
+
+### 7. Open interfaces
+
+No single provider should become the architecture.
+
+### 8. Science is versioned
+
+Scientific models and thresholds must have provenance and validation status.
+
+### 9. Never silently upgrade heuristics into truth
+
+A screening score remains a screening score until validated.
+
+### 10. Build infrastructure before intelligence theater
+
+A smaller reliable system is more valuable than a larger demo with weak state, evidence and execution semantics.
+
+---
+
+# 39. Current limitations
+
+The following are explicitly known:
+
+1. Real agricultural providers are not yet connected end-to-end.
+2. Scientific models are screening-level.
+3. Rajasthan-local calibration has not been completed.
+4. The current provider-selection policy is intentionally simple.
+5. Cross-repository atomicity remains to be implemented.
+6. Production-grade event sequencing remains to be implemented.
+7. External callbacks are not yet hardened for production.
+8. Consent is foundational rather than complete governance.
+9. AI/LLM interaction is not yet the primary interface.
+10. No field deployment should be inferred from the existence of the prototype.
+
+These are not hidden defects; they are tracked engineering boundaries.
+
+---
+
+# 40. Quick start
+
+Requires **Python 3.11+**.
+
+```bash
+git clone https://github.com/vkraj1123/Open-farm-intelligence.git
+cd Open-farm-intelligence
+
+python -m pip install -e ".[dev]"
+
+pytest -q
+```
+
+Run the development API:
+
+```bash
+uvicorn ofi.api:app --reload
+```
+
+Optional PostgreSQL support:
+
+```bash
+python -m pip install -e ".[postgres]"
+```
+
+Enable PostgreSQL with PostGIS and apply:
+
+```
+src/ofi/twin/schema.sql
+```
+
+---
+
+# 41. Development philosophy
+
+OFI is being built incrementally.
+
+The preferred development order is:
+
+```
+Architecture
+    ↓
+Domain invariants
+    ↓
+Interfaces
+    ↓
+Deterministic implementation
+    ↓
+Tests
+    ↓
+Persistence
+    ↓
+Real data
+    ↓
+Scientific validation
+    ↓
+External services
+    ↓
+AI interface
+    ↓
+Field deployment
+```
+
+This deliberately reverses the common order of:
+
+```
+LLM demo
+    ↓
+more prompts
+    ↓
+more features
+    ↓
+production problems
+```
+
+---
+
+# 42. Project maturity statement
+
+**Current maturity:**
+
+> **Architecture-complete, functionally demonstrable, scientifically unvalidated prototype.**
+
+The repository contains a tested implementation of the core decision-loop architecture.
+
+It should **not** yet be described as:
+
+- production agricultural advisory infrastructure;
+- a validated agronomic decision system;
+- a deployed farmer service;
+- a replacement for agricultural experts;
+- a production VISTAAR integration.
+
+The next milestone is not feature volume.
+
+The next milestone is **reliability + real evidence + scientific validation + real service execution**.
+
+---
+
+# 43. License
+
+See the repository license file for the current licensing terms.
+
+---
+
+## Project principle
+
+> **The goal is not to build an AI that talks about farming.**
+>
+> **The goal is to build an open intelligence layer that can continuously understand a farm, reason from evidence, act through the agricultural ecosystem, observe outcomes, and improve decisions responsibly.**
