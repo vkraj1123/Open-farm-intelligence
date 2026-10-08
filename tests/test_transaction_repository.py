@@ -49,7 +49,7 @@ def test_in_memory_repository_round_trips_transaction_and_events():
     )
 
     created = repo.create(tx)
-    transitioned = repo.transition(created.transaction_id, "submitted", message="sent")
+    transitioned = repo.transition(created.transaction.transaction_id, "submitted", message="sent")
 
     assert transitioned.status == "submitted"
     fresh = repo.get("txn-1")
