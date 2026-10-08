@@ -169,7 +169,7 @@ class ServiceExecutionGateway:
         matches = [tx for tx in self._transactions.values() if tx.action_id == action_id]
         if not matches:
             raise ExecutionError(f"unknown action transaction: {action_id}")
-        latest = matches[-1]
+        latest = max(matches, key=lambda tx: (tx.created_at, tx.transaction_id))
         return action_status_for_transaction(latest.status)
 
     def get_transaction(self, transaction_id: str) -> ServiceTransaction:
