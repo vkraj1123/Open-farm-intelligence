@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 from typing import Any, Callable
 
-from ofi.domain.models import CaseEvent, CaseRecord, FarmCase
+from ofi.domain.models import CaseEvent, CaseOutcome, CaseRecord, FarmCase, ReasoningResult
 from ofi.services.case_repository import CaseRepository
 
 
@@ -172,12 +172,10 @@ class PostgresCaseRepository(CaseRepository):
             case=case,
             latest_reasoning=(
                 None if reasoning_data is None
-                else __import__("ofi.domain.models", fromlist=["ReasoningResult"])
-                .ReasoningResult.model_validate(reasoning_data)
+                else ReasoningResult.model_validate(reasoning_data)
             ),
             outcome=(
                 None if outcome_data is None
-                else __import__("ofi.domain.models", fromlist=["CaseOutcome"])
-                .CaseOutcome.model_validate(outcome_data)
+                else CaseOutcome.model_validate(outcome_data)
             ),
         )
