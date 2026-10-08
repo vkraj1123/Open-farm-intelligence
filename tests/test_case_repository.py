@@ -45,3 +45,21 @@ def test_repository_rejects_duplicate_events():
         assert False, "duplicate event should be rejected"
     except ValueError:
         pass
+
+
+def test_atomic_event_commit_updates_state_and_ledger_together():
+    repository = InMemoryCaseRepository()
+    record = repository.create(make_case())
+    from ofi.domain.models import CaseEvent
+
+    record.case.status = "triaged"
+    event = CaseEvent(
+        id="evt-1",
+        event_type="triaged",
+        actor="system",
+    )
+    repository.save_and_append_event(record, event)
+
+    loaded = repository.get("case-repo")
+    assert loaded.case.status == "triaged"
+    assert [item.event_type for item in loaded.case.events] == ["triaged"]
