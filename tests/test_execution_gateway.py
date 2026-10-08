@@ -139,6 +139,7 @@ def test_action_status_uses_explicit_transaction_creation_time():
     first = ServiceTransaction(
         transaction_id="txn-old",
         idempotency_key="attempt-1",
+        request_fingerprint="fingerprint-1",
         action_id=action().id,
         provider_id="lab-01",
         created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
@@ -146,6 +147,7 @@ def test_action_status_uses_explicit_transaction_creation_time():
     second = ServiceTransaction(
         transaction_id="txn-new",
         idempotency_key="attempt-2",
+        request_fingerprint="fingerprint-2",
         action_id=action().id,
         provider_id="lab-01",
         created_at=datetime(2026, 1, 2, tzinfo=timezone.utc),
