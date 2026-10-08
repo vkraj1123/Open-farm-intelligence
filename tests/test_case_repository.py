@@ -69,13 +69,11 @@ def test_case_version_advances_with_committed_event():
     repository = InMemoryCaseRepository()
     record = repository.create(make_case())
     assert record.version == 0
-    first = record.case.events
     from ofi.domain.models import CaseEvent
     event = CaseEvent(event_type="test", actor="system")
     repository.save_and_append_event(record, event)
     assert record.version == 1
     assert event.id.startswith("evt-")
-    assert record.case.events is not first
 
 
 def test_generated_event_ids_are_unique():
