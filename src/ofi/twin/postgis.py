@@ -36,7 +36,7 @@ class PostGISFarmTwinStore(FarmTwinRepository):
                     VALUES (
                       %s, %s, %s,
                       ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography,
-                      CASE WHEN %s IS NULL THEN NULL ELSE ST_GeogFromText(%s) END,
+                      CASE WHEN %s::text IS NULL THEN NULL ELSE ST_GeogFromText(%s) END,
                       %s::jsonb
                     )
                     ON CONFLICT (id) DO UPDATE SET
