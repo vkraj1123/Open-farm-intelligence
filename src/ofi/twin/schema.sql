@@ -157,3 +157,21 @@ CREATE TABLE IF NOT EXISTS service_transaction_events (
 
 CREATE INDEX IF NOT EXISTS service_transaction_events_time
     ON service_transaction_events (transaction_id, occurred_at, sequence);
+
+
+-- Provider callbacks are independently idempotent. A provider event ID may
+-- be delivered repeatedly, but it must be applied to a transaction at most once.
+CREATE TABLE IF NOT EXISTS service_callback_events (
+    provider_id TEXT NOT NULL,
+    event_id TEXT NOT NULL,
+    transaction_id TEXT NOT NULL REFERENCES service_transactions(transaction_id) ON DELETE CASCADE,
+    received_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    occurred_at TIMESTAMPTZ NOT NULL,
+    status TEXT NOT NULL,
+    external_reference TEXT,
+    message TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (provider_id, event_id)
+);
+
+CREATE INDEX IF NOT EXISTS service_callback_events_transaction_time
+    ON service_callback_events (transaction_id, occurred_at DESC);
