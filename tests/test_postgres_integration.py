@@ -18,7 +18,7 @@ from ofi.domain.models import (
 )
 from ofi.services.postgres_case_repository import PostgresCaseRepository
 from ofi.services.service_transaction import ServiceTransaction
-from ofi.services.transaction_repository import PostgresTransactionRepository
+from ofi.services.transaction_repository import PostgresTransactionRepository, TransactionConflictError
 from ofi.services.service_transaction import ServiceTransaction
 from ofi.services.transaction_repository import PostgresTransactionRepository
 from ofi.services.unit_of_work import PostgresFarmCaseUnitOfWork
@@ -283,7 +283,7 @@ def test_real_postgres_idempotency_is_single_winner_under_concurrency(database):
         "txn-concurrent-1"
     }
 
-    with pytest.raises(Exception, match="idempotency key was reused"):
+    with pytest.raises(TransactionConflictError, match="idempotency key was reused"):
         PostgresTransactionRepository(factory).create(
             ServiceTransaction(
                 transaction_id="txn-conflict",
