@@ -354,8 +354,20 @@ class PostgresTransactionRepository(TransactionRepository):
                 )
                 inserted = cur.fetchone()
                 if inserted is None:
+                    cur.execute(
+                        """
+                        SELECT transaction_id
+                        FROM service_transaction_callbacks
+                        WHERE provider_id = %s AND event_id = %s
+                        """,
+                        (provider_id, event_id),
+                    )
+                    row = cur.fetchone()
+                    if row is None:
+                        raise RuntimeError("callback receipt disappeared")
+                    original_transaction_id = row[0]
                     return CallbackResult(
-                        self._get_with_cursor(cur, transaction_id), False
+                        self._get_with_cursor(cur, original_transaction_id), False
                     )
 
                 working = self._get_with_cursor(cur, transaction_id, for_update=True)
