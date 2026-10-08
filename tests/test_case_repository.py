@@ -79,3 +79,35 @@ def test_case_version_advances_with_committed_event():
 def test_generated_event_ids_are_unique():
     from ofi.domain.models import CaseEvent
     assert CaseEvent(event_type="a", actor="x").id != CaseEvent(event_type="a", actor="x").id
+
+
+def test_event_sequence_is_monotonic_and_durable_in_memory():
+    repository = InMemoryCaseRepository()
+    record = repository.create(make_case())
+    from ofi.domain.models import CaseEvent
+
+    first = CaseEvent(event_type="first", actor="system")
+    second = CaseEvent(event_type="second", actor="system")
+    repository.save_and_append_event(record, first)
+    repository.save_and_append_event(record, second)
+
+    loaded = repository.get("case-repo")
+    assert [event.sequence for event in loaded.case.events] == [1, 2]
+    assert loaded.case.events[0].id != loaded.case.events[1].id
+
+
+def test_explicit_event_sequence_cannot_skip_or_duplicate():
+    repository = InMemoryCaseRepository()
+    record = repository.create(make_case())
+    from ofi.domain.models import CaseEvent
+
+    repository.save_and_append_event(
+        record, CaseEvent(sequence=1, event_type="first", actor="system")
+    )
+    try:
+        repository.save_and_append_event(
+            record, CaseEvent(sequence=3, event_type="third", actor="system")
+        )
+        assert False, "event sequence gaps should be rejected"
+    except ValueError:
+        pass
