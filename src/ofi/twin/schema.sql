@@ -106,12 +106,13 @@ CREATE INDEX IF NOT EXISTS case_records_status_updated
     ON case_records (status, updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS case_events (
-    id TEXT PRIMARY KEY,
+    id TEXT NOT NULL,
     case_id TEXT NOT NULL REFERENCES case_records(id) ON DELETE CASCADE,
     event_type TEXT NOT NULL,
     occurred_at TIMESTAMPTZ NOT NULL,
     actor TEXT NOT NULL,
-    payload JSONB NOT NULL DEFAULT '{}'::jsonb
+    payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    PRIMARY KEY (case_id, id)
 );
 
 CREATE INDEX IF NOT EXISTS case_events_case_time
