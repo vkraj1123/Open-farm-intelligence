@@ -133,13 +133,14 @@ class CaseManager:
         })
 
     def record_outcome(self, case_id: str, outcome: CaseOutcome, actor: str = "farmer") -> CaseRecord:
-        record = self.store.get(case_id)
-        record.outcome = outcome
-        record.case.status = "resolved" if outcome.outcome == "resolved" else "observing"
-        for observation in outcome.evidence:
-            record.case.observations.append(observation)
-            self.farm_twin.add_observation(record.case.farm.id, observation)
-        return self._event(record, "outcome_recorded", actor, {"outcome": outcome.outcome})
+        with self.unit_of_work.atomic():
+            record = self.store.get(case_id)
+            record.outcome = outcome
+            record.case.status = "resolved" if outcome.outcome == "resolved" else "observing"
+            for observation in outcome.evidence:
+                record.case.observations.append(observation)
+                self.farm_twin.add_observation(record.case.farm.id, observation)
+            return self._event(record, "outcome_recorded", actor, {"outcome": outcome.outcome})
 
     def record_action_outcome(self, case_id: str, action, outcome, feedback_service=None):
         """Attach an observed action outcome and generate a bounded learning signal."""
