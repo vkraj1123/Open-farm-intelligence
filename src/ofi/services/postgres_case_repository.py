@@ -26,8 +26,8 @@ class PostgresCaseRepository(CaseRepository):
                     cur.execute(
                         """
                         INSERT INTO case_records
-                          (id,status,created_at,updated_at,case_data,latest_reasoning,outcome)
-                        VALUES (%s,%s,%s,%s,%s::jsonb,NULL,NULL)
+                          (id,status,created_at,updated_at,version,case_data,latest_reasoning,outcome)
+                        VALUES (%s,%s,%s,%s,0,%s::jsonb,NULL,NULL)
                         """,
                         (
                             case.id,
@@ -44,7 +44,7 @@ class PostgresCaseRepository(CaseRepository):
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT id,status,created_at,updated_at,case_data,
+                    SELECT id,status,created_at,updated_at,version,case_data,
                            latest_reasoning,outcome
                     FROM case_records
                     WHERE id=%s
@@ -144,10 +144,11 @@ class PostgresCaseRepository(CaseRepository):
                 SET status=%s,
                     created_at=%s,
                     updated_at=%s,
+                    version=version+1,
                     case_data=%s::jsonb,
                     latest_reasoning=%s::jsonb,
                     outcome=%s::jsonb
-                WHERE id=%s
+                WHERE id=%s AND version=%s
                 """,
                 (
                     record.case.status,
@@ -159,17 +160,20 @@ class PostgresCaseRepository(CaseRepository):
                     self._json(record.outcome.model_dump(mode="json"))
                     if record.outcome else None,
                     record.case.id,
+                    record.version,
                 ),
             )
             if cur.rowcount != 1:
-                raise KeyError(record.case.id)
+                raise RuntimeError(f"case version conflict: {record.case.id}")
+            record.version += 1
 
     @staticmethod
     def _record_from_row(row: tuple[Any, ...]) -> CaseRecord:
-        _, _, _, _, case_data, reasoning_data, outcome_data = row
+        _, _, _, _, version, case_data, reasoning_data, outcome_data = row
         case = FarmCase.model_validate(case_data)
         return CaseRecord(
             case=case,
+            version=version,
             latest_reasoning=(
                 None if reasoning_data is None
                 else ReasoningResult.model_validate(reasoning_data)
