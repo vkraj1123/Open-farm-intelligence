@@ -26,7 +26,7 @@ _ALLOWED_TRANSITIONS = {
 }
 
 
-@dataclass(frozen=True)
+@dataclass
 class ExecutionAttempt:
     attempt_id: str
     transaction_id: str
