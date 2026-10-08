@@ -61,5 +61,14 @@ class InMemoryCaseRepository(CaseRepository):
     def save_and_append_event(self, record: CaseRecord, event: CaseEvent) -> CaseRecord:
         if any(existing.id == event.id for existing in record.case.events):
             raise ValueError(f"event already exists: {event.id}")
+        if event.sequence is None:
+            event.sequence = max(
+                (existing.sequence or 0 for existing in record.case.events),
+                default=0,
+            ) + 1
+        elif event.sequence != len(record.case.events) + 1:
+            raise ValueError(
+                f"invalid event sequence for case {record.case.id}: {event.sequence}"
+            )
         record.case.events.append(event)
         return self.save(record)
