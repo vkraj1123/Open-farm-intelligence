@@ -79,7 +79,6 @@ class TransactionRepository(ABC):
         """Atomically apply a provider callback exactly once."""
 
     @abstractmethod
-    @abstractmethod
     def create_attempt(self, attempt: ExecutionAttempt) -> ExecutionAttempt:
         """Create a durable execution attempt with monotonic numbering."""
 
@@ -95,37 +94,6 @@ class TransactionRepository(ABC):
         """Return attempts for a transaction in attempt-number order."""
 
     @abstractmethod
-    def create_attempt(self, attempt: ExecutionAttempt) -> ExecutionAttempt:
-        existing = self.list_attempts(attempt.transaction_id)
-        expected = len(existing) + 1
-        if attempt.attempt_number != expected:
-            raise TransactionConflictError(f"expected attempt number {expected}, got {attempt.attempt_number}")
-        if attempt.attempt_id in self._attempts:
-            raise ValueError(f"attempt already exists: {attempt.attempt_id}")
-        self._attempts[attempt.attempt_id] = deepcopy(attempt)
-        return deepcopy(attempt)
-
-    def transition_attempt(self, attempt_id: str, status: AttemptStatus, *,
-                           external_reference: str | None = None,
-                           last_error: str | None = None) -> ExecutionAttempt:
-        from datetime import datetime, timezone
-        try:
-            current = deepcopy(self._attempts[attempt_id])
-        except KeyError as exc:
-            raise KeyError(attempt_id) from exc
-        current.status = status
-        current.updated_at = datetime.now(timezone.utc)
-        if external_reference is not None:
-            current.external_reference = external_reference
-        if last_error is not None:
-            current.last_error = last_error
-        self._attempts[attempt_id] = deepcopy(current)
-        return current
-
-    def list_attempts(self, transaction_id: str) -> list[ExecutionAttempt]:
-        return sorted((deepcopy(a) for a in self._attempts.values() if a.transaction_id == transaction_id),
-                      key=lambda a: a.attempt_number)
-
     def list_for_action(self, action_id: str) -> list[ServiceTransaction]:
         """Return transactions for an action in creation order."""
 
@@ -218,6 +186,39 @@ class InMemoryTransactionRepository(TransactionRepository):
         )
         self._callback_events[event_key] = transaction_id
         return CallbackResult(transaction, True)
+
+    def create_attempt(self, attempt: ExecutionAttempt) -> ExecutionAttempt:
+        existing = self.list_attempts(attempt.transaction_id)
+        expected = len(existing) + 1
+        if attempt.attempt_number != expected:
+            raise TransactionConflictError(f"expected attempt number {expected}, got {attempt.attempt_number}")
+        if attempt.attempt_id in self._attempts:
+            raise ValueError(f"attempt already exists: {attempt.attempt_id}")
+        self._attempts[attempt.attempt_id] = deepcopy(attempt)
+        return deepcopy(attempt)
+
+    def transition_attempt(self, attempt_id: str, status: AttemptStatus, *,
+                           external_reference: str | None = None,
+                           last_error: str | None = None) -> ExecutionAttempt:
+        from datetime import datetime, timezone
+        try:
+            current = deepcopy(self._attempts[attempt_id])
+        except KeyError as exc:
+            raise KeyError(attempt_id) from exc
+        current.status = status
+        current.updated_at = datetime.now(timezone.utc)
+        if external_reference is not None:
+            current.external_reference = external_reference
+        if last_error is not None:
+            current.last_error = last_error
+        self._attempts[attempt_id] = deepcopy(current)
+        return current
+
+    def list_attempts(self, transaction_id: str) -> list[ExecutionAttempt]:
+        return sorted(
+            (deepcopy(a) for a in self._attempts.values() if a.transaction_id == transaction_id),
+            key=lambda a: a.attempt_number,
+        )
 
     def list_for_action(self, action_id: str) -> list[ServiceTransaction]:
         matches = [
