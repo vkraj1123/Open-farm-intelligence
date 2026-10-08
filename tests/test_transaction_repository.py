@@ -11,11 +11,10 @@ from ofi.services.execution_gateway import (
     ServiceExecutionGateway,
 )
 from ofi.services.action_router import ActionRequest, ActionRouter
-from ofi.services.service_transaction import ServiceTransaction
+from ofi.services.service_transaction import ExecutionAttempt, ServiceTransaction
 from ofi.services.transaction_repository import (
     InMemoryTransactionRepository,
     TransactionConflictError,
-    ExecutionAttempt,
 )
 
 
