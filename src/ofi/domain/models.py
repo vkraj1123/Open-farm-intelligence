@@ -93,6 +93,7 @@ class CaseStatus:
 
 class CaseEvent(BaseModel):
     id: str = Field(default_factory=lambda: f"evt-{uuid4().hex}")
+    sequence: int | None = Field(default=None, ge=1)
     event_type: str
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     actor: str
