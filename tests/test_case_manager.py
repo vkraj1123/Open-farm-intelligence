@@ -143,7 +143,8 @@ def test_create_rolls_back_case_when_twin_write_fails():
 def test_collect_evidence_rolls_back_case_and_twin_on_late_failure():
     m = CaseManager(scientific_models=FailingScientificModel())
     m.create(case())
-    before_case = m.store.get("c1").model_copy(deep=True)
+    before_record = m.store.get("c1")
+    before_case = before_record.model_copy(deep=True)
     before_twin = m.farm_twin.snapshot("f1")
 
     try:
@@ -155,6 +156,7 @@ def test_collect_evidence_rolls_back_case_and_twin_on_late_failure():
 
     after_case = m.store.get("c1")
     after_twin = m.farm_twin.snapshot("f1")
+    assert after_case is before_record
     assert after_case.case.model_dump(mode="json") == before_case.case.model_dump(mode="json")
     assert after_case.version == before_case.version
     assert after_twin.recent_observations == before_twin.recent_observations
