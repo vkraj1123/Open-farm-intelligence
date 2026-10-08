@@ -4,6 +4,7 @@ from ofi.domain.models import CaseOutcome, CropCycle, Farm, FarmCase, GeoPoint, 
 from ofi.providers.base import EvidenceProvider
 from ofi.providers.registry import default_mock_registry
 from ofi.services.case_manager import CaseManager
+from ofi.twin.farm_twin import FarmTwinStore
 
 
 def case():
