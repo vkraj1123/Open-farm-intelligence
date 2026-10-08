@@ -46,7 +46,7 @@ def database():
     yield
     with psycopg.connect(_dsn()) as conn:
         conn.execute(
-            "TRUNCATE service_transaction_events, service_transactions, case_events, case_records, observations, "
+            "TRUNCATE service_callback_events, service_transaction_events, service_transactions, case_events, case_records, observations, "
             "production_contracts, land_parties, crop_cycles, parcels, farms "
             "CASCADE"
         )
