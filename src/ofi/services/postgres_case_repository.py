@@ -80,11 +80,13 @@ class PostgresCaseRepository(CaseRepository):
                 return record
 
     def save(self, record: CaseRecord) -> CaseRecord:
-        record.case.updated_at = datetime.now(timezone.utc)
+        working = record.model_copy(deep=True)
+        working.case.updated_at = datetime.now(timezone.utc)
         with self._connection_factory() as conn:
             with conn.transaction():
-                next_version = self._save_record(conn, record)
-        record.version = next_version
+                next_version = self._save_record(conn, working)
+        working.version = next_version
+        self._apply_committed(record, working)
         return record
 
     def append_event(self, case_id: str, event: CaseEvent) -> CaseRecord:
@@ -97,13 +99,15 @@ class PostgresCaseRepository(CaseRepository):
         if any(existing.id == event.id for existing in record.case.events):
             raise ValueError(f"event already exists: {event.id}")
 
-        record.case.events.append(event)
-        record.case.updated_at = datetime.now(timezone.utc)
+        working = record.model_copy(deep=True)
+        working_event = event.model_copy(deep=True)
+        working.case.events.append(working_event)
+        working.case.updated_at = datetime.now(timezone.utc)
 
         try:
             with self._connection_factory() as conn:
                 with conn.transaction():
-                    next_version = self._save_record(conn, record)
+                    next_version = self._save_record(conn, working)
                     with conn.cursor() as cur:
                         if event.sequence is None:
                             cur.execute(
@@ -112,9 +116,9 @@ class PostgresCaseRepository(CaseRepository):
                                 FROM case_events
                                 WHERE case_id=%s
                                 """,
-                                (record.case.id,),
+                                (working.case.id,),
                             )
-                            event.sequence = cur.fetchone()[0]
+                            working_event.sequence = cur.fetchone()[0]
                         else:
                             cur.execute(
                                 """
@@ -122,12 +126,12 @@ class PostgresCaseRepository(CaseRepository):
                                 FROM case_events
                                 WHERE case_id=%s AND sequence=%s
                                 """,
-                                (record.case.id, event.sequence),
+                                (working.case.id, working_event.sequence),
                             )
                             if cur.fetchone() is not None:
                                 raise ValueError(
                                     f"event sequence already exists: "
-                                    f"{record.case.id}:{event.sequence}"
+                                    f"{working.case.id}:{working_event.sequence}"
                                 )
                         cur.execute(
                             """
@@ -136,20 +140,27 @@ class PostgresCaseRepository(CaseRepository):
                             VALUES (%s,%s,%s,%s,%s,%s,%s::jsonb)
                             """,
                             (
-                                event.id,
-                                record.case.id,
-                                event.sequence,
-                                event.event_type,
-                                event.timestamp,
-                                event.actor,
-                                self._json(event.payload),
+                                working_event.id,
+                                working.case.id,
+                                working_event.sequence,
+                                working_event.event_type,
+                                working_event.timestamp,
+                                working_event.actor,
+                                self._json(working_event.payload),
                             ),
                         )
-            record.version = next_version
+            working.version = next_version
         except Exception:
-            record.case.events.pop()
             raise
+        self._apply_committed(record, working)
         return record
+
+    @staticmethod
+    def _apply_committed(target: CaseRecord, committed: CaseRecord) -> None:
+        target.case = committed.case
+        target.version = committed.version
+        target.latest_reasoning = committed.latest_reasoning
+        target.outcome = committed.outcome
 
     @staticmethod
     def _case_json(case: FarmCase) -> str:
