@@ -336,4 +336,13 @@ def test_real_postgres_provider_callback_is_exactly_once(database):
     assert first.applied is True
     assert replay.applied is False
     assert replay.transaction.status == "accepted"
-    assert len(replay.transaction.events) == 2
+    assert replay.transaction.transaction_id == "txn-callback"
+
+    mismatched_replay = repo.apply_callback(
+        provider_id="lab-01",
+        event_id="provider-event-1",
+        transaction_id="wrong-transaction",
+        status="accepted",
+    )
+    assert mismatched_replay.applied is False
+    assert mismatched_replay.transaction.transaction_id == "txn-callback"
