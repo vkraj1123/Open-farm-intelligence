@@ -7,6 +7,7 @@ from ofi.services.execution_gateway import (
     ActorIdentity,
     ConsentGrant,
     ExecutionError,
+    CallbackAuthenticationError,
     MockServiceAdapter,
     ServiceExecutionGateway,
 )
