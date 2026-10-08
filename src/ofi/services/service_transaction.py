@@ -54,6 +54,7 @@ class ServiceTransaction:
     idempotency_key: str
     action_id: str
     provider_id: str | None
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     status: TransactionStatus = "planned"
     external_reference: str | None = None
     events: list[TransactionEvent] = field(default_factory=list)
