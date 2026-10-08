@@ -164,16 +164,16 @@ def _snapshot_parcel(snapshot: FarmSnapshot):
 def canonical_payload(payload: Mapping[str, Any], *, required: tuple[str, ...]) -> ProviderPayload:
     if not isinstance(payload, Mapping):
         raise AdapterError("provider response must be a mapping")
-    missing = [key for key in required if key not in payload]
+    values = payload.get("values", payload)
+    if not isinstance(values, Mapping):
+        raise AdapterError("provider values must be a mapping")
+    missing = [key for key in required if key not in values]
     if missing:
         raise AdapterError(f"provider response missing required fields: {', '.join(missing)}")
     quality = float(payload.get("quality", 1.0))
     confidence = float(payload.get("confidence", 1.0))
     if not 0 <= quality <= 1 or not 0 <= confidence <= 1:
         raise AdapterError("quality and confidence must be between 0 and 1")
-    values = payload.get("values", payload)
-    if not isinstance(values, Mapping):
-        raise AdapterError("provider values must be a mapping")
     return ProviderPayload(
         timestamp=payload.get("timestamp"),
         source=str(payload.get("source", "external")),
