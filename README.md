@@ -1284,14 +1284,14 @@ The core closed-loop architecture is implemented and tested, but the project is 
 - [x] Signed provider callbacks
 - [x] Callback authentication
 - [x] External event idempotency
-- [ ] Retry policy
+- [x] Retry policy
 - [ ] Dead-letter handling
 - [x] Explicit execution-attempt ledger
 - [x] Unknown external execution state
 - [ ] Multi-attempt retry orchestration
 - [ ] Real service adapter
 
-**Status: 🟡 Durable execution + authenticated callback boundary + explicit attempt ledger implemented; retry orchestration and production webhook hardening remain**
+**Status: 🟡 Durable execution + authenticated callback boundary + explicit attempt ledger + safe retry policy implemented; reconciliation-driven retry orchestration and production webhook hardening remain**
 
 ---
 
@@ -1375,6 +1375,26 @@ The core closed-loop architecture is implemented and tested, but the project is 
 - [ ] Security audit
 
 **Status: 🟡 Architectural foundation only**
+
+---
+
+## Safe retry invariant
+
+An external execution timeout is not proof of failure. OFI must not create another external attempt while the provider's execution state is unknown.
+
+The retry policy therefore requires:
+
+```
+local attempt state
+      ↓
+provider reconciliation
+      ↓
+execution confirmed?
+  ├── yes → do not retry
+  └── no  → retry may be allowed
+```
+
+A local `failed`, `rejected`, or `unknown` state alone is insufficient to authorize a new external attempt. The policy is deterministic and side-effect free; actual reconciliation and retry orchestration remain separate implementation steps.
 
 ---
 
