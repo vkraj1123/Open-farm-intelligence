@@ -4,26 +4,13 @@
 
 > **Bharat-VISTAAR provides the agricultural digital network; Open Farm Intelligence provides the farm-level intelligence and orchestration layer that turns that network into a continuous farm decision system.**
 
-OFI is intentionally **not another farmer chatbot**. It maintains farm context, gathers and evaluates evidence, represents uncertainty, chooses the next action, routes work to services or experts, and learns from field outcomes.
+OFI is not another farmer chatbot. It maintains farm context, evaluates evidence, represents uncertainty, chooses the next action, routes work to services or experts, and learns from field outcomes.
 
 ## Core loop
 
 ```text
-Farm context
-    ↓
-Evidence
-    ↓
-Competing hypotheses
-    ↓
-Confidence + uncertainty
-    ↓
-Next action
-    ↓
-Service / human execution
-    ↓
-Field outcome
-    ↓
-Feedback into the farm record
+Farm context → evidence → hypotheses → confidence/uncertainty
+     → next action → service/human → field outcome → feedback
 ```
 
 ## Architecture
@@ -102,7 +89,6 @@ Requires Python 3.11+.
 ```bash
 git clone https://github.com/vkraj1123/Open-farm-intelligence.git
 cd Open-farm-intelligence
-
 python -m pip install -e ".[dev]"
 pytest -q
 ```
@@ -117,9 +103,9 @@ uvicorn ofi.api:app --reload
 
 The domain is repository-driven. The default in-memory farm twin is lightweight for tests and local development.
 
-An optional PostGIS implementation is available as `ofi.twin.postgis.PostGISFarmTwinStore`. Install the optional PostgreSQL dependency and apply `src/ofi/twin/schema.sql` to a PostgreSQL database with PostGIS enabled.
+An optional PostGIS implementation is available as `ofi.twin.postgis.PostGISFarmTwinStore`. Install the optional PostgreSQL dependency and apply `src/ofi/twin/schema.sql` to PostgreSQL with PostGIS enabled.
 
-The PostGIS adapter accepts an injected connection factory so credentials, pooling, TLS, retries and deployment-specific connection management remain outside the domain.
+The PostGIS adapter accepts an injected connection factory so credentials, pooling, TLS, retries and deployment-specific connection management stay outside the domain.
 
 ## Scientific safety boundary
 
@@ -131,17 +117,9 @@ The intended production path is to place validated regional scientific models an
 
 OFI is designed to complement India's agricultural digital public infrastructure rather than replace it.
 
-Potential future integration points include:
+Potential future integration points include VISTAAR/Beckn-style provider discovery, ICAR/KVK scientific evidence and expert escalation, IMD weather, AgMarkNet, Soil Health Card data, state agriculture systems, schemes, and service providers.
 
-- VISTAAR/Beckn-style provider discovery
-- ICAR/KVK scientific evidence and expert escalation
-- IMD weather services
-- AgMarkNet/market information
-- Soil Health Card and soil-test evidence
-- State agriculture systems and schemes
-- Service providers such as soil-testing, diagnostics and extension
-
-External integrations will remain behind explicit provider/service interfaces so that the core intelligence layer stays testable and provider-neutral.
+External integrations remain behind explicit provider/service interfaces so the intelligence layer stays testable and provider-neutral.
 
 ## Roadmap
 
@@ -151,12 +129,12 @@ External integrations will remain behind explicit provider/service interfaces so
 4. Add durable event sequencing and idempotent external callbacks
 5. Validate/calibrate scientific models with Rajasthan-local data
 6. Add VISTAAR/Beckn-compatible service adapters
-7. Add multimodal and multilingual AI capabilities downstream of the evidence/science substrate
+7. Add multimodal and multilingual AI downstream of the evidence/science substrate
 8. Build production observability, consent scopes and governance controls
 
 ## Status
 
-This repository is an **active engineering prototype**. The architecture and interfaces are the primary focus at this stage; external agricultural integrations and production agronomic validation are intentionally not claimed yet.
+**Active engineering prototype.** Architecture and interfaces are the current focus. External agricultural integrations and production agronomic validation are intentionally not claimed yet.
 
 ## License
 
