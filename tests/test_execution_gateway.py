@@ -126,3 +126,21 @@ def test_unregistered_service_or_provider_is_not_silently_executed():
             action=action(), route=route(), actor=ActorIdentity("u1", "farmer"),
             consent=consent(), provider_id="missing-provider",
         )
+
+
+def test_action_status_uses_explicit_transaction_creation_time():
+    gateway = ServiceExecutionGateway([MockServiceAdapter("soil_test", provider_id="lab-01")])
+    actor = ActorIdentity("u1", "farmer")
+    first = gateway.submit(
+        action=action(), route=route(), actor=actor, consent=consent(),
+        provider_id="lab-01", idempotency_key="attempt-1",
+    )
+    second = gateway.submit(
+        action=action(), route=route(), actor=actor, consent=consent(),
+        provider_id="lab-01", idempotency_key="attempt-2",
+    )
+    older = gateway.get_transaction(first.transaction_id)
+    newer = gateway.get_transaction(second.transaction_id)
+    older.created_at, newer.created_at = newer.created_at, older.created_at
+
+    assert gateway.action_status(action().id) == "routed"
