@@ -97,6 +97,7 @@ CREATE TABLE IF NOT EXISTS case_records (
     status TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL,
+    version BIGINT NOT NULL DEFAULT 0,
     case_data JSONB NOT NULL,
     latest_reasoning JSONB,
     outcome JSONB
