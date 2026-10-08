@@ -57,7 +57,7 @@ def freshness_for(
     if latest is None:
         return EvidenceFreshness(kind, None, None, False, True, window)
 
-    age = max(0.0, (moment - latest.timestamp).total_seconds() / 3600)
+    age = round(max(0.0, (moment - latest.timestamp).total_seconds() / 3600), 6)
     fresh = age <= window * 24
     return EvidenceFreshness(
         kind=kind,
