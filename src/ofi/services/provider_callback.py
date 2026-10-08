@@ -70,7 +70,7 @@ class ProviderCallbackVerifier:
             raise CallbackVerificationError("unknown callback provider")
 
         if not hmac.compare_digest(
-            callback.signing_payload() and callback.sign(secret),
+            callback.sign(secret),
             callback.signature,
         ):
             raise CallbackVerificationError("invalid callback signature")
