@@ -205,7 +205,7 @@ class ServiceExecutionGateway:
         )
         try:
             receipt = adapter.execute(request)
-        except Exception as exc:
+        except (TimeoutError, ConnectionError) as exc:
             attempts = self._transactions.list_attempts(transaction.transaction_id)
             self._transactions.transition_attempt(
                 attempts[-1].attempt_id,
