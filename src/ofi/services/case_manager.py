@@ -22,16 +22,23 @@ class CaseManager:
         scientific_models=None,
         unit_of_work: UnitOfWork | None = None,
     ):
-        self.store: CaseRepository = store or InMemoryCaseRepository()
         self.orchestrator = orchestrator or Orchestrator()
-        self.farm_twin = farm_twin or FarmTwinStore()
         self.scientific_models = scientific_models or default_scientific_registry()
-        self.unit_of_work = unit_of_work or (
-            InMemoryFarmCaseUnitOfWork(self.store, self.farm_twin)
-            if isinstance(self.store, InMemoryCaseRepository)
-            and isinstance(self.farm_twin, FarmTwinStore)
-            else UnitOfWork()
-        )
+        if unit_of_work is not None:
+            if store is not None or farm_twin is not None:
+                raise ValueError("provide repositories through unit_of_work, not alongside it")
+            self.unit_of_work = unit_of_work
+            self.store = unit_of_work.case_repository
+            self.farm_twin = unit_of_work.farm_twin
+        else:
+            self.store: CaseRepository = store or InMemoryCaseRepository()
+            self.farm_twin = farm_twin or FarmTwinStore()
+            self.unit_of_work = (
+                InMemoryFarmCaseUnitOfWork(self.store, self.farm_twin)
+                if isinstance(self.store, InMemoryCaseRepository)
+                and isinstance(self.farm_twin, FarmTwinStore)
+                else UnitOfWork()
+            )
 
     def create(self, case: FarmCase) -> CaseRecord:
         with self.unit_of_work.atomic():
