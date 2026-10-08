@@ -6,6 +6,7 @@ from uuid import uuid4
 from ofi.services.action_router import ActionRequest, ActionRoute
 from ofi.services.service_transaction import (
     ServiceTransaction,
+    TransactionEvent,
     action_status_for_transaction,
 )
 from ofi.services.transaction_repository import (
@@ -133,26 +134,34 @@ class ServiceExecutionGateway:
 
         key = idempotency_key or f"{action.id}:{selected_provider}"
         request_fingerprint = f"{action.id}|{route.service}|{selected_provider}"
+        transaction_id = f"txn:{uuid4()}"
         transaction = ServiceTransaction(
-            transaction_id=f"txn:{uuid4()}",
+            transaction_id=transaction_id,
             idempotency_key=key,
             request_fingerprint=request_fingerprint,
             action_id=action.id,
             provider_id=selected_provider,
+            status="submitted",
+            events=[
+                TransactionEvent(
+                    transaction_id=transaction_id,
+                    status="submitted",
+                    occurred_at=datetime.now(timezone.utc),
+                    message="Execution submitted to provider boundary.",
+                )
+            ],
         )
 
         try:
-            existing_or_created = self._transactions.create(transaction)
+            creation = self._transactions.create_if_absent(transaction)
         except TransactionConflictError as exc:
             raise ExecutionError(str(exc)) from exc
 
-        if existing_or_created.transaction_id != transaction.transaction_id:
-            existing = existing_or_created
-            if existing.status != "planned":
-                return self._receipt_from_transaction(existing, route.service)
-            transaction = existing
-        else:
-            transaction = existing_or_created
+        if not creation.created:
+            return self._receipt_from_transaction(
+                creation.transaction, route.service
+            )
+        transaction = creation.transaction
 
         request = ExecutionRequest(
             action=action,
@@ -164,12 +173,10 @@ class ServiceExecutionGateway:
         )
         receipt = adapter.execute(request)
 
-        if transaction.status == "planned":
-            transaction = self._transactions.transition(
+        if receipt.external_reference is not None:
+            transaction = self._transactions.update_external_reference(
                 transaction.transaction_id,
-                "submitted",
-                external_reference=receipt.external_reference,
-                message=receipt.message,
+                receipt.external_reference,
             )
 
         if receipt.status != "submitted":

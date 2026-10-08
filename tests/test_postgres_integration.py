@@ -1,6 +1,7 @@
 import os
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date
+from threading import Lock
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -17,6 +18,8 @@ from ofi.domain.models import (
     Parcel,
 )
 from ofi.services.postgres_case_repository import PostgresCaseRepository
+from ofi.services.execution_gateway import ActorIdentity, ConsentGrant, MockServiceAdapter, ServiceExecutionGateway
+from ofi.services.action_router import ActionRequest, ActionRouter
 from ofi.services.service_transaction import ServiceTransaction
 from ofi.services.transaction_repository import PostgresTransactionRepository
 from ofi.services.unit_of_work import PostgresFarmCaseUnitOfWork
@@ -250,3 +253,52 @@ def test_real_postgres_idempotency_is_concurrency_safe(database):
             "WHERE idempotency_key = 'idem-concurrent'"
         ).fetchone()
     assert row[0] == 1
+
+
+def test_real_postgres_gateway_executes_idempotent_request_once(database):
+    factory = lambda: psycopg.connect(_dsn())
+    calls = {"count": 0}
+    lock = Lock()
+
+    class CountingAdapter(MockServiceAdapter):
+        def execute(self, request):
+            with lock:
+                calls["count"] += 1
+            return super().execute(request)
+
+    gateway = ServiceExecutionGateway(
+        [CountingAdapter("soil_test", provider_id="lab-01")],
+        transaction_repository=PostgresTransactionRepository(factory),
+    )
+    action = ActionRequest(
+        id="action-gateway-concurrent",
+        case_id="case-1",
+        farm_id="farm-1",
+        action="REQUEST_TEST",
+        service="soil_test",
+        confidence=0.8,
+        rationale="Verify soil condition.",
+    )
+    route = ActionRouter().route_action(action)
+    now = datetime.now(timezone.utc)
+    consent = ConsentGrant(
+        "u1", "soil_test", "granted", now,
+        expires_at=now + timedelta(days=1),
+    )
+
+    def submit():
+        return gateway.submit(
+            action=action,
+            route=route,
+            actor=ActorIdentity("u1", "farmer"),
+            consent=consent,
+            provider_id="lab-01",
+            idempotency_key="gateway-concurrent-key",
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        receipts = list(executor.map(lambda _: submit(), [1, 2]))
+
+    assert calls["count"] == 1
+    assert receipts[0].transaction_id == receipts[1].transaction_id
+    assert {receipt.status for receipt in receipts} == {"submitted"}
