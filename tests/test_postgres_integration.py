@@ -1,4 +1,5 @@
 import os
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from pathlib import Path
 
@@ -111,3 +112,77 @@ def test_real_postgres_uow_rolls_back_case_and_farm_together(database):
     assert restored.case.status == "reported"
     assert restored.case.events == []
     assert all(obs.id != "obs-rollback" for obs in snapshot.recent_observations)
+
+
+def _create_case_in_database(factory):
+    farm = make_farm()
+    case = make_case(farm)
+    PostgresCaseRepository(factory).create(case)
+    return farm, case
+
+
+def test_real_postgres_rejects_stale_case_writer_without_partial_event(database):
+    factory = lambda: psycopg.connect(_dsn())
+    _, case = _create_case_in_database(factory)
+    first_repo = PostgresCaseRepository(factory)
+    second_repo = PostgresCaseRepository(factory)
+    first = first_repo.get(case.id)
+    second = second_repo.get(case.id)
+
+    first.case.status = "triaged"
+    second.case.status = "escalated"
+
+    def commit(repo, record, event_type):
+        try:
+            repo.save_and_append_event(
+                record,
+                CaseEvent(event_type=event_type, actor="system"),
+            )
+            return "committed"
+        except RuntimeError as exc:
+            return str(exc)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(
+            lambda args: commit(*args),
+            [
+                (first_repo, first, "triaged"),
+                (second_repo, second, "escalated"),
+            ],
+        ))
+
+    assert sorted(result == "committed" for result in results) == [False, True]
+    fresh = first_repo.get(case.id)
+    assert fresh.version == 1
+    assert len(fresh.case.events) == 1
+    assert fresh.case.events[0].sequence == 1
+    assert fresh.case.status in {"triaged", "escalated"}
+
+
+def test_real_postgres_failed_append_preserves_caller_state(database):
+    factory = lambda: psycopg.connect(_dsn())
+    _, case = _create_case_in_database(factory)
+    repo = PostgresCaseRepository(factory)
+    record = repo.get(case.id)
+    original_status = record.case.status
+    original_version = record.version
+    original_events = list(record.case.events)
+
+    record.case.status = "triaged"
+    event = CaseEvent(
+        event_type="triaged",
+        actor="system",
+        sequence=99,
+    )
+
+    with pytest.raises(ValueError, match="expected 1"):
+        repo.save_and_append_event(record, event)
+
+    assert record.version == original_version
+    assert record.case.status == "triaged"
+    assert record.case.events == original_events
+
+    fresh = repo.get(case.id)
+    assert fresh.version == original_version
+    assert fresh.case.status == original_status
+    assert fresh.case.events == []
