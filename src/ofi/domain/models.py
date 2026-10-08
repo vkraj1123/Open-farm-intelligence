@@ -92,7 +92,7 @@ class CaseStatus:
 
 
 class CaseEvent(BaseModel):
-    id: str
+    id: str = Field(default_factory=lambda: f"evt-{uuid4().hex}")
     event_type: str
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     actor: str
@@ -161,6 +161,7 @@ class CaseOutcome(BaseModel):
 
 class CaseRecord(BaseModel):
     case: FarmCase
+    version: int = Field(default=0, ge=0)
     latest_reasoning: ReasoningResult | None = None
     outcome: CaseOutcome | None = None
 
