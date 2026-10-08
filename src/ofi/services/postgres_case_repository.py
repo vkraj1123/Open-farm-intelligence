@@ -82,7 +82,8 @@ class PostgresCaseRepository(CaseRepository):
         record.case.updated_at = datetime.now(timezone.utc)
         with self._connection_factory() as conn:
             with conn.transaction():
-                self._save_record(conn, record)
+                next_version = self._save_record(conn, record)
+        record.version = next_version
         return record
 
     def append_event(self, case_id: str, event: CaseEvent) -> CaseRecord:
@@ -101,7 +102,7 @@ class PostgresCaseRepository(CaseRepository):
         try:
             with self._connection_factory() as conn:
                 with conn.transaction():
-                    self._save_record(conn, record)
+                    next_version = self._save_record(conn, record)
                     with conn.cursor() as cur:
                         cur.execute(
                             """
@@ -118,6 +119,7 @@ class PostgresCaseRepository(CaseRepository):
                                 self._json(event.payload),
                             ),
                         )
+            record.version = next_version
         except Exception:
             record.case.events.pop()
             raise
@@ -136,7 +138,7 @@ class PostgresCaseRepository(CaseRepository):
         import json
         return json.dumps(value)
 
-    def _save_record(self, conn: Any, record: CaseRecord) -> None:
+    def _save_record(self, conn: Any, record: CaseRecord) -> int:
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -165,7 +167,7 @@ class PostgresCaseRepository(CaseRepository):
             )
             if cur.rowcount != 1:
                 raise RuntimeError(f"case version conflict: {record.case.id}")
-            record.version += 1
+            return record.version + 1
 
     @staticmethod
     def _record_from_row(row: tuple[Any, ...]) -> CaseRecord:
