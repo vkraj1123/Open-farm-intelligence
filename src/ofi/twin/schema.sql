@@ -87,3 +87,35 @@ CREATE TABLE IF NOT EXISTS production_contracts (
 -- JOIN parcels p ON p.farm_id = o.farm_id
 -- WHERE o.location IS NOT NULL
 --   AND ST_Contains(p.boundary::geometry, o.location::geometry);
+
+
+-- Case state and append-only audit ledger.
+-- The JSON snapshot keeps this boundary storage-oriented while domain models
+-- remain independent of PostgreSQL. State + event are committed together.
+CREATE TABLE IF NOT EXISTS case_records (
+    id TEXT PRIMARY KEY,
+    status TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
+    case_data JSONB NOT NULL,
+    latest_reasoning JSONB,
+    outcome JSONB
+);
+
+CREATE INDEX IF NOT EXISTS case_records_status_updated
+    ON case_records (status, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS case_events (
+    id TEXT PRIMARY KEY,
+    case_id TEXT NOT NULL REFERENCES case_records(id) ON DELETE CASCADE,
+    event_type TEXT NOT NULL,
+    occurred_at TIMESTAMPTZ NOT NULL,
+    actor TEXT NOT NULL,
+    payload JSONB NOT NULL DEFAULT '{}'::jsonb
+);
+
+CREATE INDEX IF NOT EXISTS case_events_case_time
+    ON case_events (case_id, occurred_at, id);
+
+CREATE INDEX IF NOT EXISTS case_events_type_time
+    ON case_events (event_type, occurred_at DESC);
