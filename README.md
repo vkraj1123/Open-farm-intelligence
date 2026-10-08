@@ -1042,7 +1042,44 @@ The integration should happen through adapters rather than contaminating the cor
 
 ## Overall status
 
-**Milestone: Architecture-complete functional prototype / pre-production foundation**
+**Milestone: Reliability-hardened functional prototype / pre-production foundation**
+
+The core closed-loop architecture is implemented and tested. The execution layer now has durable idempotency and an authenticated, exactly-once callback receipt boundary. The project is still **not production-ready** for agricultural deployment.
+
+### Reliability progress — October 2026
+
+- ✅ Atomic farm-case unit-of-work boundary
+- ✅ Durable per-case event sequencing
+- ✅ PostgreSQL/PostGIS integration coverage
+- ✅ Deterministic provider-selection policy
+- ✅ Durable service transactions
+- ✅ Atomic idempotency claim preventing concurrent duplicate execution
+- ✅ Provider external-reference persistence
+- ✅ Authenticated provider callback boundary (HMAC-SHA256)
+- ✅ Exactly-once callback receipt ledger
+- ✅ Provider-to-transaction ownership validation
+- ✅ Callback replay returns the transaction originally bound to the provider event
+- ✅ Real PostgreSQL callback replay integration test
+
+### Current execution boundary
+
+The callback layer is safe at the persistence/state-transition seam, but it is **not yet a complete production webhook subsystem**. Remaining hardening includes provider-specific signature schemes where required, signed freshness/replay windows, secret rotation, payload/schema binding, observability, and durable retry/attempt semantics.
+
+### Next reliability milestone
+
+Move from a single transaction lifecycle to explicit execution attempts:
+
+```
+Action
+  └── Attempt
+       ├── submitted
+       ├── accepted / rejected
+       ├── in_progress
+       ├── completed
+       └── failed / unknown
+```
+
+A provider timeout or lost callback must not be interpreted as confirmed external failure. The system must preserve **unknown external state**, support safe retries, and retain an auditable attempt history.
 
 The core closed-loop architecture is implemented and tested, but the project is **not production-ready**.
 
@@ -1244,15 +1281,15 @@ The core closed-loop architecture is implemented and tested, but the project is 
 - [x] Execution receipt
 - [x] Transaction lifecycle
 - [x] Mock execution adapter
-- [ ] Signed provider callbacks
-- [ ] Callback authentication
-- [ ] External event idempotency
+- [x] Signed provider callbacks
+- [x] Callback authentication
+- [x] External event idempotency
 - [ ] Retry policy
 - [ ] Dead-letter handling
 - [ ] Multi-attempt execution model
 - [ ] Real service adapter
 
-**Status: 🟡 Safe local execution boundary; external execution pending**
+**Status: 🟡 Durable execution + authenticated callback boundary implemented; production webhook hardening and retry semantics remain**
 
 ---
 
@@ -1576,14 +1613,12 @@ A production-oriented feature should eventually satisfy:
 
 Focus:
 
-1. deterministic provider-selection policy;
-2. PostGIS integration tests;
-3. case event sequencing;
-4. cross-repository unit-of-work;
-5. execution-attempt semantics;
-6. callback idempotency;
-7. consent scopes;
-8. stronger concurrency tests.
+1. execution-attempt semantics and unknown external state;
+2. retry/idempotency policy across provider attempts;
+3. callback freshness, payload binding and secret rotation;
+4. consent scopes and revocation;
+5. stronger concurrency/failure-recovery tests;
+6. production migration and observability hardening.
 
 **Principle:**
 
@@ -1864,8 +1899,8 @@ The following are explicitly known:
 3. Rajasthan-local calibration has not been completed.
 4. The current provider-selection policy is intentionally simple.
 5. Cross-repository atomicity remains to be implemented.
-6. Production-grade event sequencing remains to be implemented.
-7. External callbacks are not yet hardened for production.
+6. Production-grade event sequencing is implemented at the service-transaction boundary; broader event-stream replay/schema versioning remains.
+7. External callbacks are authenticated and exactly-once at the receipt boundary, but are not yet hardened as a complete production webhook subsystem.
 8. Consent is foundational rather than complete governance.
 9. AI/LLM interaction is not yet the primary interface.
 10. No field deployment should be inferred from the existence of the prototype.
@@ -1955,7 +1990,7 @@ production problems
 
 **Current maturity:**
 
-> **Architecture-complete, functionally demonstrable, scientifically unvalidated prototype.**
+> **Architecture-complete, functionally demonstrable, reliability-hardened prototype with unvalidated agricultural science.**
 
 The repository contains a tested implementation of the core decision-loop architecture.
 
