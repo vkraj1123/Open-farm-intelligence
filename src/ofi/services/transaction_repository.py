@@ -37,6 +37,12 @@ class TransactionRepository(ABC):
         """Create a transaction and report whether this caller won."""
 
     @abstractmethod
+    def update_external_reference(
+        self, transaction_id: str, external_reference: str
+    ) -> ServiceTransaction:
+        """Persist the provider reference without changing lifecycle state."""
+
+    @abstractmethod
     def get(self, transaction_id: str) -> ServiceTransaction:
         """Return a transaction or raise KeyError."""
 
@@ -83,6 +89,14 @@ class InMemoryTransactionRepository(TransactionRepository):
 
     def create(self, transaction: ServiceTransaction) -> ServiceTransaction:
         return self.create_if_absent(transaction).transaction
+
+    def update_external_reference(
+        self, transaction_id: str, external_reference: str
+    ) -> ServiceTransaction:
+        working = self.get(transaction_id)
+        working.external_reference = external_reference
+        self._transactions[transaction_id] = deepcopy(working)
+        return working
 
     def get(self, transaction_id: str) -> ServiceTransaction:
         try:
@@ -195,6 +209,23 @@ class PostgresTransactionRepository(TransactionRepository):
 
     def create(self, transaction: ServiceTransaction) -> ServiceTransaction:
         return self.create_if_absent(transaction).transaction
+
+    def update_external_reference(
+        self, transaction_id: str, external_reference: str
+    ) -> ServiceTransaction:
+        with connection_scope(self._connection_factory) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE service_transactions
+                    SET external_reference = %s
+                    WHERE transaction_id = %s
+                    """,
+                    (external_reference, transaction_id),
+                )
+                if cur.rowcount != 1:
+                    raise KeyError(transaction_id)
+                return self._get_with_cursor(cur, transaction_id)
 
     def get(self, transaction_id: str) -> ServiceTransaction:
         with connection_scope(self._connection_factory) as conn:
