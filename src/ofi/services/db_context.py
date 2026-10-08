@@ -18,8 +18,7 @@ def connection_scope(connection_factory: Callable[[], Any]) -> Iterator[Any]:
         return
 
     with connection_factory() as conn:
-        with conn.transaction():
-            yield conn
+        yield conn
 
 
 @contextmanager
