@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from typing import Literal, Protocol
 
 from ofi.services.action_router import ActionRequest, ActionRoute
-from ofi.services.service_transaction import ServiceTransaction
+from ofi.services.service_transaction import ServiceTransaction, action_status_for_transaction
 
 
 ConsentStatus = Literal["granted", "denied", "expired", "not_required"]
@@ -164,6 +164,13 @@ class ServiceExecutionGateway:
             transaction_id=transaction.transaction_id,
             idempotency_key=key,
         )
+
+    def action_status(self, action_id: str) -> str:
+        matches = [tx for tx in self._transactions.values() if tx.action_id == action_id]
+        if not matches:
+            raise ExecutionError(f"unknown action transaction: {action_id}")
+        latest = matches[-1]
+        return action_status_for_transaction(latest.status)
 
     def get_transaction(self, transaction_id: str) -> ServiceTransaction:
         try:
