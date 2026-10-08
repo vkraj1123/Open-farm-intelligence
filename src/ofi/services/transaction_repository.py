@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from ofi.services.db_context import connection_scope
+from ofi.services.provider_callback import ProviderCallback
 from ofi.services.service_transaction import (
     ServiceTransaction,
     TransactionEvent,
@@ -58,6 +59,10 @@ class TransactionRepository(ABC):
         """Atomically append a status event and update state."""
 
     @abstractmethod
+    def apply_callback(self, callback: ProviderCallback) -> tuple[ServiceTransaction, bool]:
+        """Apply a verified provider callback exactly once."""
+
+    @abstractmethod
     def list_for_action(self, action_id: str) -> list[ServiceTransaction]:
         """Return transactions for an action in creation order."""
 
@@ -68,6 +73,7 @@ class InMemoryTransactionRepository(TransactionRepository):
     def __init__(self) -> None:
         self._transactions: dict[str, ServiceTransaction] = {}
         self._idempotency: dict[str, str] = {}
+        self._callback_events: dict[str, str] = {}
 
     def create_if_absent(self, transaction: ServiceTransaction) -> TransactionCreateResult:
         existing_id = self._idempotency.get(transaction.idempotency_key)
@@ -120,6 +126,23 @@ class InMemoryTransactionRepository(TransactionRepository):
         )
         self._transactions[transaction_id] = deepcopy(working)
         return working
+
+
+    def apply_callback(self, callback: ProviderCallback) -> tuple[ServiceTransaction, bool]:
+        existing_tx = self._callback_events.get(callback.event_id)
+        if existing_tx is not None:
+            return self.get(existing_tx), False
+        transaction = self.get(callback.transaction_id)
+        if transaction.provider_id != callback.provider_id:
+            raise TransactionConflictError("callback provider does not match transaction")
+        transaction.transition(
+            callback.status,
+            external_reference=callback.external_reference,
+            message=callback.message,
+        )
+        self._transactions[transaction.transaction_id] = deepcopy(transaction)
+        self._callback_events[callback.event_id] = transaction.transaction_id
+        return deepcopy(transaction), True
 
     def list_for_action(self, action_id: str) -> list[ServiceTransaction]:
         matches = [
@@ -281,6 +304,54 @@ class PostgresTransactionRepository(TransactionRepository):
                     ),
                 )
                 return working
+
+
+    def apply_callback(self, callback: ProviderCallback) -> tuple[ServiceTransaction, bool]:
+        with connection_scope(self._connection_factory) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT transaction_id FROM provider_callback_events WHERE event_id = %s",
+                    (callback.event_id,),
+                )
+                existing = cur.fetchone()
+                if existing is not None:
+                    return self._get_with_cursor(cur, existing[0]), False
+                working = self._get_with_cursor(cur, callback.transaction_id, for_update=True)
+                if working.provider_id != callback.provider_id:
+                    raise TransactionConflictError("callback provider does not match transaction")
+                working.transition(
+                    callback.status,
+                    external_reference=callback.external_reference,
+                    message=callback.message,
+                )
+                event = working.events[-1]
+                sequence = len(working.events)
+                cur.execute(
+                    """
+                    INSERT INTO provider_callback_events
+                        (event_id, transaction_id, provider_id, occurred_at)
+                    VALUES (%s, %s, %s, %s)
+                    """,
+                    (callback.event_id, callback.transaction_id, callback.provider_id, callback.occurred_at),
+                )
+                cur.execute(
+                    """
+                    UPDATE service_transactions
+                    SET status = %s, external_reference = %s
+                    WHERE transaction_id = %s
+                    """,
+                    (working.status, working.external_reference, working.transaction_id),
+                )
+                cur.execute(
+                    """
+                    INSERT INTO service_transaction_events
+                        (transaction_id, sequence, status, occurred_at, external_reference, message)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    """,
+                    (event.transaction_id, sequence, event.status, event.occurred_at,
+                     event.external_reference, event.message),
+                )
+                return working, True
 
     def list_for_action(self, action_id: str) -> list[ServiceTransaction]:
         with connection_scope(self._connection_factory) as conn:
