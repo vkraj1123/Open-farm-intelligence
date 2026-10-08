@@ -277,6 +277,88 @@ class PostgresTransactionRepository(TransactionRepository):
                     raise KeyError(transaction_id)
                 return self._get_with_cursor(cur, transaction_id)
 
+    def apply_callback(
+        self,
+        *,
+        provider_id: str,
+        event_id: str,
+        transaction_id: str,
+        status: TransactionStatus,
+        occurred_at: datetime,
+        external_reference: str | None = None,
+        message: str = "",
+    ) -> CallbackApplyResult:
+        normalized = occurred_at.astimezone(timezone.utc)
+        with connection_scope(self._connection_factory) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO service_callback_events (
+                        provider_id, event_id, transaction_id, occurred_at,
+                        status, external_reference, message
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (provider_id, event_id) DO NOTHING
+                    RETURNING event_id
+                    """,
+                    (provider_id, event_id, transaction_id, normalized, status,
+                     external_reference, message),
+                )
+                if cur.fetchone() is None:
+                    cur.execute(
+                        """
+                        SELECT transaction_id, occurred_at, status, external_reference
+                        FROM service_callback_events
+                        WHERE provider_id = %s AND event_id = %s
+                        """,
+                        (provider_id, event_id),
+                    )
+                    row = cur.fetchone()
+                    if row is None:
+                        raise RuntimeError("callback event disappeared")
+                    if (row[0], row[1], row[2], row[3]) != (
+                        transaction_id, normalized, status, external_reference
+                    ):
+                        raise TransactionConflictError(
+                            "provider event id was reused with different data"
+                        )
+                    return CallbackApplyResult(
+                        self._get_with_cursor(cur, transaction_id), False
+                    )
+
+                working = self._get_with_cursor(cur, transaction_id, for_update=True)
+                latest = working.events[-1].occurred_at if working.events else working.created_at
+                if normalized < latest:
+                    return CallbackApplyResult(working, False)
+
+                event = working.transition(
+                    status,
+                    external_reference=external_reference,
+                    message=message,
+                    occurred_at=normalized,
+                )
+                sequence = len(working.events)
+                cur.execute(
+                    """
+                    UPDATE service_transactions
+                    SET status = %s, external_reference = %s
+                    WHERE transaction_id = %s
+                    """,
+                    (working.status, working.external_reference, transaction_id),
+                )
+                cur.execute(
+                    """
+                    INSERT INTO service_transaction_events (
+                        transaction_id, sequence, status, occurred_at,
+                        external_reference, message
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    """,
+                    (transaction_id, sequence, event.status, event.occurred_at,
+                     event.external_reference, event.message),
+                )
+                return CallbackApplyResult(working, True)
+
     def get(self, transaction_id: str) -> ServiceTransaction:
         with connection_scope(self._connection_factory) as conn:
             with conn.cursor() as cur:
