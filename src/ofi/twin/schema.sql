@@ -126,3 +126,34 @@ CREATE INDEX IF NOT EXISTS case_events_case_time
 
 CREATE INDEX IF NOT EXISTS case_events_type_time
     ON case_events (event_type, occurred_at DESC);
+
+
+-- Durable service execution state and append-only provider status history.
+-- Idempotency is enforced at the database boundary so concurrent workers
+-- cannot create two transactions for the same execution key.
+CREATE TABLE IF NOT EXISTS service_transactions (
+    transaction_id TEXT PRIMARY KEY,
+    idempotency_key TEXT NOT NULL UNIQUE,
+    request_fingerprint TEXT NOT NULL,
+    action_id TEXT NOT NULL,
+    provider_id TEXT,
+    created_at TIMESTAMPTZ NOT NULL,
+    status TEXT NOT NULL,
+    external_reference TEXT
+);
+
+CREATE INDEX IF NOT EXISTS service_transactions_action_created
+    ON service_transactions (action_id, created_at DESC, transaction_id);
+
+CREATE TABLE IF NOT EXISTS service_transaction_events (
+    transaction_id TEXT NOT NULL REFERENCES service_transactions(transaction_id) ON DELETE CASCADE,
+    sequence BIGINT NOT NULL,
+    status TEXT NOT NULL,
+    occurred_at TIMESTAMPTZ NOT NULL,
+    external_reference TEXT,
+    message TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (transaction_id, sequence)
+);
+
+CREATE INDEX IF NOT EXISTS service_transaction_events_time
+    ON service_transaction_events (transaction_id, occurred_at, sequence);

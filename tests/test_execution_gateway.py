@@ -11,6 +11,8 @@ from ofi.services.execution_gateway import (
     ServiceExecutionGateway,
 )
 from ofi.services.service_directory import ServiceCapability, ServiceDirectory, ServiceProvider
+from ofi.services.service_transaction import ServiceTransaction
+from ofi.services.transaction_repository import InMemoryTransactionRepository
 from ofi.services.service_orchestrator import ServiceOrchestrator
 
 
@@ -129,22 +131,32 @@ def test_unregistered_service_or_provider_is_not_silently_executed():
 
 
 def test_action_status_uses_explicit_transaction_creation_time():
-    gateway = ServiceExecutionGateway([MockServiceAdapter("soil_test", provider_id="lab-01")])
-    actor = ActorIdentity("u1", "farmer")
-    first = gateway.submit(
-        action=action(), route=route(), actor=actor, consent=consent(),
-        provider_id="lab-01", idempotency_key="attempt-1",
+    repo = InMemoryTransactionRepository()
+    gateway = ServiceExecutionGateway(
+        [MockServiceAdapter("soil_test", provider_id="lab-01")],
+        transaction_repository=repo,
     )
-    second = gateway.submit(
-        action=action(), route=route(), actor=actor, consent=consent(),
-        provider_id="lab-01", idempotency_key="attempt-2",
+    first = ServiceTransaction(
+        transaction_id="txn-old",
+        idempotency_key="attempt-1",
+        action_id=action().id,
+        provider_id="lab-01",
+        created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
     )
-    older = gateway.get_transaction(first.transaction_id)
-    newer = gateway.get_transaction(second.transaction_id)
-    gateway.update_status(second.transaction_id, "accepted")
-    gateway.update_status(second.transaction_id, "in_progress")
-    gateway.update_status(second.transaction_id, "completed")
-    older.created_at, newer.created_at = newer.created_at, older.created_at
+    second = ServiceTransaction(
+        transaction_id="txn-new",
+        idempotency_key="attempt-2",
+        action_id=action().id,
+        provider_id="lab-01",
+        created_at=datetime(2026, 1, 2, tzinfo=timezone.utc),
+    )
+    repo.create(first)
+    repo.create(second)
+    repo.transition(first.transaction_id, "submitted")
+    repo.transition(first.transaction_id, "accepted")
+    repo.transition(first.transaction_id, "in_progress")
+    repo.transition(first.transaction_id, "completed")
+    repo.transition(second.transaction_id, "submitted")
 
     assert gateway.action_status(action().id) == "routed"
 

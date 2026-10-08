@@ -17,6 +17,8 @@ from ofi.domain.models import (
     Parcel,
 )
 from ofi.services.postgres_case_repository import PostgresCaseRepository
+from ofi.services.service_transaction import ServiceTransaction
+from ofi.services.transaction_repository import PostgresTransactionRepository
 from ofi.services.unit_of_work import PostgresFarmCaseUnitOfWork
 from ofi.twin.postgis import PostGISFarmTwinStore
 
@@ -41,7 +43,7 @@ def database():
     yield
     with psycopg.connect(_dsn()) as conn:
         conn.execute(
-            "TRUNCATE case_events, case_records, observations, "
+            "TRUNCATE service_transaction_events, service_transactions, case_events, case_records, observations, "
             "production_contracts, land_parties, crop_cycles, parcels, farms "
             "CASCADE"
         )
@@ -186,3 +188,65 @@ def test_real_postgres_failed_append_preserves_caller_state(database):
     assert fresh.version == original_version
     assert fresh.case.status == original_status
     assert fresh.case.events == []
+
+
+def test_real_postgres_transaction_repository_round_trip_and_idempotency(database):
+    factory = lambda: psycopg.connect(_dsn())
+    repo = PostgresTransactionRepository(factory)
+    tx = ServiceTransaction(
+        transaction_id="txn-integration-1",
+        idempotency_key="idem-integration-1",
+        request_fingerprint="fingerprint-1",
+        action_id="action-integration-1",
+        provider_id="lab-01",
+    )
+
+    created = repo.create(tx)
+    repo.transition(
+        created.transaction_id,
+        "submitted",
+        external_reference="ext-1",
+        message="submitted to provider",
+    )
+
+    replay = repo.create(
+        ServiceTransaction(
+            transaction_id="txn-different",
+            idempotency_key="idem-integration-1",
+            request_fingerprint="fingerprint-1",
+            action_id="action-integration-1",
+            provider_id="lab-01",
+        )
+    )
+    fresh = repo.get(tx.transaction_id)
+
+    assert replay.transaction_id == tx.transaction_id
+    assert fresh.status == "submitted"
+    assert fresh.external_reference == "ext-1"
+    assert [event.status for event in fresh.events] == ["submitted"]
+    assert fresh.events[0].external_reference == "ext-1"
+
+
+def test_real_postgres_idempotency_is_concurrency_safe(database):
+    def create(index):
+        repo = PostgresTransactionRepository(lambda: psycopg.connect(_dsn()))
+        return repo.create(
+            ServiceTransaction(
+                transaction_id=f"txn-concurrent-{index}",
+                idempotency_key="idem-concurrent",
+                request_fingerprint="fingerprint-concurrent",
+                action_id="action-concurrent",
+                provider_id="lab-01",
+            )
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(create, [1, 2]))
+
+    assert results[0].transaction_id == results[1].transaction_id
+    with psycopg.connect(_dsn()) as conn:
+        row = conn.execute(
+            "SELECT count(*) FROM service_transactions "
+            "WHERE idempotency_key = 'idem-concurrent'"
+        ).fetchone()
+    assert row[0] == 1
