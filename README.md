@@ -1378,6 +1378,26 @@ The core closed-loop architecture is implemented and tested, but the project is 
 
 ---
 
+## Safe retry invariant
+
+An external execution timeout is not proof of failure. OFI must not create another external attempt while the provider's execution state is unknown.
+
+The retry policy therefore requires:
+
+```
+local attempt state
+      ↓
+provider reconciliation
+      ↓
+execution confirmed?
+  ├── yes → do not retry
+  └── no  → retry may be allowed
+```
+
+A local `failed`, `rejected`, or `unknown` state alone is insufficient to authorize a new external attempt. The policy is deterministic and side-effect free; actual reconciliation and retry orchestration remain separate implementation steps.
+
+---
+
 # 32. Engineering hardening backlog
 
 These are high-priority engineering issues rather than new features.
