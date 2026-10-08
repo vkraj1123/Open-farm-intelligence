@@ -58,6 +58,40 @@ class TransactionRepository(ABC):
         """Apply one provider event at most once."""
 
     @abstractmethod
+    def apply_callback(
+        self,
+        *,
+        provider_id: str,
+        event_id: str,
+        transaction_id: str,
+        status: TransactionStatus,
+        occurred_at: datetime,
+        external_reference: str | None = None,
+        message: str = "",
+    ) -> CallbackApplyResult:
+        normalized = occurred_at.astimezone(timezone.utc)
+        key = (provider_id, event_id)
+        existing = self._callbacks.get(key)
+        if existing is not None:
+            if existing != (transaction_id, status, external_reference, normalized):
+                raise TransactionConflictError("provider event id was reused with different data")
+            return CallbackApplyResult(self.get(transaction_id), False)
+
+        working = self.get(transaction_id)
+        latest = working.events[-1].occurred_at if working.events else working.created_at
+        self._callbacks[key] = (transaction_id, status, external_reference, normalized)
+        if normalized < latest:
+            return CallbackApplyResult(working, False)
+
+        working.transition(
+            status,
+            external_reference=external_reference,
+            message=message,
+            occurred_at=normalized,
+        )
+        self._transactions[transaction_id] = deepcopy(working)
+        return CallbackApplyResult(working, True)
+
     def get(self, transaction_id: str) -> ServiceTransaction:
         """Return a transaction or raise KeyError."""
 
@@ -83,6 +117,7 @@ class InMemoryTransactionRepository(TransactionRepository):
     def __init__(self) -> None:
         self._transactions: dict[str, ServiceTransaction] = {}
         self._idempotency: dict[str, str] = {}
+        self._callbacks: dict[tuple[str, str], tuple[str, str, str | None, datetime]] = {}
 
     def create_if_absent(self, transaction: ServiceTransaction) -> TransactionCreateResult:
         existing_id = self._idempotency.get(transaction.idempotency_key)
