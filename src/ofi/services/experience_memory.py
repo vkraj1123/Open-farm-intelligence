@@ -120,6 +120,10 @@ def context_signature(case: FarmCase, hypothesis_codes: tuple[str, ...] = ()) ->
 
 
 def context_similarity(a: ContextSignature, b: ContextSignature) -> float:
+    if a == b:
+        return 1.0
+    if a.crop != b.crop and not (set(a.hypotheses) & set(b.hypotheses)):
+        return 0.0
     score = 0.0
     weight = 0.0
 
