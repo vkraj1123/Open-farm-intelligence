@@ -123,9 +123,10 @@ def test_gateway_replays_from_repository_without_reexecuting_adapter():
 def test_gateway_uses_actual_provider_in_fingerprint_when_provider_is_implicit():
     first = MockServiceAdapter("soil_test", provider_id="lab-01")
     second = MockServiceAdapter("soil_test", provider_id="lab-02")
+    repo = InMemoryTransactionRepository()
     gateway = ServiceExecutionGateway(
         [first, second],
-        transaction_repository=InMemoryTransactionRepository(),
+        transaction_repository=repo,
     )
 
     gateway.submit(
@@ -138,7 +139,6 @@ def test_gateway_uses_actual_provider_in_fingerprint_when_provider_is_implicit()
 
     # Registration order chooses lab-01. A new gateway with the same key but
     # a different selected provider must not replay the old transaction.
-    repo = gateway._transactions
     other_gateway = ServiceExecutionGateway(
         [second],
         transaction_repository=repo,
