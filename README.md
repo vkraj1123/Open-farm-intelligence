@@ -1,79 +1,163 @@
 # Open Farm Intelligence
 
-Open Farm Intelligence is an open-source **farm-level intelligence and orchestration layer** for Indian agriculture.
+**Open Farm Intelligence (OFI)** is an open-source farm-level intelligence and orchestration layer for Indian agriculture.
 
-It is designed to sit above agricultural data networks and service ecosystems rather than duplicate them.
+> **Bharat-VISTAAR provides the agricultural digital network; Open Farm Intelligence provides the farm-level intelligence and orchestration layer that turns that network into a continuous farm decision system.**
+
+OFI is intentionally **not another farmer chatbot**. It maintains farm context, gathers and evaluates evidence, represents uncertainty, chooses the next action, routes work to services or experts, and learns from field outcomes.
 
 ## Core loop
 
-farm context -> evidence -> hypotheses -> confidence -> next action -> service/human -> field outcome -> feedback
-
-The system treats the farm as a temporal digital twin: land, cultivator, seasonal production relationship, crop cycle, observations and outcomes evolve over time.
-
-## Current MVP
-
-- Temporal farm digital twin
-- Seasonal crop-cycle history
-- Owner/cultivator/manager/lessor relationships
-- Optional production contracts without implying possession
-- Case lifecycle and outcome feedback
-- Provider registry with capability discovery
-- Normalized weather, satellite and soil observations
-- Evidence scoring using source reliability, quality, confidence and freshness
-- Transparent water-stress and disease-stress hypothesis rules
-- Conservative decision states: ask, advise, request test, escalate
-- Configurable VISTAAR/Beckn-style service adapter
-- Automated pytest CI
+```text
+Farm context
+    ↓
+Evidence
+    ↓
+Competing hypotheses
+    ↓
+Confidence + uncertainty
+    ↓
+Next action
+    ↓
+Service / human execution
+    ↓
+Field outcome
+    ↓
+Feedback into the farm record
+```
 
 ## Architecture
 
-Farm Digital Twin
-       |
-   Farm Snapshot
-       |
-Provider Registry
- |-- Weather
- |-- Satellite
- |-- Soil
- |-- VISTAAR
- |-- future scientific engines
-       |
-Normalized Observations
-       |
-Evidence Fusion
-       |
-Competing Hypotheses
-       |
-Decision
-       |
-Service / Human Action
-       |
-Field Outcome
-       +------> Farm Digital Twin
+```text
+                     FARM DIGITAL TWIN
+                            │
+                            ▼
+                  ┌───────────────────┐
+                  │ OFI ORCHESTRATOR  │
+                  │ context           │
+                  │ evidence          │
+                  │ reasoning         │
+                  │ uncertainty       │
+                  │ decision          │
+                  └─────────┬─────────┘
+                            │
+             ┌──────────────┼──────────────┐
+             ▼              ▼              ▼
+        Data providers   VISTAAR       Science models
+        weather/soil/    services      agronomy/
+        satellite                       water balance
+             │              │              │
+             └──────────────┼──────────────┘
+                            ▼
+                     Farm decision
+                            │
+                            ▼
+                    Service / human
+                            │
+                            ▼
+                       Field result
+                            │
+                            └──────► feedback
+```
 
-The provider boundary is deliberate: external systems supply evidence or services; OFI owns context, evidence fusion, reasoning, uncertainty and orchestration.
+The provider boundary is deliberate: external systems supply evidence or services; OFI owns farm context, evidence fusion, reasoning, uncertainty and orchestration.
 
-## Important limitation
+## Current capabilities
 
-The current agronomic thresholds are **engineering heuristics, not calibrated agronomic probabilities or professional crop advice**. The intended next step is to connect validated regional scientific models and datasets behind the same interfaces.
+- Temporal farm digital twin with parcel and crop-cycle context
+- Separate owner, cultivator and production-contract relationships
+- Case lifecycle with append-only events and optimistic versioning
+- Weather, satellite and soil provider interfaces
+- Evidence normalization, source reliability and freshness scoring
+- Spatial and temporal evidence-alignment checks
+- Transparent water-stress and disease-stress hypotheses
+- Conservative decisions: ask, advise, request test, escalate
+- Scientific-model registry with an FAO-56-style water-balance screening model
+- Deterministic service capability discovery and action routing
+- Service transactions with explicit lifecycle transitions
+- Consent, actor binding and idempotent execution gateway
+- Outcome feedback and empirical experience memory
+- Optional PostgreSQL/PostGIS persistence boundary
+- Automated pytest CI
 
-## Development direction
+## Repository layout
 
-1. Scientific evidence/model adapters
-2. Geospatial and temporal field analytics
-3. Service routing and human escalation
-4. VISTAAR ecosystem integration
-5. Persistent PostGIS-backed farm twin (schema + repository boundary + optional implementation)
-6. Resilient evidence ingestion with provider failure isolation
-7. AI layer for retrieval, multimodal interpretation, multilingual interaction and adaptive questioning — without making the LLM the source of agronomic truth
+```text
+src/ofi/
+├── domain/          # Farm, crop, observation, case and decision models
+├── twin/            # Farm digital twin + optional PostGIS persistence
+├── providers/       # Provider contracts, adapters and normalization
+├── geospatial/      # Parcel/observation alignment and field analytics
+├── science/         # Scientific model interfaces and water-balance model
+├── intelligence/    # Evidence fusion, confidence and orchestration
+└── services/        # Cases, actions, service discovery, execution, feedback
 
+tests/               # Unit and closed-loop regression tests
+```
 
-### Persistence
+## Quick start
 
-The domain depends on `FarmTwinRepository`. The default in-memory implementation remains
-lightweight for tests and local development. An optional PostGIS implementation is
-available in `ofi.twin.postgis.PostGISFarmTwinStore`; install the `postgres`
-extra and run `src/ofi/twin/schema.sql` against PostgreSQL with PostGIS enabled.
+Requires Python 3.11+.
 
-The PostGIS adapter accepts an injected connection factory so credentials, pooling,
-TLS, retries and deployment-specific connection management stay outside the domain.
+```bash
+git clone https://github.com/vkraj1123/Open-farm-intelligence.git
+cd Open-farm-intelligence
+
+python -m pip install -e ".[dev]"
+pytest -q
+```
+
+Run the API:
+
+```bash
+uvicorn ofi.api:app --reload
+```
+
+## Persistence
+
+The domain is repository-driven. The default in-memory farm twin is lightweight for tests and local development.
+
+An optional PostGIS implementation is available as `ofi.twin.postgis.PostGISFarmTwinStore`. Install the optional PostgreSQL dependency and apply `src/ofi/twin/schema.sql` to a PostgreSQL database with PostGIS enabled.
+
+The PostGIS adapter accepts an injected connection factory so credentials, pooling, TLS, retries and deployment-specific connection management remain outside the domain.
+
+## Scientific safety boundary
+
+Current agronomic thresholds are **engineering heuristics and screening models, not calibrated agronomic probabilities or professional crop advice**.
+
+The intended production path is to place validated regional scientific models and datasets behind the existing interfaces. An LLM should help with retrieval, multilingual interaction, multimodal interpretation and adaptive questioning, but it should not become the source of agronomic truth.
+
+## Relationship to Bharat-VISTAAR
+
+OFI is designed to complement India's agricultural digital public infrastructure rather than replace it.
+
+Potential future integration points include:
+
+- VISTAAR/Beckn-style provider discovery
+- ICAR/KVK scientific evidence and expert escalation
+- IMD weather services
+- AgMarkNet/market information
+- Soil Health Card and soil-test evidence
+- State agriculture systems and schemes
+- Service providers such as soil-testing, diagnostics and extension
+
+External integrations will remain behind explicit provider/service interfaces so that the core intelligence layer stays testable and provider-neutral.
+
+## Roadmap
+
+1. Harden deterministic provider-selection policy
+2. Complete PostgreSQL/PostGIS integration tests
+3. Establish atomic unit-of-work boundaries across farm twin and case state
+4. Add durable event sequencing and idempotent external callbacks
+5. Validate/calibrate scientific models with Rajasthan-local data
+6. Add VISTAAR/Beckn-compatible service adapters
+7. Add multimodal and multilingual AI capabilities downstream of the evidence/science substrate
+8. Build production observability, consent scopes and governance controls
+
+## Status
+
+This repository is an **active engineering prototype**. The architecture and interfaces are the primary focus at this stage; external agricultural integrations and production agronomic validation are intentionally not claimed yet.
+
+## License
+
+See the repository license file for current licensing terms.
