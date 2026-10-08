@@ -52,9 +52,9 @@ def action_status_for_transaction(status: TransactionStatus) -> ActionStatus:
 class ServiceTransaction:
     transaction_id: str
     idempotency_key: str
-    request_fingerprint: str
     action_id: str
     provider_id: str | None
+    request_fingerprint: str = ""
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     status: TransactionStatus = "planned"
     external_reference: str | None = None
