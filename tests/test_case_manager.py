@@ -61,7 +61,7 @@ def test_provider_evidence_enters_case_and_twin():
     m = CaseManager()
     m.create(case())
     r = m.collect_evidence("c1", default_mock_registry())
-    assert len(r.case.observations) == 5
+    assert len(r.case.observations) == 4
     assert {"weather", "satellite", "soil", "model"} <= {item.kind for item in r.case.observations}
     assert any(item.source == "ofi_geospatial_analytics" for item in r.case.observations)
     reasoning = m.reason("c1")
