@@ -21,7 +21,7 @@ from ofi.services.postgres_case_repository import PostgresCaseRepository
 from ofi.services.execution_gateway import ActorIdentity, ConsentGrant, MockServiceAdapter, ServiceExecutionGateway
 from ofi.services.action_router import ActionRequest, ActionRouter
 from ofi.services.service_transaction import ServiceTransaction
-from ofi.services.transaction_repository import PostgresTransactionRepository
+from ofi.services.transaction_repository import PostgresTransactionRepository, TransactionConflictError
 from ofi.services.unit_of_work import PostgresFarmCaseUnitOfWork
 from ofi.twin.postgis import PostGISFarmTwinStore
 
@@ -46,7 +46,7 @@ def database():
     yield
     with psycopg.connect(_dsn()) as conn:
         conn.execute(
-            "TRUNCATE service_transaction_events, service_transactions, case_events, case_records, observations, "
+            "TRUNCATE service_transaction_callbacks, service_transaction_events, service_transactions, case_events, case_records, observations, "
             "production_contracts, land_parties, crop_cycles, parcels, farms "
             "CASCADE"
         )
@@ -302,3 +302,47 @@ def test_real_postgres_gateway_executes_idempotent_request_once(database):
     assert calls["count"] == 1
     assert receipts[0].transaction_id == receipts[1].transaction_id
     assert {receipt.status for receipt in receipts} == {"submitted"}
+
+
+def test_real_postgres_provider_callback_is_exactly_once(database):
+    factory = lambda: psycopg.connect(_dsn())
+    repo = PostgresTransactionRepository(factory)
+    repo.create(
+        ServiceTransaction(
+            transaction_id="txn-callback",
+            idempotency_key="callback-key",
+            request_fingerprint="callback-fp",
+            action_id="action-callback",
+            provider_id="lab-01",
+            status="submitted",
+        )
+    )
+
+    first = repo.apply_callback(
+        provider_id="lab-01",
+        event_id="provider-event-1",
+        transaction_id="txn-callback",
+        status="accepted",
+        message="accepted",
+    )
+    replay = repo.apply_callback(
+        provider_id="lab-01",
+        event_id="provider-event-1",
+        transaction_id="txn-callback",
+        status="accepted",
+        message="accepted",
+    )
+
+    assert first.applied is True
+    assert replay.applied is False
+    assert replay.transaction.status == "accepted"
+    assert replay.transaction.transaction_id == "txn-callback"
+
+    mismatched_replay = repo.apply_callback(
+        provider_id="lab-01",
+        event_id="provider-event-1",
+        transaction_id="wrong-transaction",
+        status="accepted",
+    )
+    assert mismatched_replay.applied is False
+    assert mismatched_replay.transaction.transaction_id == "txn-callback"

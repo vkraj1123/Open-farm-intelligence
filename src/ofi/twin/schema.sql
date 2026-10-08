@@ -157,3 +157,17 @@ CREATE TABLE IF NOT EXISTS service_transaction_events (
 
 CREATE INDEX IF NOT EXISTS service_transaction_events_time
     ON service_transaction_events (transaction_id, occurred_at, sequence);
+
+
+-- Provider callback receipt ledger.
+-- The provider/event pair is the exactly-once boundary for webhook delivery.
+CREATE TABLE IF NOT EXISTS service_transaction_callbacks (
+    provider_id TEXT NOT NULL,
+    event_id TEXT NOT NULL,
+    transaction_id TEXT NOT NULL REFERENCES service_transactions(transaction_id) ON DELETE CASCADE,
+    received_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (provider_id, event_id)
+);
+
+CREATE INDEX IF NOT EXISTS service_transaction_callbacks_transaction
+    ON service_transaction_callbacks (transaction_id);

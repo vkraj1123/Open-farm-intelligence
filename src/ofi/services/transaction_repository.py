@@ -25,6 +25,12 @@ class TransactionCreateResult:
     created: bool
 
 
+@dataclass(frozen=True)
+class CallbackResult:
+    transaction: ServiceTransaction
+    applied: bool
+
+
 class TransactionRepository(ABC):
     """Store for durable service transaction state and append-only events."""
 
@@ -58,6 +64,19 @@ class TransactionRepository(ABC):
         """Atomically append a status event and update state."""
 
     @abstractmethod
+    def apply_callback(
+        self,
+        *,
+        provider_id: str,
+        event_id: str,
+        transaction_id: str,
+        status: TransactionStatus,
+        external_reference: str | None = None,
+        message: str = "",
+    ) -> CallbackResult:
+        """Atomically apply a provider callback exactly once."""
+
+    @abstractmethod
     def list_for_action(self, action_id: str) -> list[ServiceTransaction]:
         """Return transactions for an action in creation order."""
 
@@ -68,6 +87,7 @@ class InMemoryTransactionRepository(TransactionRepository):
     def __init__(self) -> None:
         self._transactions: dict[str, ServiceTransaction] = {}
         self._idempotency: dict[str, str] = {}
+        self._callback_events: dict[tuple[str, str], str] = {}
 
     def create_if_absent(self, transaction: ServiceTransaction) -> TransactionCreateResult:
         existing_id = self._idempotency.get(transaction.idempotency_key)
@@ -120,6 +140,34 @@ class InMemoryTransactionRepository(TransactionRepository):
         )
         self._transactions[transaction_id] = deepcopy(working)
         return working
+
+    def apply_callback(
+        self,
+        *,
+        provider_id: str,
+        event_id: str,
+        transaction_id: str,
+        status: TransactionStatus,
+        external_reference: str | None = None,
+        message: str = "",
+    ) -> CallbackResult:
+        event_key = (provider_id, event_id)
+        original_transaction_id = self._callback_events.get(event_key)
+        if original_transaction_id is not None:
+            return CallbackResult(self.get(original_transaction_id), False)
+        transaction = self.get(transaction_id)
+        if transaction.provider_id != provider_id:
+            raise TransactionConflictError(
+                "callback provider does not own the transaction"
+            )
+        transaction = self.transition(
+            transaction_id,
+            status,
+            external_reference=external_reference,
+            message=message,
+        )
+        self._callback_events[event_key] = transaction_id
+        return CallbackResult(transaction, True)
 
     def list_for_action(self, action_id: str) -> list[ServiceTransaction]:
         matches = [
@@ -281,6 +329,82 @@ class PostgresTransactionRepository(TransactionRepository):
                     ),
                 )
                 return working
+
+    def apply_callback(
+        self,
+        *,
+        provider_id: str,
+        event_id: str,
+        transaction_id: str,
+        status: TransactionStatus,
+        external_reference: str | None = None,
+        message: str = "",
+    ) -> CallbackResult:
+        with connection_scope(self._connection_factory) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO service_transaction_callbacks (
+                        provider_id, event_id, transaction_id
+                    )
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (provider_id, event_id) DO NOTHING
+                    RETURNING event_id
+                    """,
+                    (provider_id, event_id, transaction_id),
+                )
+                inserted = cur.fetchone()
+                if inserted is None:
+                    cur.execute(
+                        """
+                        SELECT transaction_id
+                        FROM service_transaction_callbacks
+                        WHERE provider_id = %s AND event_id = %s
+                        """,
+                        (provider_id, event_id),
+                    )
+                    row = cur.fetchone()
+                    if row is None:
+                        raise RuntimeError("callback receipt disappeared")
+                    original_transaction_id = row[0]
+                    return CallbackResult(
+                        self._get_with_cursor(cur, original_transaction_id), False
+                    )
+
+                working = self._get_with_cursor(cur, transaction_id, for_update=True)
+                if working.provider_id != provider_id:
+                    raise TransactionConflictError(
+                        "callback provider does not own the transaction"
+                    )
+                working.transition(
+                    status,
+                    external_reference=external_reference,
+                    message=message,
+                )
+                event = working.events[-1]
+                sequence = len(working.events)
+                cur.execute(
+                    """
+                    UPDATE service_transactions
+                    SET status = %s, external_reference = %s
+                    WHERE transaction_id = %s
+                    """,
+                    (working.status, working.external_reference, working.transaction_id),
+                )
+                cur.execute(
+                    """
+                    INSERT INTO service_transaction_events (
+                        transaction_id, sequence, status, occurred_at,
+                        external_reference, message
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        event.transaction_id, sequence, event.status,
+                        event.occurred_at, event.external_reference, event.message,
+                    ),
+                )
+                return CallbackResult(working, True)
 
     def list_for_action(self, action_id: str) -> list[ServiceTransaction]:
         with connection_scope(self._connection_factory) as conn:

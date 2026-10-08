@@ -1,4 +1,6 @@
 from datetime import datetime, timedelta, timezone
+import hashlib
+import hmac
 
 import pytest
 
@@ -8,6 +10,7 @@ from ofi.services.execution_gateway import (
     ConsentGrant,
     ExecutionError,
     MockServiceAdapter,
+    ProviderCallback,
     ServiceExecutionGateway,
 )
 from ofi.services.service_directory import ServiceCapability, ServiceDirectory, ServiceProvider
@@ -176,3 +179,42 @@ def test_idempotency_key_cannot_be_reused_for_different_request():
             action=action(), route=route(), actor=actor, consent=consent(),
             provider_id="lab-02", idempotency_key="same-key",
         )
+
+
+def test_provider_callback_requires_valid_signature_and_is_idempotent():
+    gateway = ServiceExecutionGateway([MockServiceAdapter("soil_test")])
+    kwargs = dict(
+        action=action(),
+        route=ActionRouter().route_action(action()),
+        actor=ActorIdentity("u1", "farmer"),
+        consent=ConsentGrant(
+            "u1", "soil_test", "granted", datetime.now(timezone.utc),
+            expires_at=datetime.now(timezone.utc) + timedelta(days=1),
+        ),
+        idempotency_key="callback-test",
+    )
+    receipt = gateway.submit(**kwargs)
+    raw = b'{"event_id":"evt-1","status":"accepted"}'
+    signature = hmac.new(b"secret", raw, hashlib.sha256).hexdigest()
+    callback = ProviderCallback(
+        provider_id=receipt.provider_id,
+        event_id="evt-1",
+        transaction_id=receipt.transaction_id,
+        status="accepted",
+    )
+
+    with pytest.raises(ExecutionError, match="invalid provider callback"):
+        gateway.handle_provider_callback(
+            callback, raw_payload=raw, signature="bad", provider_secret="secret"
+        )
+
+    first = gateway.handle_provider_callback(
+        callback, raw_payload=raw, signature=signature, provider_secret="secret"
+    )
+    second = gateway.handle_provider_callback(
+        callback, raw_payload=raw, signature=signature, provider_secret="secret"
+    )
+
+    assert first.status == "accepted"
+    assert second.status == "accepted"
+    assert len(second.events) == 2
