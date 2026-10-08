@@ -20,8 +20,8 @@ def test_closed_loop():
         ),
         query="field is dry",
         observations=[
-            Observation(id="soil-1", kind="soil", timestamp=now, value={"moisture_pct": 18}, source="soil_lab"),
-            Observation(id="weather-1", kind="weather", timestamp=now, value={"rainfall_mm_next_3d": 1, "rainfall_mm_last_7d": 4}, source="weather_model"),
+            Observation(id="soil-1", kind="soil", timestamp=now, value={"moisture_pct": 18}, source="soil_lab", quality=1.0, confidence=1.0),
+            Observation(id="weather-1", kind="weather", timestamp=now, value={"rainfall_mm_next_3d": 1, "rainfall_mm_last_7d": 4}, source="weather_model", quality=1.0, confidence=1.0),
         ],
     )
     manager = CaseManager()
