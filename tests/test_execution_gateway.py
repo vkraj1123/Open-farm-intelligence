@@ -141,6 +141,7 @@ def test_action_status_uses_explicit_transaction_creation_time():
     )
     older = gateway.get_transaction(first.transaction_id)
     newer = gateway.get_transaction(second.transaction_id)
+    gateway.update_status(second.transaction_id, "completed")
     older.created_at, newer.created_at = newer.created_at, older.created_at
 
     assert gateway.action_status(action().id) == "routed"
