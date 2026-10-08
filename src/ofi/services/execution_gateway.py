@@ -145,6 +145,8 @@ class ServiceExecutionGateway:
             provider_id=selected_provider,
         )
         receipt = adapter.execute(request)
+        if receipt.external_reference is not None:
+            transaction.external_reference = receipt.external_reference
         if receipt.status != "submitted":
             transaction.transition(
                 receipt.status,
