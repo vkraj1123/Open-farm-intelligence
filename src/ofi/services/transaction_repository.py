@@ -87,7 +87,7 @@ class InMemoryTransactionRepository(TransactionRepository):
     def __init__(self) -> None:
         self._transactions: dict[str, ServiceTransaction] = {}
         self._idempotency: dict[str, str] = {}
-        self._callback_events: set[tuple[str, str]] = set()
+        self._callback_events: dict[tuple[str, str], str] = {}
 
     def create_if_absent(self, transaction: ServiceTransaction) -> TransactionCreateResult:
         existing_id = self._idempotency.get(transaction.idempotency_key)
@@ -152,8 +152,9 @@ class InMemoryTransactionRepository(TransactionRepository):
         message: str = "",
     ) -> CallbackResult:
         event_key = (provider_id, event_id)
-        if event_key in self._callback_events:
-            return CallbackResult(self.get(transaction_id), False)
+        original_transaction_id = self._callback_events.get(event_key)
+        if original_transaction_id is not None:
+            return CallbackResult(self.get(original_transaction_id), False)
         transaction = self.get(transaction_id)
         if transaction.provider_id != provider_id:
             raise TransactionConflictError(
@@ -165,7 +166,7 @@ class InMemoryTransactionRepository(TransactionRepository):
             external_reference=external_reference,
             message=message,
         )
-        self._callback_events.add(event_key)
+        self._callback_events[event_key] = transaction_id
         return CallbackResult(transaction, True)
 
     def list_for_action(self, action_id: str) -> list[ServiceTransaction]:
