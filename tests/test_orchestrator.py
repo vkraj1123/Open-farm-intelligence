@@ -23,7 +23,7 @@ def test_water_stress_path():
     ])
     result = Orchestrator().reason(case)
     assert result.hypotheses[0].code == "water_stress"
-    assert result.decision.action == "ADVISE"
+    assert result.decision.action == "REQUEST_TEST"
 
 
 def test_uncertain_case_escalates():
