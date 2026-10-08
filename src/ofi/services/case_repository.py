@@ -22,6 +22,13 @@ class CaseRepository(ABC):
     def append_event(self, case_id: str, event: CaseEvent) -> CaseRecord:
         raise NotImplementedError
 
+    @abstractmethod
+    def save_and_append_event(
+        self, record: CaseRecord, event: CaseEvent
+    ) -> CaseRecord:
+        """Atomically persist current state and its corresponding event."""
+        raise NotImplementedError
+
 
 class InMemoryCaseRepository(CaseRepository):
     """Reference implementation for tests and local development."""
@@ -48,6 +55,9 @@ class InMemoryCaseRepository(CaseRepository):
 
     def append_event(self, case_id: str, event: CaseEvent) -> CaseRecord:
         record = self.get(case_id)
+        return self.save_and_append_event(record, event)
+
+    def save_and_append_event(self, record: CaseRecord, event: CaseEvent) -> CaseRecord:
         if any(existing.id == event.id for existing in record.case.events):
             raise ValueError(f"event already exists: {event.id}")
         record.case.events.append(event)
