@@ -157,3 +157,14 @@ CREATE TABLE IF NOT EXISTS service_transaction_events (
 
 CREATE INDEX IF NOT EXISTS service_transaction_events_time
     ON service_transaction_events (transaction_id, occurred_at, sequence);
+
+
+CREATE TABLE IF NOT EXISTS provider_callback_events (
+    event_id TEXT PRIMARY KEY,
+    transaction_id TEXT NOT NULL REFERENCES service_transactions(transaction_id) ON DELETE CASCADE,
+    provider_id TEXT NOT NULL,
+    occurred_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS provider_callback_events_transaction
+    ON provider_callback_events (transaction_id, occurred_at);
