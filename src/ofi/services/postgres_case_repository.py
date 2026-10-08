@@ -58,22 +58,23 @@ class PostgresCaseRepository(CaseRepository):
                 record = self._record_from_row(row)
                 cur.execute(
                     """
-                    SELECT id,event_type,occurred_at,actor,payload
+                    SELECT id,sequence,event_type,occurred_at,actor,payload
                     FROM case_events
                     WHERE case_id=%s
-                    ORDER BY occurred_at,id
+                    ORDER BY sequence
                     """,
                     (case_id,),
                 )
                 record.case.events = [
                     CaseEvent(
                         id=event_id,
+                        sequence=sequence,
                         event_type=event_type,
                         timestamp=occurred_at,
                         actor=actor,
                         payload=payload,
                     )
-                    for event_id, event_type, occurred_at, actor, payload
+                    for event_id, sequence, event_type, occurred_at, actor, payload
                     in cur.fetchall()
                 ]
                 return record
@@ -104,15 +105,40 @@ class PostgresCaseRepository(CaseRepository):
                 with conn.transaction():
                     next_version = self._save_record(conn, record)
                     with conn.cursor() as cur:
+                        if event.sequence is None:
+                            cur.execute(
+                                """
+                                SELECT COALESCE(MAX(sequence), 0) + 1
+                                FROM case_events
+                                WHERE case_id=%s
+                                """,
+                                (record.case.id,),
+                            )
+                            event.sequence = cur.fetchone()[0]
+                        else:
+                            cur.execute(
+                                """
+                                SELECT 1
+                                FROM case_events
+                                WHERE case_id=%s AND sequence=%s
+                                """,
+                                (record.case.id, event.sequence),
+                            )
+                            if cur.fetchone() is not None:
+                                raise ValueError(
+                                    f"event sequence already exists: "
+                                    f"{record.case.id}:{event.sequence}"
+                                )
                         cur.execute(
                             """
                             INSERT INTO case_events
-                              (id,case_id,event_type,occurred_at,actor,payload)
-                            VALUES (%s,%s,%s,%s,%s,%s::jsonb)
+                              (id,case_id,sequence,event_type,occurred_at,actor,payload)
+                            VALUES (%s,%s,%s,%s,%s,%s,%s::jsonb)
                             """,
                             (
                                 event.id,
                                 record.case.id,
+                                event.sequence,
                                 event.event_type,
                                 event.timestamp,
                                 event.actor,
