@@ -6,6 +6,7 @@ from uuid import uuid4
 from ofi.services.action_router import ActionRequest, ActionRoute
 from ofi.services.service_transaction import (
     ServiceTransaction,
+    TransactionEvent,
     action_status_for_transaction,
 )
 from ofi.services.transaction_repository import (
@@ -133,12 +134,22 @@ class ServiceExecutionGateway:
 
         key = idempotency_key or f"{action.id}:{selected_provider}"
         request_fingerprint = f"{action.id}|{route.service}|{selected_provider}"
+        transaction_id = f"txn:{uuid4()}"
         transaction = ServiceTransaction(
-            transaction_id=f"txn:{uuid4()}",
+            transaction_id=transaction_id,
             idempotency_key=key,
             request_fingerprint=request_fingerprint,
             action_id=action.id,
             provider_id=selected_provider,
+            status="submitted",
+            events=[
+                TransactionEvent(
+                    transaction_id=transaction_id,
+                    status="submitted",
+                    occurred_at=datetime.now(timezone.utc),
+                    message="Execution submitted to provider boundary.",
+                )
+            ],
         )
 
         try:
@@ -151,12 +162,6 @@ class ServiceExecutionGateway:
                 creation.transaction, route.service
             )
         transaction = creation.transaction
-
-        transaction = self._transactions.transition(
-            transaction.transaction_id,
-            "submitted",
-            message="Execution submitted to provider boundary.",
-        )
 
         request = ExecutionRequest(
             action=action,
