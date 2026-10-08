@@ -5,6 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from copy import deepcopy
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Callable
 
 from ofi.services.db_context import connection_scope
@@ -41,6 +42,20 @@ class TransactionRepository(ABC):
         self, transaction_id: str, external_reference: str
     ) -> ServiceTransaction:
         """Persist the provider reference without changing lifecycle state."""
+
+    @abstractmethod
+    def apply_callback(
+        self,
+        *,
+        provider_id: str,
+        event_id: str,
+        transaction_id: str,
+        status: TransactionStatus,
+        occurred_at: datetime,
+        external_reference: str | None = None,
+        message: str = "",
+    ) -> CallbackApplyResult:
+        """Apply one provider event at most once."""
 
     @abstractmethod
     def get(self, transaction_id: str) -> ServiceTransaction:
