@@ -50,6 +50,7 @@ class InMemoryCaseRepository(CaseRepository):
             raise KeyError(case_id) from exc
 
     def save(self, record: CaseRecord) -> CaseRecord:
+        record.version += 1
         self._records[record.case.id] = record
         return record
 
