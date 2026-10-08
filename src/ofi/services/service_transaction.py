@@ -31,7 +31,6 @@ class TransactionEvent:
     message: str = ""
 
 
-@dataclass
 TRANSACTION_TO_ACTION_STATUS = {
     "planned": "planned",
     "submitted": "routed",
@@ -49,6 +48,7 @@ def action_status_for_transaction(status: TransactionStatus) -> ActionStatus:
     return TRANSACTION_TO_ACTION_STATUS[status]
 
 
+@dataclass
 class ServiceTransaction:
     transaction_id: str
     idempotency_key: str
