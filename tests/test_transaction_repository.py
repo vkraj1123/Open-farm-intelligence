@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -151,3 +151,47 @@ def test_gateway_uses_actual_provider_in_fingerprint_when_provider_is_implicit()
             consent=_consent(),
             idempotency_key="same-key",
         )
+
+
+def test_provider_callback_is_idempotent_and_rejects_stale_events():
+    repo = InMemoryTransactionRepository()
+    tx = ServiceTransaction(
+        transaction_id="txn-callback",
+        idempotency_key="callback-key",
+        request_fingerprint="fp",
+        action_id="action-1",
+        provider_id="lab-01",
+    )
+    repo.create(tx)
+    submitted_at = tx.created_at
+
+    applied = repo.apply_callback(
+        provider_id="lab-01",
+        event_id="evt-1",
+        transaction_id="txn-callback",
+        status="accepted",
+        occurred_at=submitted_at + timedelta(seconds=1),
+        external_reference="ref-1",
+    )
+    replay = repo.apply_callback(
+        provider_id="lab-01",
+        event_id="evt-1",
+        transaction_id="txn-callback",
+        status="accepted",
+        occurred_at=submitted_at + timedelta(seconds=1),
+        external_reference="ref-1",
+    )
+    stale = repo.apply_callback(
+        provider_id="lab-01",
+        event_id="evt-2",
+        transaction_id="txn-callback",
+        status="in_progress",
+        occurred_at=submitted_at,
+        external_reference="ref-2",
+    )
+
+    assert applied.applied is True
+    assert replay.applied is False
+    assert stale.applied is False
+    assert repo.get("txn-callback").status == "accepted"
+    assert len(repo.get("txn-callback").events) == 2
