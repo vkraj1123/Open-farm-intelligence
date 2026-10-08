@@ -176,3 +176,72 @@ def test_idempotency_key_cannot_be_reused_for_different_request():
             action=action(), route=route(), actor=actor, consent=consent(),
             provider_id="lab-02", idempotency_key="same-key",
         )
+
+
+def test_provider_callback_requires_valid_signature_and_is_idempotent():
+    import hashlib
+    import hmac
+
+    secret = "callback-secret"
+    gateway = ServiceExecutionGateway(
+        [MockServiceAdapter("soil_test", provider_id="lab-01")],
+        callback_secrets={"lab-01": secret},
+    )
+    receipt = gateway.submit(
+        action=action(), route=route(),
+        actor=ActorIdentity("u1", "farmer"), consent=consent(),
+        provider_id="lab-01",
+    )
+    body = b'{"event_id":"evt-1","status":"accepted"}'
+    signature = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+    occurred_at = datetime.now(timezone.utc) + timedelta(seconds=1)
+
+    updated = gateway.apply_provider_callback(
+        provider_id="lab-01", event_id="evt-1",
+        transaction_id=receipt.transaction_id, status="accepted",
+        occurred_at=occurred_at, signature=signature, raw_body=body,
+        external_reference="lab-ref-1", message="Lab accepted request.",
+    )
+    replay = gateway.apply_provider_callback(
+        provider_id="lab-01", event_id="evt-1",
+        transaction_id=receipt.transaction_id, status="accepted",
+        occurred_at=occurred_at, signature=signature, raw_body=body,
+        external_reference="lab-ref-1", message="Lab accepted request.",
+    )
+    assert updated.status == "accepted"
+    assert replay.status == "accepted"
+    assert len(replay.events) == 2
+
+
+def test_provider_callback_rejects_bad_signature_and_stale_transition():
+    import hashlib
+    import hmac
+
+    secret = "callback-secret"
+    gateway = ServiceExecutionGateway(
+        [MockServiceAdapter("soil_test", provider_id="lab-01")],
+        callback_secrets={"lab-01": secret},
+    )
+    receipt = gateway.submit(
+        action=action(), route=route(),
+        actor=ActorIdentity("u1", "farmer"), consent=consent(),
+        provider_id="lab-01",
+    )
+    body = b'{"event_id":"evt-bad","status":"accepted"}'
+    with pytest.raises(CallbackAuthenticationError):
+        gateway.apply_provider_callback(
+            provider_id="lab-01", event_id="evt-bad",
+            transaction_id=receipt.transaction_id, status="accepted",
+            occurred_at=datetime.now(timezone.utc),
+            signature="bad", raw_body=body,
+        )
+
+    body = b'{"event_id":"evt-2","status":"accepted"}'
+    signature = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+    stale_time = receipt.submitted_at - timedelta(seconds=1)
+    result = gateway.apply_provider_callback(
+        provider_id="lab-01", event_id="evt-2",
+        transaction_id=receipt.transaction_id, status="accepted",
+        occurred_at=stale_time, signature=signature, raw_body=body,
+    )
+    assert result.status == "submitted"
