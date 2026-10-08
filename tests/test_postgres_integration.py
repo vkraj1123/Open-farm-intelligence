@@ -19,6 +19,8 @@ from ofi.domain.models import (
 from ofi.services.postgres_case_repository import PostgresCaseRepository
 from ofi.services.service_transaction import ServiceTransaction
 from ofi.services.transaction_repository import PostgresTransactionRepository
+from ofi.services.service_transaction import ServiceTransaction
+from ofi.services.transaction_repository import PostgresTransactionRepository
 from ofi.services.unit_of_work import PostgresFarmCaseUnitOfWork
 from ofi.twin.postgis import PostGISFarmTwinStore
 
@@ -44,7 +46,8 @@ def database():
     with psycopg.connect(_dsn()) as conn:
         conn.execute(
             "TRUNCATE service_transaction_events, service_transactions, case_events, case_records, observations, "
-            "production_contracts, land_parties, crop_cycles, parcels, farms "
+            "production_contracts, land_parties, crop_cycles, parcels, farms, "
+            "service_transaction_events, service_transactions "
             "CASCADE"
         )
         conn.commit()
@@ -250,3 +253,69 @@ def test_real_postgres_idempotency_is_concurrency_safe(database):
             "WHERE idempotency_key = 'idem-concurrent'"
         ).fetchone()
     assert row[0] == 1
+
+
+def test_real_postgres_idempotency_is_single_winner_under_concurrency(database):
+    factory = lambda: psycopg.connect(_dsn())
+    tx1 = ServiceTransaction(
+        transaction_id="txn-concurrent-1",
+        idempotency_key="concurrent-key",
+        request_fingerprint="fingerprint-1",
+        action_id="action-concurrent",
+        provider_id="lab-01",
+    )
+    tx2 = ServiceTransaction(
+        transaction_id="txn-concurrent-2",
+        idempotency_key="concurrent-key",
+        request_fingerprint="fingerprint-1",
+        action_id="action-concurrent",
+        provider_id="lab-01",
+    )
+
+    def create(tx):
+        return PostgresTransactionRepository(factory).create(tx)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(create, [tx1, tx2]))
+
+    assert sorted(result.created for result in results) == [False, True]
+    assert {result.transaction.transaction_id for result in results} == {
+        "txn-concurrent-1"
+    }
+
+    with pytest.raises(Exception, match="idempotency key was reused"):
+        PostgresTransactionRepository(factory).create(
+            ServiceTransaction(
+                transaction_id="txn-conflict",
+                idempotency_key="concurrent-key",
+                request_fingerprint="different-fingerprint",
+                action_id="action-concurrent",
+                provider_id="lab-02",
+            )
+        )
+
+
+def test_real_postgres_transaction_events_are_durable_and_ordered(database):
+    factory = lambda: psycopg.connect(_dsn())
+    repo = PostgresTransactionRepository(factory)
+    repo.create(
+        ServiceTransaction(
+            transaction_id="txn-events",
+            idempotency_key="events-key",
+            request_fingerprint="events-fingerprint",
+            action_id="action-events",
+            provider_id="lab-01",
+        )
+    )
+    repo.transition("txn-events", "submitted", message="submitted")
+    repo.transition("txn-events", "accepted", message="accepted")
+    repo.transition("txn-events", "in_progress", message="started")
+
+    fresh = repo.get("txn-events")
+    assert fresh.status == "in_progress"
+    assert [event.status for event in fresh.events] == [
+        "submitted", "accepted", "in_progress"
+    ]
+    assert [event.message for event in fresh.events] == [
+        "submitted", "accepted", "started"
+    ]
