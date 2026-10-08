@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from copy import deepcopy
-from datetime import datetime
+from dataclasses import dataclass
 from typing import Any, Callable
 
 from ofi.services.db_context import connection_scope
@@ -19,12 +19,18 @@ class TransactionConflictError(RuntimeError):
     """Raised when an idempotency key maps to a different request."""
 
 
+@dataclass(frozen=True)
+class TransactionCreateResult:
+    transaction: ServiceTransaction
+    created: bool
+
+
 class TransactionRepository(ABC):
     """Store for durable service transaction state and its append-only events."""
 
     @abstractmethod
-    def create(self, transaction: ServiceTransaction) -> ServiceTransaction:
-        """Create or idempotently recover a transaction by idempotency key."""
+    def create(self, transaction: ServiceTransaction) -> TransactionCreateResult:
+        """Create a transaction or return the existing idempotent transaction."""
 
     @abstractmethod
     def get(self, transaction_id: str) -> ServiceTransaction:
@@ -53,7 +59,7 @@ class InMemoryTransactionRepository(TransactionRepository):
         self._transactions: dict[str, ServiceTransaction] = {}
         self._idempotency: dict[str, str] = {}
 
-    def create(self, transaction: ServiceTransaction) -> ServiceTransaction:
+    def create(self, transaction: ServiceTransaction) -> TransactionCreateResult:
         existing_id = self._idempotency.get(transaction.idempotency_key)
         if existing_id is not None:
             existing = self._transactions[existing_id]
@@ -61,7 +67,7 @@ class InMemoryTransactionRepository(TransactionRepository):
                 raise TransactionConflictError(
                     "idempotency key was reused for a different execution request"
                 )
-            return deepcopy(existing)
+            return TransactionCreateResult(deepcopy(existing), False)
 
         if transaction.transaction_id in self._transactions:
             raise ValueError(f"transaction already exists: {transaction.transaction_id}")
@@ -69,7 +75,7 @@ class InMemoryTransactionRepository(TransactionRepository):
         stored = deepcopy(transaction)
         self._transactions[stored.transaction_id] = stored
         self._idempotency[stored.idempotency_key] = stored.transaction_id
-        return deepcopy(stored)
+        return TransactionCreateResult(deepcopy(stored), True)
 
     def get(self, transaction_id: str) -> ServiceTransaction:
         try:
@@ -109,7 +115,7 @@ class PostgresTransactionRepository(TransactionRepository):
     def __init__(self, connection_factory: Callable[[], Any]):
         self._connection_factory = connection_factory
 
-    def create(self, transaction: ServiceTransaction) -> ServiceTransaction:
+    def create(self, transaction: ServiceTransaction) -> TransactionCreateResult:
         with connection_scope(self._connection_factory) as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -135,26 +141,32 @@ class PostgresTransactionRepository(TransactionRepository):
                 )
                 inserted = cur.fetchone()
 
-                if inserted is None:
-                    cur.execute(
-                        """
-                        SELECT transaction_id, request_fingerprint
-                        FROM service_transactions
-                        WHERE idempotency_key = %s
-                        FOR UPDATE
-                        """,
-                        (transaction.idempotency_key,),
+                if inserted is not None:
+                    return TransactionCreateResult(
+                        self._get_with_cursor(cur, transaction.transaction_id),
+                        True,
                     )
-                    row = cur.fetchone()
-                    if row is None:
-                        raise RuntimeError("idempotency conflict row disappeared")
-                    if row[1] != transaction.request_fingerprint:
-                        raise TransactionConflictError(
-                            "idempotency key was reused for a different execution request"
-                        )
-                    return self._get_with_cursor(cur, row[0])
 
-                return self._get_with_cursor(cur, transaction.transaction_id)
+                cur.execute(
+                    """
+                    SELECT transaction_id, request_fingerprint
+                    FROM service_transactions
+                    WHERE idempotency_key = %s
+                    FOR UPDATE
+                    """,
+                    (transaction.idempotency_key,),
+                )
+                row = cur.fetchone()
+                if row is None:
+                    raise RuntimeError("idempotency conflict row disappeared")
+                if row[1] != transaction.request_fingerprint:
+                    raise TransactionConflictError(
+                        "idempotency key was reused for a different execution request"
+                    )
+                return TransactionCreateResult(
+                    self._get_with_cursor(cur, row[0]),
+                    False,
+                )
 
     def get(self, transaction_id: str) -> ServiceTransaction:
         with connection_scope(self._connection_factory) as conn:
@@ -171,9 +183,7 @@ class PostgresTransactionRepository(TransactionRepository):
     ) -> ServiceTransaction:
         with connection_scope(self._connection_factory) as conn:
             with conn.cursor() as cur:
-                working = self._get_with_cursor(
-                    cur, transaction_id, for_update=True
-                )
+                working = self._get_with_cursor(cur, transaction_id, for_update=True)
                 working.transition(
                     status,
                     external_reference=external_reference,
