@@ -1,4 +1,6 @@
 from dataclasses import dataclass
+import hashlib
+import hmac
 from datetime import datetime, timezone
 from typing import Literal, Protocol
 from uuid import uuid4
@@ -79,6 +81,10 @@ class ExecutionError(Exception):
     pass
 
 
+class CallbackAuthenticationError(ExecutionError):
+    """Raised when a provider callback cannot be authenticated."""
+
+
 class ServiceExecutionGateway:
     """Safe execution boundary with provider-specific routing and durable state."""
 
@@ -87,12 +93,14 @@ class ServiceExecutionGateway:
         adapters: list[ServiceAdapter] | None = None,
         *,
         transaction_repository: TransactionRepository | None = None,
+        callback_secrets: dict[str, str] | None = None,
     ):
         self._adapters = {}
         self._service_adapters = {}
         for adapter in adapters or []:
             self.register(adapter)
         self._transactions = transaction_repository or InMemoryTransactionRepository()
+        self._callback_secrets = callback_secrets or {}
 
     def register(self, adapter: ServiceAdapter) -> None:
         if adapter.provider_id in self._adapters:
@@ -198,6 +206,51 @@ class ServiceExecutionGateway:
             transaction_id=transaction.transaction_id,
             idempotency_key=key,
         )
+
+    def apply_provider_callback(
+        self,
+        *,
+        provider_id: str,
+        event_id: str,
+        transaction_id: str,
+        status: ExecutionStatus,
+        occurred_at: datetime,
+        signature: str,
+        raw_body: bytes,
+        external_reference: str | None = None,
+        message: str = "",
+    ) -> ServiceTransaction:
+        secret = self._callback_secrets.get(provider_id)
+        if secret is None:
+            raise CallbackAuthenticationError("provider callback secret is not configured")
+        expected = hmac.new(
+            secret.encode("utf-8"), raw_body, hashlib.sha256
+        ).hexdigest()
+        if not hmac.compare_digest(expected, signature):
+            raise CallbackAuthenticationError("invalid provider callback signature")
+
+        try:
+            transaction = self._transactions.get(transaction_id)
+        except KeyError as exc:
+            raise ExecutionError(f"unknown transaction: {transaction_id}") from exc
+        if transaction.provider_id != provider_id:
+            raise ExecutionError("callback provider does not own transaction")
+
+        try:
+            result = self._transactions.apply_callback(
+                provider_id=provider_id,
+                event_id=event_id,
+                transaction_id=transaction_id,
+                status=status,
+                occurred_at=occurred_at,
+                external_reference=external_reference,
+                message=message,
+            )
+        except KeyError as exc:
+            raise ExecutionError(f"unknown transaction: {transaction_id}") from exc
+        except TransactionConflictError as exc:
+            raise ExecutionError(str(exc)) from exc
+        return result.transaction
 
     def action_status(self, action_id: str) -> str:
         matches = self._transactions.list_for_action(action_id)
