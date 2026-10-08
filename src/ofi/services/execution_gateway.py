@@ -4,6 +4,7 @@ from typing import Literal, Protocol
 from uuid import uuid4
 
 from ofi.services.action_router import ActionRequest, ActionRoute
+from ofi.services.provider_callback import ProviderCallback, ProviderCallbackVerifier, CallbackVerificationError
 from ofi.services.service_transaction import (
     ServiceTransaction,
     TransactionEvent,
@@ -87,12 +88,14 @@ class ServiceExecutionGateway:
         adapters: list[ServiceAdapter] | None = None,
         *,
         transaction_repository: TransactionRepository | None = None,
+        callback_verifier: ProviderCallbackVerifier | None = None,
     ):
         self._adapters = {}
         self._service_adapters = {}
         for adapter in adapters or []:
             self.register(adapter)
         self._transactions = transaction_repository or InMemoryTransactionRepository()
+        self._callback_verifier = callback_verifier
 
     def register(self, adapter: ServiceAdapter) -> None:
         if adapter.provider_id in self._adapters:
@@ -198,6 +201,16 @@ class ServiceExecutionGateway:
             transaction_id=transaction.transaction_id,
             idempotency_key=key,
         )
+
+    def handle_callback(self, callback: ProviderCallback) -> ServiceTransaction:
+        if self._callback_verifier is None:
+            raise ExecutionError("provider callback verification is not configured")
+        try:
+            self._callback_verifier.verify(callback)
+            transaction, _ = self._transactions.apply_callback(callback)
+            return transaction
+        except (CallbackVerificationError, TransactionConflictError) as exc:
+            raise ExecutionError(str(exc)) from exc
 
     def action_status(self, action_id: str) -> str:
         matches = self._transactions.list_for_action(action_id)
