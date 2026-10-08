@@ -2,17 +2,32 @@ name: tests
 
 on:
   push:
-    branches: ["main", "feat/**"]
+    branches: ["main", "feat/**", "test/**"]
   pull_request:
 
 jobs:
   pytest:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ofi_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d ofi_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      OFI_POSTGRES_DSN: postgresql://postgres:postgres@localhost:5432/ofi_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
       - run: python -m pip install --upgrade pip
-      - run: pip install -e ".[dev]"
+      - run: pip install -e ".[dev,postgres]"
       - run: pytest -q
