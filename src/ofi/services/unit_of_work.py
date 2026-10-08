@@ -40,6 +40,7 @@ class InMemoryFarmCaseUnitOfWork(UnitOfWork):
 
     @contextmanager
     def atomic(self) -> Iterator[None]:
+        original_records = dict(self.case_repository._records)
         case_state = deepcopy(self.case_repository._records)
         twin_state = {
             "_farms": deepcopy(self.farm_twin._farms),
@@ -51,7 +52,13 @@ class InMemoryFarmCaseUnitOfWork(UnitOfWork):
         try:
             yield
         except Exception:
-            self.case_repository._records = case_state
+            for case_id, original in original_records.items():
+                restored = case_state[case_id]
+                original.case = restored.case
+                original.version = restored.version
+                original.latest_reasoning = restored.latest_reasoning
+                original.outcome = restored.outcome
+            self.case_repository._records = original_records
             for name, value in twin_state.items():
                 setattr(self.farm_twin, name, value)
             raise
