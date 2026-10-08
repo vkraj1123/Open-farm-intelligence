@@ -110,6 +110,21 @@ class PostgresCaseRepository(CaseRepository):
                 with conn.transaction():
                     next_version = self._save_record(conn, working)
                     with conn.cursor() as cur:
+                        # Serialize event-sequence allocation per case. The
+                        # case row is the lock/serialization point shared by
+                        # all writers, while the optimistic version check
+                        # below still detects stale domain snapshots.
+                        cur.execute(
+                            """
+                            SELECT id
+                            FROM case_records
+                            WHERE id=%s
+                            FOR UPDATE
+                            """,
+                            (working.case.id,),
+                        )
+                        if cur.fetchone() is None:
+                            raise KeyError(working.case.id)
                         cur.execute(
                             """
                             SELECT COALESCE(MAX(sequence), 0) + 1
