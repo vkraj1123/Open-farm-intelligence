@@ -10,7 +10,7 @@ from ofi.services.execution_gateway import (
     MockServiceAdapter,
     ServiceExecutionGateway,
 )
-from ofi.services.service_transaction import ServiceTransaction
+from ofi.services.service_transaction import ServiceTransaction, action_status_for_transaction
 
 
 def action():
@@ -78,3 +78,21 @@ def test_gateway_can_update_external_transaction_status():
     )
     assert tx.status == "accepted"
     assert tx.external_reference == "LAB-123"
+
+
+def test_transaction_projects_to_action_lifecycle():
+    tx = ServiceTransaction(transaction_id="txn-2", idempotency_key="key-2", action_id="a-2", provider_id="p-1")
+    assert tx.action_status == "planned"
+    tx.transition("submitted")
+    assert tx.action_status == "routed"
+    tx.transition("accepted")
+    assert tx.action_status == "accepted"
+    tx.transition("in_progress")
+    assert tx.action_status == "in_progress"
+    tx.transition("completed")
+    assert tx.action_status == "completed"
+
+
+def test_terminal_transaction_projection_is_failed_for_rejection():
+    assert action_status_for_transaction("rejected") == "failed"
+    assert action_status_for_transaction("cancelled") == "cancelled"
