@@ -9,8 +9,10 @@ from typing import Any, Callable
 
 from ofi.services.db_context import connection_scope
 from ofi.services.service_transaction import (
+    ExecutionAttempt,
     ServiceTransaction,
     TransactionEvent,
+    AttemptStatus,
     TransactionStatus,
 )
 
@@ -77,6 +79,53 @@ class TransactionRepository(ABC):
         """Atomically apply a provider callback exactly once."""
 
     @abstractmethod
+    @abstractmethod
+    def create_attempt(self, attempt: ExecutionAttempt) -> ExecutionAttempt:
+        """Create a durable execution attempt with monotonic numbering."""
+
+    @abstractmethod
+    def transition_attempt(
+        self, attempt_id: str, status: AttemptStatus, *,
+        external_reference: str | None = None, last_error: str | None = None,
+    ) -> ExecutionAttempt:
+        """Atomically update one execution attempt."""
+
+    @abstractmethod
+    def list_attempts(self, transaction_id: str) -> list[ExecutionAttempt]:
+        """Return attempts for a transaction in attempt-number order."""
+
+    @abstractmethod
+    def create_attempt(self, attempt: ExecutionAttempt) -> ExecutionAttempt:
+        existing = self.list_attempts(attempt.transaction_id)
+        expected = len(existing) + 1
+        if attempt.attempt_number != expected:
+            raise TransactionConflictError(f"expected attempt number {expected}, got {attempt.attempt_number}")
+        if attempt.attempt_id in self._attempts:
+            raise ValueError(f"attempt already exists: {attempt.attempt_id}")
+        self._attempts[attempt.attempt_id] = deepcopy(attempt)
+        return deepcopy(attempt)
+
+    def transition_attempt(self, attempt_id: str, status: AttemptStatus, *,
+                           external_reference: str | None = None,
+                           last_error: str | None = None) -> ExecutionAttempt:
+        from datetime import datetime, timezone
+        try:
+            current = deepcopy(self._attempts[attempt_id])
+        except KeyError as exc:
+            raise KeyError(attempt_id) from exc
+        current.status = status
+        current.updated_at = datetime.now(timezone.utc)
+        if external_reference is not None:
+            current.external_reference = external_reference
+        if last_error is not None:
+            current.last_error = last_error
+        self._attempts[attempt_id] = deepcopy(current)
+        return current
+
+    def list_attempts(self, transaction_id: str) -> list[ExecutionAttempt]:
+        return sorted((deepcopy(a) for a in self._attempts.values() if a.transaction_id == transaction_id),
+                      key=lambda a: a.attempt_number)
+
     def list_for_action(self, action_id: str) -> list[ServiceTransaction]:
         """Return transactions for an action in creation order."""
 
@@ -88,6 +137,7 @@ class InMemoryTransactionRepository(TransactionRepository):
         self._transactions: dict[str, ServiceTransaction] = {}
         self._idempotency: dict[str, str] = {}
         self._callback_events: dict[tuple[str, str], str] = {}
+        self._attempts: dict[str, ExecutionAttempt] = {}
 
     def create_if_absent(self, transaction: ServiceTransaction) -> TransactionCreateResult:
         existing_id = self._idempotency.get(transaction.idempotency_key)
@@ -406,6 +456,42 @@ class PostgresTransactionRepository(TransactionRepository):
                 )
                 return CallbackResult(working, True)
 
+    def create_attempt(self, attempt: ExecutionAttempt) -> ExecutionAttempt:
+        with connection_scope(self._connection_factory) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO service_execution_attempts "
+                    "(attempt_id, transaction_id, attempt_number, provider_id, status, created_at, updated_at, external_reference, last_error) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING attempt_id",
+                    (attempt.attempt_id, attempt.transaction_id, attempt.attempt_number,
+                     attempt.provider_id, attempt.status, attempt.created_at, attempt.updated_at,
+                     attempt.external_reference, attempt.last_error),
+                )
+                cur.fetchone()
+                return self._get_attempt_with_cursor(cur, attempt.attempt_id)
+
+    def transition_attempt(self, attempt_id: str, status: AttemptStatus, *,
+                           external_reference: str | None = None,
+                           last_error: str | None = None) -> ExecutionAttempt:
+        with connection_scope(self._connection_factory) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE service_execution_attempts SET status=%s, updated_at=now(), "
+                    "external_reference=COALESCE(%s,external_reference), "
+                    "last_error=COALESCE(%s,last_error) WHERE attempt_id=%s",
+                    (status, external_reference, last_error, attempt_id),
+                )
+                if cur.rowcount != 1:
+                    raise KeyError(attempt_id)
+                return self._get_attempt_with_cursor(cur, attempt_id)
+
+    def list_attempts(self, transaction_id: str) -> list[ExecutionAttempt]:
+        with connection_scope(self._connection_factory) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT attempt_id FROM service_execution_attempts WHERE transaction_id=%s ORDER BY attempt_number",
+                            (transaction_id,))
+                return [self._get_attempt_with_cursor(cur, row[0]) for row in cur.fetchall()]
+
     def list_for_action(self, action_id: str) -> list[ServiceTransaction]:
         with connection_scope(self._connection_factory) as conn:
             with conn.cursor() as cur:
@@ -420,6 +506,23 @@ class PostgresTransactionRepository(TransactionRepository):
                 )
                 ids = [row[0] for row in cur.fetchall()]
                 return [self._get_with_cursor(cur, tx_id) for tx_id in ids]
+
+    @staticmethod
+    def _get_attempt_with_cursor(cur: Any, attempt_id: str) -> ExecutionAttempt:
+        cur.execute(
+            "SELECT attempt_id, transaction_id, attempt_number, provider_id, status, "
+            "created_at, updated_at, external_reference, last_error "
+            "FROM service_execution_attempts WHERE attempt_id=%s",
+            (attempt_id,),
+        )
+        row = cur.fetchone()
+        if row is None:
+            raise KeyError(attempt_id)
+        return ExecutionAttempt(
+            attempt_id=row[0], transaction_id=row[1], attempt_number=row[2],
+            provider_id=row[3], status=row[4], created_at=row[5],
+            updated_at=row[6], external_reference=row[7], last_error=row[8],
+        )
 
     @staticmethod
     def _get_with_cursor(
