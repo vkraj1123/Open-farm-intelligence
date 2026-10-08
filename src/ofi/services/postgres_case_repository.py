@@ -110,30 +110,25 @@ class PostgresCaseRepository(CaseRepository):
                 with conn.transaction():
                     next_version = self._save_record(conn, working)
                     with conn.cursor() as cur:
+                        cur.execute(
+                            """
+                            SELECT COALESCE(MAX(sequence), 0) + 1
+                            FROM case_events
+                            WHERE case_id=%s
+                            """,
+                            (working.case.id,),
+                        )
+                        next_sequence = cur.fetchone()[0]
                         if event.sequence is None:
-                            cur.execute(
-                                """
-                                SELECT COALESCE(MAX(sequence), 0) + 1
-                                FROM case_events
-                                WHERE case_id=%s
-                                """,
-                                (working.case.id,),
+                            working_event.sequence = next_sequence
+                        elif event.sequence != next_sequence:
+                            raise ValueError(
+                                f"invalid event sequence for case {working.case.id}: "
+                                f"{event.sequence}; expected {next_sequence}"
                             )
-                            working_event.sequence = cur.fetchone()[0]
-                        else:
-                            cur.execute(
-                                """
-                                SELECT 1
-                                FROM case_events
-                                WHERE case_id=%s AND sequence=%s
-                                """,
-                                (working.case.id, working_event.sequence),
-                            )
-                            if cur.fetchone() is not None:
-                                raise ValueError(
-                                    f"event sequence already exists: "
-                                    f"{working.case.id}:{working_event.sequence}"
-                                )
+                        # Keep the committed domain snapshot aligned with the
+                        # durable ledger sequence assigned in this transaction.
+                        working.case.events[-1].sequence = working_event.sequence
                         cur.execute(
                             """
                             INSERT INTO case_events
