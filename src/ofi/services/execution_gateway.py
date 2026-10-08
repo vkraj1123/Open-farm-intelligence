@@ -1,4 +1,6 @@
 from dataclasses import dataclass
+import hashlib
+import hmac
 from datetime import datetime, timezone
 from typing import Literal, Protocol
 from uuid import uuid4
@@ -77,6 +79,23 @@ class ServiceAdapter(Protocol):
 
 class ExecutionError(Exception):
     pass
+
+
+@dataclass(frozen=True)
+class ProviderCallback:
+    provider_id: str
+    event_id: str
+    transaction_id: str
+    status: ExecutionStatus
+    external_reference: str | None = None
+    message: str = ""
+
+
+def verify_callback_signature(
+    *, secret: str, payload: bytes, signature: str
+) -> bool:
+    expected = hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, signature)
 
 
 class ServiceExecutionGateway:
@@ -198,6 +217,33 @@ class ServiceExecutionGateway:
             transaction_id=transaction.transaction_id,
             idempotency_key=key,
         )
+
+    def handle_provider_callback(
+        self,
+        callback: ProviderCallback,
+        *,
+        raw_payload: bytes,
+        signature: str,
+        provider_secret: str,
+    ) -> ServiceTransaction:
+        if not verify_callback_signature(
+            secret=provider_secret,
+            payload=raw_payload,
+            signature=signature,
+        ):
+            raise ExecutionError("invalid provider callback signature")
+        try:
+            result = self._transactions.apply_callback(
+                provider_id=callback.provider_id,
+                event_id=callback.event_id,
+                transaction_id=callback.transaction_id,
+                status=callback.status,
+                external_reference=callback.external_reference,
+                message=callback.message,
+            )
+        except (KeyError, TransactionConflictError) as exc:
+            raise ExecutionError(str(exc)) from exc
+        return result.transaction
 
     def action_status(self, action_id: str) -> str:
         matches = self._transactions.list_for_action(action_id)
