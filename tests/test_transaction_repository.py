@@ -138,9 +138,10 @@ def test_gateway_uses_actual_provider_in_fingerprint_when_provider_is_implicit()
 
     # Registration order chooses lab-01. A new gateway with the same key but
     # a different selected provider must not replay the old transaction.
+    repo = gateway._transactions
     other_gateway = ServiceExecutionGateway(
         [second],
-        transaction_repository=gateway._transactions,
+        transaction_repository=repo,
     )
     with pytest.raises(ExecutionError, match="idempotency key was reused"):
         other_gateway.submit(
