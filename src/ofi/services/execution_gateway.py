@@ -107,11 +107,14 @@ class ServiceExecutionGateway:
             raise ExecutionError("consent is not active")
 
         key = idempotency_key or f"{action.id}:{provider_id or route.service}"
+        selected_provider_hint = provider_id or route.service
+        request_fingerprint = f"{action.id}|{route.service}|{selected_provider_hint}"
         existing_id = self._idempotency.get(key)
         if existing_id:
-            return self._receipt_from_transaction(
-                self._transactions[existing_id], route.service
-            )
+            existing = self._transactions[existing_id]
+            if existing.request_fingerprint != request_fingerprint:
+                raise ExecutionError("idempotency key was reused for a different execution request")
+            return self._receipt_from_transaction(existing, route.service)
 
         adapter = self._adapters.get(provider_id) if provider_id else None
         if adapter is None:
@@ -129,6 +132,7 @@ class ServiceExecutionGateway:
         transaction = ServiceTransaction(
             transaction_id=f"txn:{action.id}:{len(self._transactions) + 1}",
             idempotency_key=key,
+            request_fingerprint=request_fingerprint,
             action_id=action.id,
             provider_id=selected_provider,
         )
