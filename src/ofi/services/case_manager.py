@@ -196,4 +196,4 @@ class CaseManager:
             actor=actor,
             payload=payload,
         )
-        self.store.append_event(record.case.id, event)
+        self.store.save_and_append_event(record, event)
