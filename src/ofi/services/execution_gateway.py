@@ -142,17 +142,15 @@ class ServiceExecutionGateway:
         )
 
         try:
-            existing_or_created = self._transactions.create(transaction)
+            creation = self._transactions.create(transaction)
         except TransactionConflictError as exc:
             raise ExecutionError(str(exc)) from exc
 
-        if existing_or_created.transaction_id != transaction.transaction_id:
-            existing = existing_or_created
-            if existing.status != "planned":
-                return self._receipt_from_transaction(existing, route.service)
-            transaction = existing
-        else:
-            transaction = existing_or_created
+        if not creation.created:
+            return self._receipt_from_transaction(
+                creation.transaction, route.service
+            )
+        transaction = creation.transaction
 
         request = ExecutionRequest(
             action=action,
