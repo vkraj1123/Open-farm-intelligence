@@ -1,9 +1,18 @@
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Literal, Protocol
+from uuid import uuid4
 
 from ofi.services.action_router import ActionRequest, ActionRoute
-from ofi.services.service_transaction import ServiceTransaction, action_status_for_transaction
+from ofi.services.service_transaction import (
+    ServiceTransaction,
+    action_status_for_transaction,
+)
+from ofi.services.transaction_repository import (
+    InMemoryTransactionRepository,
+    TransactionConflictError,
+    TransactionRepository,
+)
 
 
 ConsentStatus = Literal["granted", "denied", "expired", "not_required"]
@@ -70,16 +79,19 @@ class ExecutionError(Exception):
 
 
 class ServiceExecutionGateway:
-    """Safe execution boundary with provider-specific routing and idempotency."""
+    """Safe execution boundary with provider-specific routing and durable state."""
 
-    def __init__(self, adapters: list[ServiceAdapter] | None = None):
+    def __init__(
+        self,
+        adapters: list[ServiceAdapter] | None = None,
+        *,
+        transaction_repository: TransactionRepository | None = None,
+    ):
         self._adapters = {}
         self._service_adapters = {}
         for adapter in adapters or []:
             self.register(adapter)
-
-        self._transactions: dict[str, ServiceTransaction] = {}
-        self._idempotency: dict[str, str] = {}
+        self._transactions = transaction_repository or InMemoryTransactionRepository()
 
     def register(self, adapter: ServiceAdapter) -> None:
         if adapter.provider_id in self._adapters:
@@ -106,16 +118,6 @@ class ServiceExecutionGateway:
         if consent is not None and not consent.active():
             raise ExecutionError("consent is not active")
 
-        key = idempotency_key or f"{action.id}:{provider_id or route.service}"
-        selected_provider_hint = provider_id or route.service
-        request_fingerprint = f"{action.id}|{route.service}|{selected_provider_hint}"
-        existing_id = self._idempotency.get(key)
-        if existing_id:
-            existing = self._transactions[existing_id]
-            if existing.request_fingerprint != request_fingerprint:
-                raise ExecutionError("idempotency key was reused for a different execution request")
-            return self._receipt_from_transaction(existing, route.service)
-
         adapter = self._adapters.get(provider_id) if provider_id else None
         if adapter is None:
             adapter = self._service_adapters.get(route.service)
@@ -129,16 +131,28 @@ class ServiceExecutionGateway:
         if provider_id and adapter.provider_id != provider_id:
             raise ExecutionError("provider adapter identity mismatch")
 
+        key = idempotency_key or f"{action.id}:{selected_provider}"
+        request_fingerprint = f"{action.id}|{route.service}|{selected_provider}"
         transaction = ServiceTransaction(
-            transaction_id=f"txn:{action.id}:{len(self._transactions) + 1}",
+            transaction_id=f"txn:{uuid4()}",
             idempotency_key=key,
             request_fingerprint=request_fingerprint,
             action_id=action.id,
             provider_id=selected_provider,
         )
-        self._transactions[transaction.transaction_id] = transaction
-        self._idempotency[key] = transaction.transaction_id
-        transaction.transition("submitted")
+
+        try:
+            existing_or_created = self._transactions.create(transaction)
+        except TransactionConflictError as exc:
+            raise ExecutionError(str(exc)) from exc
+
+        if existing_or_created.transaction_id != transaction.transaction_id:
+            existing = existing_or_created
+            if existing.status != "planned":
+                return self._receipt_from_transaction(existing, route.service)
+            transaction = existing
+        else:
+            transaction = existing_or_created
 
         request = ExecutionRequest(
             action=action,
@@ -149,14 +163,23 @@ class ServiceExecutionGateway:
             provider_id=selected_provider,
         )
         receipt = adapter.execute(request)
-        if receipt.external_reference is not None:
-            transaction.external_reference = receipt.external_reference
+
+        if transaction.status == "planned":
+            transaction = self._transactions.transition(
+                transaction.transaction_id,
+                "submitted",
+                external_reference=receipt.external_reference,
+                message=receipt.message,
+            )
+
         if receipt.status != "submitted":
-            transaction.transition(
+            transaction = self._transactions.transition(
+                transaction.transaction_id,
                 receipt.status,
                 external_reference=receipt.external_reference,
                 message=receipt.message,
             )
+
         return ExecutionReceipt(
             action_id=receipt.action_id,
             service=receipt.service,
@@ -170,7 +193,7 @@ class ServiceExecutionGateway:
         )
 
     def action_status(self, action_id: str) -> str:
-        matches = [tx for tx in self._transactions.values() if tx.action_id == action_id]
+        matches = self._transactions.list_for_action(action_id)
         if not matches:
             raise ExecutionError(f"unknown action transaction: {action_id}")
         latest = max(matches, key=lambda tx: (tx.created_at, tx.transaction_id))
@@ -178,7 +201,7 @@ class ServiceExecutionGateway:
 
     def get_transaction(self, transaction_id: str) -> ServiceTransaction:
         try:
-            return self._transactions[transaction_id]
+            return self._transactions.get(transaction_id)
         except KeyError as exc:
             raise ExecutionError(f"unknown transaction: {transaction_id}") from exc
 
@@ -190,26 +213,33 @@ class ServiceExecutionGateway:
         external_reference: str | None = None,
         message: str = "",
     ) -> ServiceTransaction:
-        transaction = self.get_transaction(transaction_id)
-        transaction.transition(
-            status,
-            external_reference=external_reference,
-            message=message,
-        )
-        return transaction
+        try:
+            return self._transactions.transition(
+                transaction_id,
+                status,
+                external_reference=external_reference,
+                message=message,
+            )
+        except KeyError as exc:
+            raise ExecutionError(f"unknown transaction: {transaction_id}") from exc
 
     def _receipt_from_transaction(
         self,
         transaction: ServiceTransaction,
         service: str,
     ) -> ExecutionReceipt:
+        submitted_at = (
+            transaction.events[0].occurred_at
+            if transaction.events
+            else transaction.created_at
+        )
         return ExecutionReceipt(
             action_id=transaction.action_id,
             service=service,
             provider_id=transaction.provider_id or "",
             status=transaction.status,
             external_reference=transaction.external_reference,
-            submitted_at=transaction.events[0].occurred_at,
+            submitted_at=submitted_at,
             message="Replayed idempotent submission.",
             transaction_id=transaction.transaction_id,
             idempotency_key=transaction.idempotency_key,
