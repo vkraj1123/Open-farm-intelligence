@@ -101,6 +101,8 @@ class ServiceExecutionGateway:
             raise ExecutionError("authenticated actor is required")
         if consent is None and route.capability not in {"expert", "verification"}:
             raise ExecutionError("explicit consent is required for this service")
+        if consent is not None and consent.actor_id != actor.actor_id:
+            raise ExecutionError("consent actor does not match authenticated actor")
         if consent is not None and not consent.active():
             raise ExecutionError("consent is not active")
 
