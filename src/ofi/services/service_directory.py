@@ -71,6 +71,12 @@ class ServiceDirectory:
             raise ValueError(f"provider already registered: {provider.provider_id}")
         self._providers[provider.provider_id] = provider
 
+    def get(self, provider_id: str) -> ServiceProvider:
+        try:
+            return self._providers[provider_id]
+        except KeyError as exc:
+            raise LookupError(f"provider not found: {provider_id}") from exc
+
     def discover(
         self,
         *,
