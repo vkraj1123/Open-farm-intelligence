@@ -1,5 +1,6 @@
 from datetime import date, datetime, timezone
 from typing import Any, Literal
+from uuid import uuid4
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -35,7 +36,7 @@ class ProductionContract(BaseModel):
 
 
 class CropCycle(BaseModel):
-    id: str
+    id: str = Field(default_factory=lambda: f"crop-{uuid4().hex}")
     crop: str
     season: str | None = None
     sowing_date: date | None = None
@@ -106,6 +107,7 @@ class FarmCase(BaseModel):
     status: Literal["reported", "triaged", "actioned", "observing", "resolved", "escalated"] = "reported"
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    events: list[CaseEvent] = Field(default_factory=list)
 
     @field_validator("created_at", "updated_at")
     @classmethod
@@ -161,7 +163,6 @@ class CaseRecord(BaseModel):
     case: FarmCase
     latest_reasoning: ReasoningResult | None = None
     outcome: CaseOutcome | None = None
-    events: list[CaseEvent] = Field(default_factory=list)
 
 
 class FarmSnapshot(BaseModel):
