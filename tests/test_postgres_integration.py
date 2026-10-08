@@ -3,7 +3,8 @@ from datetime import date
 from pathlib import Path
 
 import pytest
-import psycopg
+
+psycopg = pytest.importorskip("psycopg")
 
 from ofi.domain.models import (
     CaseEvent,
@@ -19,7 +20,10 @@ from ofi.services.unit_of_work import PostgresFarmCaseUnitOfWork
 from ofi.twin.postgis import PostGISFarmTwinStore
 
 
-pytestmark = pytest.mark.integration
+pytestmark = pytest.mark.skipif(
+    not os.getenv("OFI_POSTGRES_DSN"),
+    reason="OFI_POSTGRES_DSN is required for PostgreSQL integration tests",
+)
 
 
 def _dsn() -> str:
