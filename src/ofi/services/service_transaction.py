@@ -2,6 +2,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Literal
 
+from ofi.services.action_router import ActionStatus
+
 
 TransactionStatus = Literal[
     "planned", "submitted", "accepted", "in_progress",
@@ -30,6 +32,23 @@ class TransactionEvent:
 
 
 @dataclass
+TRANSACTION_TO_ACTION_STATUS = {
+    "planned": "planned",
+    "submitted": "routed",
+    "accepted": "accepted",
+    "in_progress": "in_progress",
+    "completed": "completed",
+    "rejected": "failed",
+    "failed": "failed",
+    "cancelled": "cancelled",
+}
+
+
+def action_status_for_transaction(status: TransactionStatus) -> ActionStatus:
+    """Project transaction truth into the action lifecycle vocabulary."""
+    return TRANSACTION_TO_ACTION_STATUS[status]
+
+
 class ServiceTransaction:
     transaction_id: str
     idempotency_key: str
@@ -38,6 +57,10 @@ class ServiceTransaction:
     status: TransactionStatus = "planned"
     external_reference: str | None = None
     events: list[TransactionEvent] = field(default_factory=list)
+
+    @property
+    def action_status(self) -> ActionStatus:
+        return action_status_for_transaction(self.status)
 
     def transition(
         self,
