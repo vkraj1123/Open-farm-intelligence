@@ -1284,14 +1284,14 @@ The core closed-loop architecture is implemented and tested, but the project is 
 - [x] Signed provider callbacks
 - [x] Callback authentication
 - [x] External event idempotency
-- [ ] Retry policy
+- [x] Retry policy
 - [ ] Dead-letter handling
 - [x] Explicit execution-attempt ledger
 - [x] Unknown external execution state
 - [ ] Multi-attempt retry orchestration
 - [ ] Real service adapter
 
-**Status: 🟡 Durable execution + authenticated callback boundary + explicit attempt ledger implemented; retry orchestration and production webhook hardening remain**
+**Status: 🟡 Durable execution + authenticated callback boundary + explicit attempt ledger + safe retry policy implemented; reconciliation-driven retry orchestration and production webhook hardening remain**
 
 ---
 
