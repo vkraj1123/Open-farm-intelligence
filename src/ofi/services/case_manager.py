@@ -191,7 +191,6 @@ class CaseManager:
 
     def _event(self, record, event_type, actor, payload):
         event = CaseEvent(
-            id=f"evt-{len(record.case.events) + 1}",
             event_type=event_type,
             actor=actor,
             payload=payload,
