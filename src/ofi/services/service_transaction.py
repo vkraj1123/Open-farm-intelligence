@@ -70,10 +70,11 @@ class ServiceTransaction:
         *,
         external_reference: str | None = None,
         message: str = "",
+        occurred_at: datetime | None = None,
     ) -> TransactionEvent:
         if status not in _ALLOWED_TRANSITIONS[self.status]:
             raise ValueError(f"invalid transition: {self.status} -> {status}")
-        now = datetime.now(timezone.utc)
+        now = (occurred_at or datetime.now(timezone.utc)).astimezone(timezone.utc)
         if external_reference is not None:
             self.external_reference = external_reference
         self.status = status
