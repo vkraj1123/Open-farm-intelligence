@@ -1,5 +1,7 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import math
+import os
+from uuid import uuid4
 from typing import get_args
 
 from fastapi import FastAPI, HTTPException
@@ -10,6 +12,12 @@ from ofi.providers.registry import default_mock_registry
 from ofi.services.case_manager import CaseManager
 from ofi.services.evidence_alignment import align_observations
 from ofi.services.evidence_comparison import MetricComparisonRule, compare_aligned_observations
+from ofi.services.evidence_comparison_ledger import (
+    EvidenceComparisonAssessment,
+    EvidenceComparisonLedger,
+    InMemoryEvidenceComparisonLedger,
+    PostgresEvidenceComparisonLedger,
+)
 
 
 app = FastAPI(
@@ -88,6 +96,134 @@ class EvidenceComparisonRequest(EvidenceFrameRequest):
     """Freshness policy plus explicit pairwise metric-comparison rules."""
 
     comparison_rules: list[MetricComparisonRuleRequest] = Field(min_length=1)
+
+class EvidenceComparisonPolicyRequest(EvidenceComparisonRequest):
+    """Immutable policy definition; submitting the same policy_id makes a new version."""
+
+    policy_id: str = Field(min_length=1)
+    description: str = ""
+
+    @field_validator("policy_id")
+    @classmethod
+    def policy_id_must_not_be_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("policy_id must not be blank")
+        return value
+
+
+class EvidenceComparisonAssessmentRequest(BaseModel):
+    """Select an immutable comparison policy version for one farm assessment."""
+
+    policy_id: str = Field(min_length=1)
+    policy_version: int | None = Field(default=None, ge=1)
+
+    @field_validator("policy_id")
+    @classmethod
+    def selected_policy_id_must_not_be_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("policy_id must not be blank")
+        return value
+
+
+def _build_evidence_comparison_ledger() -> EvidenceComparisonLedger:
+    """Use PostgreSQL for durable records when OFI_DATABASE_URL is configured."""
+    dsn = os.getenv("OFI_DATABASE_URL")
+    if not dsn:
+        return InMemoryEvidenceComparisonLedger()
+    try:
+        import psycopg
+    except ImportError as exc:
+        raise RuntimeError(
+            "OFI_DATABASE_URL is configured but psycopg is not installed; "
+            "install the postgres extra to enable durable evidence comparison records"
+        ) from exc
+    return PostgresEvidenceComparisonLedger(lambda: psycopg.connect(dsn))
+
+
+def _policy_payload(policy):
+    return {
+        "policy_id": policy.policy_id,
+        "version": policy.version,
+        "description": policy.description,
+        "max_age_seconds_by_kind": policy.max_age_seconds_by_kind,
+        "require_provenance": policy.require_provenance,
+        "comparison_rules": [
+            {
+                "rule_id": rule.rule_id,
+                "value_key": rule.value_key,
+                "observation_kinds": list(rule.observation_kinds),
+                "unit": rule.unit,
+                "spatial_scope": rule.spatial_scope,
+                "max_time_delta_seconds": rule.max_time_delta.total_seconds(),
+                "absolute_tolerance": rule.absolute_tolerance,
+                "require_same_crop_cycle": rule.require_same_crop_cycle,
+                "require_distinct_sources": rule.require_distinct_sources,
+            }
+            for rule in policy.comparison_rules
+        ],
+        "created_at": policy.created_at,
+    }
+
+
+def _assessment_payload(assessment: EvidenceComparisonAssessment):
+    return {
+        "assessment_id": assessment.assessment_id,
+        "policy_id": assessment.policy_id,
+        "policy_version": assessment.policy_version,
+        "farm_id": assessment.farm_id,
+        "crop_cycle_id": assessment.crop_cycle_id,
+        "as_of": assessment.as_of,
+        "recorded_at": assessment.recorded_at,
+        "observations_snapshot": assessment.observations_snapshot,
+        "evidence_frame": assessment.evidence_frame,
+        "comparisons": assessment.comparisons,
+    }
+
+
+def _evidence_frame_payload(frame):
+    return {
+        "farm_id": frame.farm_id,
+        "crop_cycle_id": frame.crop_cycle_id,
+        "as_of": frame.as_of.isoformat(),
+        "eligible_observation_ids": list(frame.eligible_observation_ids),
+        "excluded_counts": dict(frame.excluded_counts),
+        "assessments": [
+            {
+                "observation_id": item.observation_id,
+                "freshness": item.freshness,
+                "age_seconds": item.age_seconds,
+                "eligible": item.eligible,
+                "issues": list(item.issues),
+                "quality": item.quality,
+                "confidence": item.confidence,
+                "source": item.source,
+                "provenance_present": item.provenance_present,
+            }
+            for item in frame.assessments
+        ],
+    }
+
+
+def _comparison_payload(report):
+    return [
+        {
+            "rule_id": item.rule_id,
+            "value_key": item.value_key,
+            "left_observation_id": item.left_observation_id,
+            "right_observation_id": item.right_observation_id,
+            "left_source": item.left_source,
+            "right_source": item.right_source,
+            "left_value": item.left_value,
+            "right_value": item.right_value,
+            "absolute_difference": item.absolute_difference,
+            "status": item.status,
+            "reasons": list(item.reasons),
+        }
+        for item in report.comparisons
+    ]
+
+
+evidence_comparison_ledger = _build_evidence_comparison_ledger()
 
 
 @app.get("/health")
@@ -310,3 +446,103 @@ def compare_farm_evidence(farm_id: str, request: EvidenceComparisonRequest):
             for item in report.comparisons
         ],
     }
+
+
+@app.post("/evidence-comparison-policies")
+def create_evidence_comparison_policy(request: EvidenceComparisonPolicyRequest):
+    """Create an immutable policy version; same policy_id publishes the next version."""
+    try:
+        policy = evidence_comparison_ledger.create_policy_version(
+            request.policy_id,
+            description=request.description,
+            max_age_seconds_by_kind=request.max_age_seconds_by_kind,
+            require_provenance=request.require_provenance,
+            comparison_rules=[
+                MetricComparisonRule(
+                    rule_id=item.rule_id,
+                    value_key=item.value_key,
+                    observation_kinds=tuple(item.observation_kinds),
+                    unit=item.unit,
+                    spatial_scope=item.spatial_scope,
+                    max_time_delta=timedelta(seconds=item.max_time_delta_seconds),
+                    absolute_tolerance=item.absolute_tolerance,
+                    require_same_crop_cycle=item.require_same_crop_cycle,
+                    require_distinct_sources=item.require_distinct_sources,
+                )
+                for item in request.comparison_rules
+            ],
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _policy_payload(policy)
+
+
+@app.get("/evidence-comparison-policies/{policy_id}")
+def get_evidence_comparison_policy(policy_id: str, version: int | None = None):
+    """Get a specific immutable policy version, or the current latest version."""
+    if version is not None and version < 1:
+        raise HTTPException(status_code=422, detail="version must be positive")
+    try:
+        return _policy_payload(evidence_comparison_ledger.get_policy(policy_id, version))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="comparison policy version not found") from exc
+
+
+@app.post("/farms/{farm_id}/evidence-comparison-assessments")
+def create_evidence_comparison_assessment(
+    farm_id: str, request: EvidenceComparisonAssessmentRequest
+):
+    """Run and persist an assessment with its exact policy and observation snapshot."""
+    try:
+        policy = evidence_comparison_ledger.get_policy(
+            request.policy_id, request.policy_version
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="comparison policy version not found") from exc
+
+    try:
+        snapshot = case_manager.farm_twin.snapshot(farm_id)
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(status_code=404, detail="farm snapshot not available") from exc
+
+    frame = align_observations(
+        snapshot,
+        snapshot.recent_observations,
+        max_age_by_kind={
+            kind: timedelta(seconds=seconds)
+            for kind, seconds in policy.max_age_seconds_by_kind.items()
+        },
+        require_provenance=policy.require_provenance,
+    )
+    report = compare_aligned_observations(
+        snapshot.recent_observations, frame, policy.comparison_rules
+    )
+    assessment = EvidenceComparisonAssessment(
+        assessment_id=f"evidence-assessment-{uuid4().hex}",
+        policy_id=policy.policy_id,
+        policy_version=policy.version,
+        farm_id=report.farm_id,
+        crop_cycle_id=report.crop_cycle_id,
+        as_of=report.as_of,
+        recorded_at=datetime.now(timezone.utc),
+        observations_snapshot=[
+            item.model_dump(mode="json") for item in snapshot.recent_observations
+        ],
+        evidence_frame=_evidence_frame_payload(frame),
+        comparisons=_comparison_payload(report),
+    )
+    try:
+        stored = evidence_comparison_ledger.save_assessment(assessment)
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _assessment_payload(stored)
+
+
+@app.get("/evidence-comparison-assessments/{assessment_id}")
+def get_evidence_comparison_assessment(assessment_id: str):
+    """Retrieve an immutable historical comparison assessment."""
+    try:
+        assessment = evidence_comparison_ledger.get_assessment(assessment_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="evidence comparison assessment not found") from exc
+    return _assessment_payload(assessment)

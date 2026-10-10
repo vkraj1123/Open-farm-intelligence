@@ -122,3 +122,23 @@ Example request (illustrative policy only):
 ```
 
 The values above demonstrate the request shape; they are not recommended production thresholds. A result of `disagree` means only that a configured rule was exceeded after comparability gates passed. It does not establish which source is correct or prove an agronomic contradiction. Rule governance, versioning and validation against authoritative agricultural data remain outstanding.
+
+
+## Versioned policies and persisted assessments
+
+The comparison endpoints above accept a rule inline for a one-off report. For reproducibility, deployments can instead use the policy-and-assessment ledger:
+
+1. POST /evidence-comparison-policies publishes a policy. Posting the same policy_id again creates the next immutable version; it does not overwrite an old version.
+2. GET /evidence-comparison-policies/{policy_id} returns the latest version. Supply the version query parameter to retrieve a specific version.
+3. POST /farms/{farm_id}/evidence-comparison-assessments accepts policy_id and an optional policy_version. If a version is omitted, the currently latest version is selected; the returned assessment permanently records the exact version selected.
+4. GET /evidence-comparison-assessments/{assessment_id} retrieves the stored historical result.
+
+An assessment retains the observation snapshot (including source, provenance, timestamp, units, scope and value), its per-observation eligibility frame and exclusion reasons, the comparisons, farm/crop identity, snapshot time and exact policy version. PostgreSQL uses append-only triggers to reject updates/deletes to policy versions and assessment records. Policy head rows may advance when a new version is published.
+
+### Persistence configuration
+
+The API uses a process-local in-memory ledger for tests and single-process development. Configure OFI_DATABASE_URL and install the optional PostgreSQL extra to enable the PostgreSQL ledger; apply src/ofi/twin/schema.sql before using these endpoints. If the configured database or schema is unavailable, persistence calls fail rather than silently falling back to memory.
+
+Important boundary: this makes comparison policies and assessment records durable, but it does not by itself make the API's current default CaseManager or FarmTwinStore durable. The assessment captures the observations available in the farm snapshot at the time of the request. End-to-end restart-safe farm-state retrieval requires configuring the broader case/farm persistence path separately.
+
+The ledger provides deterministic policy versioning and an audit snapshot, not policy governance or scientific validation. Teams still need an owner/review process for policy changes, source trust rules and agronomic thresholds.

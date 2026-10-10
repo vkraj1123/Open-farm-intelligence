@@ -2178,7 +2178,7 @@ An opt-in deterministic comparison service is available in `src/ofi/services/evi
 | Pairwise assessment | Implemented | `agree`, `disagree` or `not_comparable` with reason codes |
 | Eligibility gating | Implemented | Stale, future, unconfigured or otherwise excluded observations cannot drive a disagreement |
 | API exposure and synthetic tests | CI verified | Standard run #622 and PostgreSQL run #757 passed before PR #47 merged |
-| Rule persistence, ownership and versioning | Not implemented | Rules are caller-supplied per request |
+| Rule persistence and immutable version history | Implemented in this milestone | PostgreSQL-backed when OFI_DATABASE_URL is configured; process-local memory remains the default |
 | Scientific significance / source authority | Not inferred | A discrepancy does not establish which source is right or a crop diagnosis |
 | Rajasthan field validation | Not completed | Requires authoritative data, expert review and measured field outcomes |
 
@@ -2186,3 +2186,22 @@ Comparison thresholds in examples are illustrative, not production recommendatio
 
 
 **Verification:** PR [#47](https://github.com/vkraj1123/Open-farm-intelligence/pull/47) passed standard CI (run #622) and PostgreSQL CI (run #757) before merge. The feature was merged to `main` as [`f843aef402a43a9e2cf3f1d5531fbc6504a18579`](https://github.com/vkraj1123/Open-farm-intelligence/commit/f843aef402a43a9e2cf3f1d5531fbc6504a18579). These checks verify software behavior, not source authority, agronomic validity or field performance.
+
+
+
+# 48. Versioned evidence comparison ledger
+
+The policy-and-assessment ledger is implemented in src/ofi/services/evidence_comparison_ledger.py. Policies are immutable version records; publishing the same policy_id creates a new version. Each persisted assessment pins the exact policy version and stores the observation snapshot, eligibility frame, issue/exclusion reasons and comparison outputs. PostgreSQL schema additions are in src/ofi/twin/schema.sql, with append-only triggers for policy versions and assessment records.
+
+| Capability | Status | Boundary |
+|---|---|---|
+| Policy version creation and retrieval | Implemented | New policy versions are append-only; version selection is explicit or latest-on-request |
+| Historical assessment persistence | Implemented | Exact input observations, eligibility frame, comparison outcomes and selected version are recorded |
+| PostgreSQL serialization | Implemented | Policy head row is locked while allocating next version; assessments reference policy/version by foreign key |
+| API endpoints | Implemented | Create/get policies, create assessment from a selected policy, retrieve assessment by ID |
+| In-memory reference ledger | Implemented | Process-local only; not durable across restarts |
+| API PostgreSQL selection | Implemented | Configure OFI_DATABASE_URL, install the postgres extra and apply the schema before use |
+| Durable farm/case state in the default API | Not completed by this change | The ledger stores durable policy/results, but the default case manager and farm twin remain in-memory unless configured separately |
+| Scientific validation and policy governance | Not completed | Persisted reproducibility does not validate thresholds, source authority or agronomic conclusions |
+
+This change is software infrastructure. CI success, when confirmed on the PR, demonstrates repository tests and PostgreSQL schema/repository behavior only; it does not constitute a deployment or field validation.

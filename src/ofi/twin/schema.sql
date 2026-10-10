@@ -311,3 +311,75 @@ CREATE INDEX IF NOT EXISTS service_reconciliation_events_attempt
 ALTER TABLE service_reconciliation_events
     ADD COLUMN IF NOT EXISTS applied BOOLEAN NOT NULL DEFAULT FALSE;
 
+
+
+-- Versioned comparison rules. Policy definitions are immutable; publishing a
+-- changed definition creates a new version and advances the locked head row.
+CREATE TABLE IF NOT EXISTS evidence_comparison_policy_heads (
+    policy_id TEXT PRIMARY KEY,
+    current_version BIGINT NOT NULL DEFAULT 0 CHECK (current_version >= 0)
+);
+
+CREATE TABLE IF NOT EXISTS evidence_comparison_policy_versions (
+    policy_id TEXT NOT NULL
+        REFERENCES evidence_comparison_policy_heads(policy_id) ON DELETE RESTRICT,
+    version BIGINT NOT NULL CHECK (version >= 1),
+    description TEXT NOT NULL DEFAULT '',
+    max_age_seconds_by_kind JSONB NOT NULL,
+    require_provenance BOOLEAN NOT NULL DEFAULT FALSE,
+    comparison_rules JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (policy_id, version),
+    CHECK (jsonb_typeof(max_age_seconds_by_kind) = 'object'),
+    CHECK (jsonb_typeof(comparison_rules) = 'array')
+);
+
+CREATE INDEX IF NOT EXISTS evidence_comparison_policy_versions_created
+    ON evidence_comparison_policy_versions (policy_id, created_at DESC, version DESC);
+
+-- Each assessment records the exact observation snapshot, eligibility frame and
+-- comparison output used for this run, linked to the immutable policy version.
+CREATE TABLE IF NOT EXISTS evidence_comparison_assessments (
+    assessment_id TEXT PRIMARY KEY,
+    policy_id TEXT NOT NULL,
+    policy_version BIGINT NOT NULL,
+    farm_id TEXT NOT NULL,
+    crop_cycle_id TEXT NOT NULL,
+    as_of TIMESTAMPTZ NOT NULL,
+    recorded_at TIMESTAMPTZ NOT NULL,
+    observations_snapshot JSONB NOT NULL,
+    evidence_frame JSONB NOT NULL,
+    comparisons JSONB NOT NULL,
+    FOREIGN KEY (policy_id, policy_version)
+        REFERENCES evidence_comparison_policy_versions(policy_id, version)
+        ON DELETE RESTRICT,
+    CHECK (jsonb_typeof(observations_snapshot) = 'array'),
+    CHECK (jsonb_typeof(evidence_frame) = 'object'),
+    CHECK (jsonb_typeof(comparisons) = 'array')
+);
+
+CREATE INDEX IF NOT EXISTS evidence_comparison_assessments_farm_time
+    ON evidence_comparison_assessments (farm_id, as_of DESC, assessment_id);
+
+CREATE INDEX IF NOT EXISTS evidence_comparison_assessments_policy
+    ON evidence_comparison_assessments (policy_id, policy_version, recorded_at DESC);
+
+-- Policy versions and assessment records are append-only audit artifacts.
+CREATE OR REPLACE FUNCTION reject_evidence_comparison_record_mutation()
+RETURNS TRIGGER AS $$
+BEGIN
+    RAISE EXCEPTION 'evidence comparison policy versions and assessments are immutable';
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS evidence_comparison_policy_versions_immutable_trigger
+    ON evidence_comparison_policy_versions;
+CREATE TRIGGER evidence_comparison_policy_versions_immutable_trigger
+BEFORE UPDATE OR DELETE ON evidence_comparison_policy_versions
+FOR EACH ROW EXECUTE FUNCTION reject_evidence_comparison_record_mutation();
+
+DROP TRIGGER IF EXISTS evidence_comparison_assessments_immutable_trigger
+    ON evidence_comparison_assessments;
+CREATE TRIGGER evidence_comparison_assessments_immutable_trigger
+BEFORE UPDATE OR DELETE ON evidence_comparison_assessments
+FOR EACH ROW EXECUTE FUNCTION reject_evidence_comparison_record_mutation();
