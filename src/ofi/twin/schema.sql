@@ -209,9 +209,13 @@ CREATE TABLE IF NOT EXISTS service_reconciliation_events (
     external_reference TEXT,
     message TEXT NOT NULL DEFAULT '',
     received_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    applied BOOLEAN NOT NULL DEFAULT FALSE,
     PRIMARY KEY (provider_id, event_id)
 );
 
 CREATE INDEX IF NOT EXISTS service_reconciliation_events_attempt
     ON service_reconciliation_events (transaction_id, attempt_id, checked_at DESC);
+
+ALTER TABLE service_reconciliation_events
+    ADD COLUMN IF NOT EXISTS applied BOOLEAN NOT NULL DEFAULT FALSE;
 
