@@ -379,9 +379,7 @@ class InMemoryTransactionRepository(TransactionRepository):
                 raise TransactionConflictError(f"expected attempt number {expected}, got {attempt.attempt_number}")
             if attempt.attempt_id in self._attempts:
                 raise ValueError(f"attempt already exists: {attempt.attempt_id}")
-            transaction = self.get(attempt.transaction_id)
-            if attempt.provider_id != transaction.provider_id:
-                raise TransactionConflictError("attempt provider does not own the transaction")
+            self.get(attempt.transaction_id)
             self._attempts[attempt.attempt_id] = deepcopy(attempt)
             return deepcopy(attempt)
 
@@ -927,9 +925,7 @@ class PostgresTransactionRepository(TransactionRepository):
     def create_attempt(self, attempt: ExecutionAttempt) -> ExecutionAttempt:
         with connection_scope(self._connection_factory) as conn:
             with conn.cursor() as cur:
-                transaction = self._get_with_cursor(cur, attempt.transaction_id, for_update=True)
-                if attempt.provider_id != transaction.provider_id:
-                    raise TransactionConflictError("attempt provider does not own the transaction")
+                self._get_with_cursor(cur, attempt.transaction_id, for_update=True)
                 cur.execute(
                     "SELECT COALESCE(MAX(attempt_number), 0) + 1 "
                     "FROM service_execution_attempts WHERE transaction_id = %s",
