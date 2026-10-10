@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+import hashlib
 import json
 from typing import Protocol
 from urllib.error import HTTPError, URLError
@@ -102,7 +103,20 @@ class ProviderReconciliationAdapter:
         attempt_id: str,
         now: datetime | None = None,
     ) -> ReconciliationEvidence:
-        """Fetch and verify authoritative evidence for the exact execution attempt."""
+        """Fetch and verify evidence, discarding the payload fingerprint."""
+        evidence, _ = self.reconcile_with_digest(
+            transaction_id=transaction_id, attempt_id=attempt_id, now=now
+        )
+        return evidence
+
+    def reconcile_with_digest(
+        self,
+        *,
+        transaction_id: str,
+        attempt_id: str,
+        now: datetime | None = None,
+    ) -> tuple[ReconciliationEvidence, str]:
+        """Return verified evidence and SHA-256 of the exact signed response bytes."""
         if not self.provider_id.strip() or not self.provider_secret:
             raise ValueError("provider identity and secret are required")
         if not transaction_id.strip() or not attempt_id.strip():
@@ -142,7 +156,7 @@ class ProviderReconciliationAdapter:
         if evidence.status not in {"executed", "not_executed", "pending", "unknown"}:
             raise ReconciliationError("unsupported reconciliation status")
 
-        return verify_reconciliation_evidence(
+        verified = verify_reconciliation_evidence(
             evidence,
             raw_payload=response.raw_payload,
             signature=response.signature,
@@ -152,3 +166,4 @@ class ProviderReconciliationAdapter:
             expected_attempt_id=attempt_id,
             now=now,
         )
+        return verified, hashlib.sha256(response.raw_payload).hexdigest()
