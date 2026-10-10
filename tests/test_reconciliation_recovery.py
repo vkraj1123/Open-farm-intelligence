@@ -113,6 +113,7 @@ def test_identical_reconciliation_replay_is_noop_but_returns_current_state():
     first = recovery.reconcile_attempt(
         transaction_id="txn-1", attempt_id="attempt-1", now=NOW
     )
+    audit_count = len(repo.list_attempt_events("attempt-1"))
     second = recovery.reconcile_attempt(
         transaction_id="txn-1", attempt_id="attempt-1", now=NOW
     )
@@ -120,9 +121,7 @@ def test_identical_reconciliation_replay_is_noop_but_returns_current_state():
     assert second.applied is False
     assert second.retry_assessment.decision == "retry_allowed"
     assert len(repo.list_attempts("txn-1")) == 1
-    assert len(repo.list_attempt_events("attempt-1")) == len(
-        repo.list_attempt_events("attempt-1")
-    )
+    assert len(repo.list_attempt_events("attempt-1")) == audit_count
 
 
 def test_conflicting_event_replay_is_rejected():
