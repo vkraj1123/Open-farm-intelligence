@@ -2163,4 +2163,4 @@ The evidence alignment service now has an opt-in path into the existing case rea
 | Contradiction analysis across providers | Not implemented by this change | Requires metric/unit/scope/time comparability and reviewed tolerances |
 | Agronomic or field validation | Not completed | CI verifies software behavior only |
 
-This milestone connects data-quality assessment to reasoning without changing the default endpoint or asserting that eligible evidence is scientifically true. Standard and PostgreSQL CI are required before merge; no staging deployment or field validation is implied.
+This milestone connects data-quality assessment to reasoning without changing the default endpoint or asserting that eligible evidence is scientifically true. PR [#45](https://github.com/vkraj1123/Open-farm-intelligence/pull/45) passed standard CI (run 604) and PostgreSQL CI (run 739) before merge. It was merged to `main` as `239dc81c3a5613e939f9e6dea098afaa68a40ee2`. No staging deployment or field validation is implied.
