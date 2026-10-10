@@ -5,11 +5,13 @@ from uuid import uuid4
 from typing import get_args
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
 from ofi.domain.models import CaseOutcome, CaseRecord, FarmCase, Observation, ObservationKind
 from ofi.providers.registry import default_mock_registry
 from ofi.services.case_manager import CaseManager
+from ofi.services.database_readiness import check_persistence_readiness
 from ofi.services.evidence_alignment import align_observations
 from ofi.services.unit_of_work import PostgresFarmCaseUnitOfWork
 from ofi.services.evidence_comparison import MetricComparisonRule, compare_aligned_observations
@@ -40,9 +42,13 @@ def _build_postgres_connection_factory():
     return lambda: psycopg.connect(dsn)
 
 
-def _build_case_manager() -> CaseManager:
-    """Select a coordinated durable case/farm store when PostgreSQL is configured."""
-    connection_factory = _build_postgres_connection_factory()
+_UNSET_CONNECTION_FACTORY = object()
+
+
+def _build_case_manager(connection_factory=_UNSET_CONNECTION_FACTORY) -> CaseManager:
+    """Select coordinated durable storage, or the in-memory reference stores."""
+    if connection_factory is _UNSET_CONNECTION_FACTORY:
+        connection_factory = _build_postgres_connection_factory()
     if connection_factory is None:
         return CaseManager()
     return CaseManager(unit_of_work=PostgresFarmCaseUnitOfWork(connection_factory))
@@ -53,7 +59,10 @@ app = FastAPI(
     version="0.2.0",
     description="Farm-level intelligence and orchestration layer for Indian agriculture.",
 )
-case_manager = _build_case_manager()
+# Resolve persistence configuration once so readiness and every repository
+# describe the same application configuration.
+postgres_connection_factory = _build_postgres_connection_factory()
+case_manager = _build_case_manager(postgres_connection_factory)
 provider_registry = default_mock_registry()
 
 
@@ -153,9 +162,12 @@ class EvidenceComparisonAssessmentRequest(BaseModel):
         return value
 
 
-def _build_evidence_comparison_ledger() -> EvidenceComparisonLedger:
-    """Use PostgreSQL for durable records when OFI_DATABASE_URL is configured."""
-    connection_factory = _build_postgres_connection_factory()
+def _build_evidence_comparison_ledger(
+    connection_factory=_UNSET_CONNECTION_FACTORY,
+) -> EvidenceComparisonLedger:
+    """Use the same configured connection factory as case/farm persistence."""
+    if connection_factory is _UNSET_CONNECTION_FACTORY:
+        connection_factory = _build_postgres_connection_factory()
     if connection_factory is None:
         return InMemoryEvidenceComparisonLedger()
     return PostgresEvidenceComparisonLedger(connection_factory)
@@ -244,12 +256,23 @@ def _comparison_payload(report):
     ]
 
 
-evidence_comparison_ledger = _build_evidence_comparison_ledger()
+evidence_comparison_ledger = _build_evidence_comparison_ledger(
+    postgres_connection_factory
+)
 
 
 @app.get("/health")
 def health():
+    """Liveness-only endpoint; it deliberately does not require database access."""
     return {"status": "ok"}
+
+
+@app.get("/ready")
+def ready():
+    """Report whether configured persistence can serve application requests."""
+    report = check_persistence_readiness(postgres_connection_factory)
+    status_code = 200 if report["status"] == "ready" else 503
+    return JSONResponse(status_code=status_code, content=report)
 
 
 @app.post("/cases", response_model=CaseRecord)
