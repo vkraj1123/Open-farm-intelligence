@@ -35,6 +35,10 @@ class EvidenceFrameRequest(BaseModel):
                 raise ValueError("observation kind must not be blank")
             if not math.isfinite(seconds) or seconds <= 0:
                 raise ValueError("freshness windows must be finite positive seconds")
+            try:
+                timedelta(seconds=seconds)
+            except OverflowError as exc:
+                raise ValueError("freshness window is too large") from exc
         return value
 
 
