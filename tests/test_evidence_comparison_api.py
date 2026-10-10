@@ -102,3 +102,11 @@ def test_evidence_comparisons_api_rejects_duplicate_rule_ids():
     body["comparison_rules"].append(dict(body["comparison_rules"][0]))
     response = client.post(f"/farms/{farm_id}/evidence-comparisons", json=body)
     assert response.status_code == 422
+
+
+def test_evidence_comparisons_api_rejects_unrepresentable_time_window():
+    farm_id = create_farm()
+    body = comparison_request()
+    body["comparison_rules"][0]["max_time_delta_seconds"] = 1e300
+    response = client.post(f"/farms/{farm_id}/evidence-comparisons", json=body)
+    assert response.status_code == 422
