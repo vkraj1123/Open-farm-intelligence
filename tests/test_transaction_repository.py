@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -11,6 +12,7 @@ from ofi.services.execution_gateway import (
 )
 from ofi.services.action_router import ActionRequest, ActionRouter
 from ofi.services.service_transaction import ExecutionAttempt, ServiceTransaction
+from ofi.services.reconciliation import ReconciliationEvidence
 from ofi.services.transaction_repository import (
     InMemoryTransactionRepository,
     TransactionConflictError,
@@ -294,3 +296,91 @@ def test_attempt_audit_history_records_creation_claim_and_unknown_outcome():
     assert [event.event_id for event in events] == sorted(
         event.event_id for event in events
     )
+
+
+
+def test_in_memory_duplicate_callbacks_are_serialized_under_concurrency():
+    repo = InMemoryTransactionRepository()
+    repo.create(ServiceTransaction(
+        transaction_id="txn-callback-race",
+        idempotency_key="callback-race-key",
+        request_fingerprint="callback-race-fp",
+        action_id="callback-race-action",
+        provider_id="callback-race-provider",
+        status="submitted",
+    ))
+    now = datetime.now(timezone.utc)
+    repo.create_attempt(ExecutionAttempt(
+        attempt_id="attempt-callback-race",
+        transaction_id="txn-callback-race",
+        attempt_number=1,
+        provider_id="callback-race-provider",
+        status="submitted",
+        created_at=now,
+        updated_at=now,
+    ))
+
+    def apply(_):
+        return repo.apply_callback(
+            provider_id="callback-race-provider",
+            event_id="same-provider-event",
+            transaction_id="txn-callback-race",
+            attempt_id="attempt-callback-race",
+            status="accepted",
+            message="accepted",
+        )
+
+    with ThreadPoolExecutor(max_workers=12) as executor:
+        results = list(executor.map(apply, range(48)))
+
+    assert sum(result.applied for result in results) == 1
+    assert {result.transaction.status for result in results} == {"accepted"}
+    assert repo.list_attempts("txn-callback-race")[0].status == "accepted"
+    events = repo.list_attempt_events("attempt-callback-race")
+    assert sum(event.event_type == "provider_callback_applied" for event in events) == 1
+
+
+def test_in_memory_duplicate_reconciliation_is_atomic_under_concurrency():
+    repo = InMemoryTransactionRepository()
+    repo.create(ServiceTransaction(
+        transaction_id="txn-reconcile-race",
+        idempotency_key="reconcile-race-key",
+        request_fingerprint="reconcile-race-fp",
+        action_id="reconcile-race-action",
+        provider_id="reconcile-race-provider",
+        status="submitted",
+    ))
+    now = datetime.now(timezone.utc)
+    repo.create_attempt(ExecutionAttempt(
+        attempt_id="attempt-reconcile-race",
+        transaction_id="txn-reconcile-race",
+        attempt_number=1,
+        provider_id="reconcile-race-provider",
+        status="unknown",
+        created_at=now,
+        updated_at=now,
+    ))
+    evidence = ReconciliationEvidence(
+        provider_id="reconcile-race-provider",
+        transaction_id="txn-reconcile-race",
+        attempt_id="attempt-reconcile-race",
+        event_id="same-reconciliation-event",
+        status="not_executed",
+        checked_at=now,
+        message="provider confirms no execution",
+    )
+
+    def apply(_):
+        return repo.apply_reconciliation_evidence(
+            evidence, payload_sha256="a" * 64
+        )
+
+    with ThreadPoolExecutor(max_workers=12) as executor:
+        results = list(executor.map(apply, range(48)))
+
+    assert sum(results) == 1
+    assert repo.list_attempts("txn-reconcile-race")[0].status == "failed"
+    assert sum(
+        event.event_type == "reconciliation_evidence_applied"
+        for event in repo.list_attempt_events("attempt-reconcile-race")
+    ) == 1
