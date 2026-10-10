@@ -1057,6 +1057,9 @@ The core closed-loop architecture has a tested implementation, and the execution
 - ✅ Durable event ordering and read API for attempt audit history
 - ✅ PostgreSQL trigger prevents audit-row updates/deletes
 - ✅ In-memory and PostgreSQL regression tests for audit ordering, replay and immutability
+- ✅ Concurrent duplicate callback stress tests for in-memory and PostgreSQL repositories
+- ✅ Concurrent duplicate reconciliation stress tests for in-memory and PostgreSQL repositories
+- ✅ Failure-injection test proves an audit append failure rolls back the associated PostgreSQL attempt transition
 
 ### Current execution boundary
 
@@ -1064,7 +1067,7 @@ The callback path verifies HMAC-SHA256, binds typed fields to signed payloads, v
 
 ### Next reliability milestone
 
-Validate operational recovery and audit semantics under real concurrency and failure injection, then add provider correlation IDs, metrics/alerts and deployment-grade scheduler configuration. Preserve the invariant that audit writes and state changes commit or roll back together.
+The concurrency and audit-failure milestone now has in-memory and real-PostgreSQL regression coverage. Next, propagate stable provider correlation/request IDs through dispatch, callback, reconciliation and audit records; add operational metrics/alerts; and define deployment-grade scheduler configuration. Preserve the invariant that audit writes and state changes commit or roll back together.
 
 ```
 Action
@@ -1314,7 +1317,12 @@ The core closed-loop architecture is implemented and tested, but the project is 
 - [x] Audit records for provider callback and reconciliation decisions
 - [x] PostgreSQL audit writes share the state-change transaction
 - [x] Audit-row mutation rejected by database trigger
+- [x] Concurrent duplicate callback stress tests (in-memory and PostgreSQL)
+- [x] Concurrent duplicate reconciliation stress tests (in-memory and PostgreSQL)
+- [x] Failure-injection test for audit append rollback
+- [ ] Stable provider correlation/request IDs end-to-end
 - [ ] Deployment scheduler configuration and operational alerting
+- [ ] Operational metrics and alerts
 - [ ] Provider-supported external idempotency and real service adapter
 - [ ] Production dispatch observability and secret management
 
