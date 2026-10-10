@@ -9,7 +9,7 @@ This runbook defines the deployment contract for the recovery runtime in:
 - `ofi.services.recovery_observability`
 - `ofi.services.recovery_runtime.run_recovery_cycle`
 
-It is **not** a ready-to-run production deployment. The repository does not yet provide a universal composition root that constructs the production transaction repository, provider-specific reconciliation adapters, secrets, and logger. A deployment must supply those dependencies before scheduling a cycle.
+It is not a complete production deployment, but the repository now includes a reference composition root: `ofi.services.deployment_recovery:build_worker`. It constructs `PostgresTransactionRepository` and one `ProviderReconciliationAdapter` per configured provider using `HttpsReconciliationTransport`. Deployments still own database provisioning/migrations, credentials, provider endpoint readiness, scheduling, concurrency controls, and alert delivery.
 
 The runtime performs one bounded recovery pass, assesses the report against explicitly supplied thresholds, and emits one structured log event. It does not create retries, resend actions, configure a scheduler, or deliver notifications to an external alert receiver.
 
