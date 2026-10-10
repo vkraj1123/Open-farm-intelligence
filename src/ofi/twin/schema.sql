@@ -383,3 +383,16 @@ DROP TRIGGER IF EXISTS evidence_comparison_assessments_immutable_trigger
 CREATE TRIGGER evidence_comparison_assessments_immutable_trigger
 BEFORE UPDATE OR DELETE ON evidence_comparison_assessments
 FOR EACH ROW EXECUTE FUNCTION reject_evidence_comparison_record_mutation();
+
+-- Schema version ledger. Bump CURRENT_SCHEMA_VERSION in
+-- ofi.services.database_readiness when adding a new forward schema revision,
+-- and insert a matching new version row at the end of this canonical bootstrap.
+CREATE TABLE IF NOT EXISTS ofi_schema_migrations (
+    version INTEGER PRIMARY KEY CHECK (version >= 1),
+    name TEXT NOT NULL,
+    applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+INSERT INTO ofi_schema_migrations (version, name)
+VALUES (1, 'initial_postgis_case_service_and_evidence_schema')
+ON CONFLICT (version) DO NOTHING;
