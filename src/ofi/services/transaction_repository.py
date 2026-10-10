@@ -417,7 +417,7 @@ class InMemoryTransactionRepository(TransactionRepository):
     def recover_stale_dispatches(
         self, *, older_than: Any, limit: int = 100
     ) -> list[ExecutionAttempt]:
-        from datetime import datetime, timezone
+        from datetime import timezone
         if limit < 1:
             raise ValueError("limit must be positive")
         cutoff = older_than.astimezone(timezone.utc)
@@ -425,17 +425,26 @@ class InMemoryTransactionRepository(TransactionRepository):
         with self._retry_lock:
             candidates = sorted(
                 (item for item in self._attempts.values()
-                 if item.status == "dispatching" and item.updated_at <= cutoff),
+                 if item.updated_at <= cutoff and (
+                     item.status == "dispatching"
+                     or (item.status == "unknown" and (item.last_error or "").startswith(
+                         "dispatch claim exceeded recovery threshold"
+                     ))
+                 )),
                 key=lambda item: (item.updated_at, item.attempt_id),
             )[:limit]
             for item in candidates:
                 current = deepcopy(item)
-                current.status = "unknown"
-                current.updated_at = datetime.now(timezone.utc)
-                current.last_error = (
-                    "dispatch claim exceeded recovery threshold; provider outcome unknown"
-                )
-                self._attempts[current.attempt_id] = deepcopy(current)
+                if current.status == "dispatching":
+                    current.status = "unknown"
+                    current.updated_at = __import__("datetime").datetime.now(timezone.utc)
+                    current.last_error = (
+                        "dispatch claim exceeded recovery threshold; provider outcome unknown"
+                    )
+                    self._attempts[current.attempt_id] = deepcopy(current)
+                # Unknown attempts with this marker are returned again after
+                # the next stale interval if provider reconciliation failed or
+                # remained ambiguous; never reset them to dispatching.
                 recovered.append(deepcopy(current))
         return recovered
 
@@ -1049,27 +1058,33 @@ class PostgresTransactionRepository(TransactionRepository):
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    WITH stale AS (
-                        SELECT attempt_id
-                        FROM service_execution_attempts
-                        WHERE status = 'dispatching' AND updated_at <= %s
-                        ORDER BY updated_at, attempt_id
-                        LIMIT %s
-                        FOR UPDATE SKIP LOCKED
-                    )
-                    UPDATE service_execution_attempts AS attempt
-                    SET status = 'unknown',
-                        updated_at = now(),
-                        last_error = 'dispatch claim exceeded recovery threshold; provider outcome unknown'
-                    FROM stale
-                    WHERE attempt.attempt_id = stale.attempt_id
-                      AND attempt.status = 'dispatching'
-                    RETURNING attempt.attempt_id
+                    SELECT attempt_id, status
+                    FROM service_execution_attempts
+                    WHERE updated_at <= %s
+                      AND (
+                        status = 'dispatching'
+                        OR (status = 'unknown' AND last_error LIKE
+                            'dispatch claim exceeded recovery threshold%')
+                      )
+                    ORDER BY updated_at, attempt_id
+                    LIMIT %s
+                    FOR UPDATE SKIP LOCKED
                     """,
                     (older_than, limit),
                 )
-                ids = [row[0] for row in cur.fetchall()]
-                return [self._get_attempt_with_cursor(cur, attempt_id) for attempt_id in ids]
+                candidates = cur.fetchall()
+                recovered = []
+                for attempt_id, status in candidates:
+                    if status == "dispatching":
+                        cur.execute(
+                            "UPDATE service_execution_attempts "
+                            "SET status='unknown', updated_at=now(), "
+                            "last_error='dispatch claim exceeded recovery threshold; provider outcome unknown' "
+                            "WHERE attempt_id=%s AND status='dispatching'",
+                            (attempt_id,),
+                        )
+                    recovered.append(self._get_attempt_with_cursor(cur, attempt_id))
+                return recovered
 
     def transition_attempt(self, attempt_id: str, status: AttemptStatus, *,
                            external_reference: str | None = None,
