@@ -24,6 +24,19 @@ SECRET = os.environ.get("OFI_STAGING_RECONCILIATION_SECRET", "")
 RAW_CASES = os.environ.get("OFI_STAGING_RECONCILIATION_CASES", "").strip()
 REQUIRED_STATUSES = {"executed", "not_executed", "pending", "unknown"}
 REQUIRED_SETTINGS_PRESENT = bool(PROVIDER_ID and ENDPOINT and SECRET and RAW_CASES)
+REQUIRE_LIVE_STAGING = os.environ.get("OFI_STAGING_REQUIRED", "").strip().lower() in {
+    "1", "true", "yes",
+}
+MISSING_SETTINGS = [
+    name
+    for name, value in (
+        ("OFI_STAGING_PROVIDER_ID", PROVIDER_ID),
+        ("OFI_STAGING_RECONCILIATION_ENDPOINT", ENDPOINT),
+        ("OFI_STAGING_RECONCILIATION_SECRET", SECRET),
+        ("OFI_STAGING_RECONCILIATION_CASES", RAW_CASES),
+    )
+    if not value
+]
 
 
 def _load_cases() -> list[dict[str, str]]:
@@ -66,11 +79,16 @@ def _load_cases() -> list[dict[str, str]]:
 
 
 @pytest.mark.skipif(
-    not REQUIRED_SETTINGS_PRESENT,
+    not REQUIRED_SETTINGS_PRESENT and not REQUIRE_LIVE_STAGING,
     reason="requires explicit read-only real-provider staging configuration",
 )
 def test_real_provider_signed_reconciliation_contract():
     """Verify signed identity, freshness and all four statuses without state mutation."""
+    if MISSING_SETTINGS:
+        pytest.fail(
+            "OFI_STAGING_REQUIRED is enabled but required settings are missing: "
+            + ", ".join(MISSING_SETTINGS)
+        )
     cases = _load_cases()
     transport = HttpsReconciliationTransport(ENDPOINT, timeout_seconds=5.0)
     adapter = ProviderReconciliationAdapter(
