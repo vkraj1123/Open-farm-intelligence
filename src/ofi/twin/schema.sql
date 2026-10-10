@@ -202,6 +202,87 @@ CREATE UNIQUE INDEX IF NOT EXISTS service_execution_attempts_retry_request_key_u
     ON service_execution_attempts (retry_request_key)
     WHERE retry_request_key IS NOT NULL;
 
+-- Append-only attempt-level audit history. The trigger records every durable
+-- attempt creation/status transition in the same PostgreSQL transaction as state.
+CREATE TABLE IF NOT EXISTS service_execution_attempt_events (
+    event_id BIGSERIAL PRIMARY KEY,
+    transaction_id TEXT NOT NULL REFERENCES service_transactions(transaction_id) ON DELETE RESTRICT,
+    attempt_id TEXT NOT NULL REFERENCES service_execution_attempts(attempt_id) ON DELETE RESTRICT,
+    from_status TEXT,
+    to_status TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    occurred_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    external_reference TEXT,
+    detail TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS service_execution_attempt_events_attempt_sequence
+    ON service_execution_attempt_events (attempt_id, event_id);
+
+CREATE INDEX IF NOT EXISTS service_execution_attempt_events_transaction_sequence
+    ON service_execution_attempt_events (transaction_id, event_id);
+
+CREATE OR REPLACE FUNCTION record_service_execution_attempt_event()
+RETURNS TRIGGER AS $$
+DECLARE
+    prior_status TEXT;
+    audit_type TEXT;
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        prior_status := NULL;
+        audit_type := 'attempt_created';
+    ELSE
+        prior_status := OLD.status;
+        IF OLD.status IS NOT DISTINCT FROM NEW.status THEN
+            RETURN NEW;
+        END IF;
+        IF NEW.status = 'dispatching' THEN
+            audit_type := 'dispatch_claimed';
+        ELSIF NEW.status = 'unknown'
+              AND starts_with(COALESCE(NEW.last_error, ''),
+                              'dispatch claim exceeded recovery threshold') THEN
+            audit_type := 'stale_dispatch_recovered';
+        ELSIF NEW.status = 'unknown' THEN
+            audit_type := 'execution_outcome_unknown';
+        ELSIF NEW.status = 'submitted' THEN
+            audit_type := 'provider_submission_acknowledged';
+        ELSE
+            audit_type := 'status_changed';
+        END IF;
+    END IF;
+
+    INSERT INTO service_execution_attempt_events (
+        transaction_id, attempt_id, from_status, to_status, event_type,
+        occurred_at, external_reference, detail
+    )
+    VALUES (
+        NEW.transaction_id, NEW.attempt_id, prior_status, NEW.status, audit_type,
+        now(), NEW.external_reference, COALESCE(NEW.last_error, '')
+    );
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS service_execution_attempt_audit_trigger
+    ON service_execution_attempts;
+CREATE TRIGGER service_execution_attempt_audit_trigger
+AFTER INSERT OR UPDATE OF status ON service_execution_attempts
+FOR EACH ROW EXECUTE FUNCTION record_service_execution_attempt_event();
+
+-- Application code cannot rewrite or delete audit history.
+CREATE OR REPLACE FUNCTION reject_service_execution_attempt_event_mutation()
+RETURNS TRIGGER AS $$
+BEGIN
+    RAISE EXCEPTION 'service execution attempt audit history is append-only';
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS service_execution_attempt_events_immutable_trigger
+    ON service_execution_attempt_events;
+CREATE TRIGGER service_execution_attempt_events_immutable_trigger
+BEFORE UPDATE OR DELETE ON service_execution_attempt_events
+FOR EACH ROW EXECUTE FUNCTION reject_service_execution_attempt_event_mutation();
+
 -- Bind callbacks to the exact attempt they update. Safe for existing databases.
 ALTER TABLE service_transaction_callbacks
     ADD COLUMN IF NOT EXISTS attempt_id TEXT REFERENCES service_execution_attempts(attempt_id);

@@ -12,6 +12,7 @@ from ofi.services.db_context import connection_scope
 from ofi.services.reconciliation import ReconciliationEvidence
 from ofi.services.service_transaction import (
     ExecutionAttempt,
+    AttemptAuditEvent,
     ServiceTransaction,
     TransactionEvent,
     AttemptStatus,
@@ -122,6 +123,10 @@ class TransactionRepository(ABC):
         """Atomically update one execution attempt."""
 
     @abstractmethod
+    def list_attempt_events(self, attempt_id: str) -> list[AttemptAuditEvent]:
+        """Return append-only audit events in durable event order."""
+
+    @abstractmethod
     def list_attempts(self, transaction_id: str) -> list[ExecutionAttempt]:
         """Return attempts for a transaction in attempt-number order."""
 
@@ -139,7 +144,34 @@ class InMemoryTransactionRepository(TransactionRepository):
         self._callback_events: dict[tuple[str, str], tuple[str, str]] = {}
         self._reconciliation_events: dict[tuple[str, str], tuple[str, str, str, str, bool]] = {}
         self._attempts: dict[str, ExecutionAttempt] = {}
+        self._attempt_events: dict[str, list[AttemptAuditEvent]] = {}
+        self._attempt_event_sequence = 0
         self._retry_lock = RLock()
+
+
+    def _append_attempt_event(
+        self,
+        attempt: ExecutionAttempt,
+        *,
+        from_status: AttemptStatus | None,
+        event_type: str,
+        detail: str | None = None,
+    ) -> None:
+        self._attempt_event_sequence += 1
+        event = AttemptAuditEvent(
+            event_id=self._attempt_event_sequence,
+            attempt_id=attempt.attempt_id,
+            transaction_id=attempt.transaction_id,
+            from_status=from_status,
+            to_status=attempt.status,
+            event_type=event_type,
+            occurred_at=__import__("datetime").datetime.now(
+                __import__("datetime").timezone.utc
+            ),
+            external_reference=attempt.external_reference,
+            detail=attempt.last_error or "" if detail is None else detail,
+        )
+        self._attempt_events.setdefault(attempt.attempt_id, []).append(event)
 
     def create_if_absent(self, transaction: ServiceTransaction) -> TransactionCreateResult:
         existing_id = self._idempotency.get(transaction.idempotency_key)
@@ -222,14 +254,19 @@ class InMemoryTransactionRepository(TransactionRepository):
             raise KeyError(attempt_id) from exc
         if attempt.transaction_id != transaction_id or attempt.provider_id != provider_id:
             raise TransactionConflictError("callback attempt does not belong to this provider transaction")
+        prior_attempt_status = attempt.status
         transaction = self.transition(
             transaction_id,
             status,
             external_reference=external_reference,
             message=message,
         )
-        self.transition_attempt(
+        updated_attempt = self.transition_attempt(
             attempt_id, status, external_reference=external_reference
+        )
+        self._append_attempt_event(
+            updated_attempt, from_status=prior_attempt_status,
+            event_type="provider_callback_applied", detail=message,
         )
         self._callback_events[event_key] = (transaction_id, attempt_id)
         return CallbackResult(transaction, True)
@@ -298,6 +335,7 @@ class InMemoryTransactionRepository(TransactionRepository):
             raise TransactionConflictError(
                 "reconciliation attempt does not belong to this provider transaction"
             )
+        prior_attempt_status = attempt.status
 
         if evidence.status == "executed":
             if attempt.status in {"rejected", "failed"} or transaction.status in {"rejected", "failed", "cancelled"}:
@@ -325,6 +363,11 @@ class InMemoryTransactionRepository(TransactionRepository):
             attempt.external_reference = evidence.external_reference
         self._attempts[evidence.attempt_id] = deepcopy(attempt)
         self._transactions[evidence.transaction_id] = deepcopy(transaction)
+        self._append_attempt_event(
+            attempt, from_status=prior_attempt_status,
+            event_type="reconciliation_evidence_applied",
+            detail=f"{evidence.status}: {evidence.message}",
+        )
         self._reconciliation_events[event_key] = (*fingerprint, True)
         return True
 
@@ -379,6 +422,9 @@ class InMemoryTransactionRepository(TransactionRepository):
                 retry_of_attempt_id=prior_attempt_id,
             )
             self._attempts[attempt_id] = deepcopy(created)
+            self._append_attempt_event(
+                created, from_status=None, event_type="attempt_created"
+            )
             return deepcopy(created)
 
     def create_attempt(self, attempt: ExecutionAttempt) -> ExecutionAttempt:
@@ -391,6 +437,9 @@ class InMemoryTransactionRepository(TransactionRepository):
                 raise ValueError(f"attempt already exists: {attempt.attempt_id}")
             self.get(attempt.transaction_id)
             self._attempts[attempt.attempt_id] = deepcopy(attempt)
+            self._append_attempt_event(
+                attempt, from_status=None, event_type="attempt_created"
+            )
             return deepcopy(attempt)
 
     def claim_attempt_for_dispatch(self, attempt_id: str) -> ExecutionAttempt:
@@ -412,6 +461,9 @@ class InMemoryTransactionRepository(TransactionRepository):
             current.status = "dispatching"
             current.updated_at = datetime.now(timezone.utc)
             self._attempts[attempt_id] = deepcopy(current)
+            self._append_attempt_event(
+                current, from_status="ready", event_type="dispatch_claimed"
+            )
             return deepcopy(current)
 
     def recover_stale_dispatches(
@@ -436,12 +488,17 @@ class InMemoryTransactionRepository(TransactionRepository):
             for item in candidates:
                 current = deepcopy(item)
                 if current.status == "dispatching":
+                    prior_status = current.status
                     current.status = "unknown"
                     current.updated_at = datetime.now(timezone.utc)
                     current.last_error = (
                         "dispatch claim exceeded recovery threshold; provider outcome unknown"
                     )
                     self._attempts[current.attempt_id] = deepcopy(current)
+                    self._append_attempt_event(
+                        current, from_status=prior_status,
+                        event_type="stale_dispatch_recovered",
+                    )
                 # Unknown attempts with this marker are returned again after
                 # the next stale interval if provider reconciliation failed or
                 # remained ambiguous; never reset them to dispatching.
@@ -457,6 +514,7 @@ class InMemoryTransactionRepository(TransactionRepository):
                 current = deepcopy(self._attempts[attempt_id])
             except KeyError as exc:
                 raise KeyError(attempt_id) from exc
+            prior_status = current.status
             current.status = status
             current.updated_at = datetime.now(timezone.utc)
             if external_reference is not None:
@@ -464,7 +522,21 @@ class InMemoryTransactionRepository(TransactionRepository):
             if last_error is not None:
                 current.last_error = last_error
             self._attempts[attempt_id] = deepcopy(current)
+            if prior_status != current.status:
+                event_type = (
+                    "execution_outcome_unknown" if status == "unknown"
+                    else "provider_submission_acknowledged" if status == "submitted"
+                    else "status_changed"
+                )
+                self._append_attempt_event(
+                    current, from_status=prior_status, event_type=event_type
+                )
             return deepcopy(current)
+
+    def list_attempt_events(self, attempt_id: str) -> list[AttemptAuditEvent]:
+        if attempt_id not in self._attempts:
+            raise KeyError(attempt_id)
+        return list(self._attempt_events.get(attempt_id, []))
 
     def list_attempts(self, transaction_id: str) -> list[ExecutionAttempt]:
         return sorted(
@@ -724,6 +796,20 @@ class PostgresTransactionRepository(TransactionRepository):
                 )
                 if cur.rowcount != 1:
                     raise TransactionConflictError("callback attempt changed during update")
+                cur.execute(
+                    """
+                    INSERT INTO service_execution_attempt_events (
+                        transaction_id, attempt_id, from_status, to_status,
+                        event_type, occurred_at, external_reference, detail
+                    )
+                    VALUES (%s, %s, %s, %s, 'provider_callback_applied',
+                            now(), %s, %s)
+                    """,
+                    (
+                        transaction_id, attempt_id, attempt.status, status,
+                        external_reference, message,
+                    ),
+                )
                 return CallbackResult(working, True)
 
     def record_reconciliation_evidence(
@@ -845,6 +931,7 @@ class PostgresTransactionRepository(TransactionRepository):
                     if row[4]:
                         return False
 
+                prior_attempt_status = attempt.status
                 original_transaction_status = transaction.status
                 if evidence.status == "executed":
                     if attempt.status in {"rejected", "failed"} or transaction.status in {"rejected", "failed", "cancelled"}:
@@ -881,6 +968,22 @@ class PostgresTransactionRepository(TransactionRepository):
                     (
                         attempt.status, attempt.updated_at, attempt.external_reference,
                         attempt.last_error, attempt.attempt_id,
+                    ),
+                )
+                cur.execute(
+                    """
+                    INSERT INTO service_execution_attempt_events (
+                        transaction_id, attempt_id, from_status, to_status,
+                        event_type, occurred_at, external_reference, detail
+                    )
+                    VALUES (%s, %s, %s, %s, 'reconciliation_evidence_applied',
+                            now(), %s, %s)
+                    """,
+                    (
+                        evidence.transaction_id, evidence.attempt_id,
+                        prior_attempt_status, attempt.status,
+                        evidence.external_reference,
+                        f"{evidence.status}: {evidence.message}",
                     ),
                 )
                 cur.execute(
@@ -1101,6 +1204,36 @@ class PostgresTransactionRepository(TransactionRepository):
                 if cur.rowcount != 1:
                     raise KeyError(attempt_id)
                 return self._get_attempt_with_cursor(cur, attempt_id)
+
+    def list_attempt_events(self, attempt_id: str) -> list[AttemptAuditEvent]:
+        with connection_scope(self._connection_factory) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT event_id, attempt_id, transaction_id, from_status,
+                           to_status, event_type, occurred_at, external_reference, detail
+                    FROM service_execution_attempt_events
+                    WHERE attempt_id = %s
+                    ORDER BY event_id
+                    """,
+                    (attempt_id,),
+                )
+                rows = cur.fetchall()
+                if not rows:
+                    cur.execute(
+                        "SELECT 1 FROM service_execution_attempts WHERE attempt_id = %s",
+                        (attempt_id,),
+                    )
+                    if cur.fetchone() is None:
+                        raise KeyError(attempt_id)
+                return [
+                    AttemptAuditEvent(
+                        event_id=row[0], attempt_id=row[1], transaction_id=row[2],
+                        from_status=row[3], to_status=row[4], event_type=row[5],
+                        occurred_at=row[6], external_reference=row[7], detail=row[8],
+                    )
+                    for row in rows
+                ]
 
     def list_attempts(self, transaction_id: str) -> list[ExecutionAttempt]:
         with connection_scope(self._connection_factory) as conn:

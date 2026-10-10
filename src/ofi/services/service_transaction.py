@@ -42,6 +42,21 @@ class ExecutionAttempt:
 
 
 @dataclass(frozen=True)
+class AttemptAuditEvent:
+    """Append-only record of one attempt creation or status transition."""
+
+    event_id: int
+    attempt_id: str
+    transaction_id: str
+    from_status: AttemptStatus | None
+    to_status: AttemptStatus
+    event_type: str
+    occurred_at: datetime
+    external_reference: str | None = None
+    detail: str = ""
+
+
+@dataclass(frozen=True)
 class TransactionEvent:
     transaction_id: str
     status: TransactionStatus

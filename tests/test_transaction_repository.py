@@ -250,3 +250,47 @@ def test_stale_dispatch_recovery_marks_unknown_without_claiming_nonexecution():
     assert unresolved[0].status == "unknown"
 
 
+
+
+
+def test_attempt_audit_history_records_creation_claim_and_unknown_outcome():
+    repo = InMemoryTransactionRepository()
+    repo.create(ServiceTransaction(
+        transaction_id="txn-audit",
+        idempotency_key="audit-key",
+        request_fingerprint="audit-fingerprint",
+        action_id="audit-action",
+        provider_id="audit-provider",
+        status="submitted",
+    ))
+    now = datetime.now(timezone.utc)
+    repo.create_attempt(ExecutionAttempt(
+        attempt_id="attempt-audit",
+        transaction_id="txn-audit",
+        attempt_number=1,
+        provider_id="audit-provider",
+        status="ready",
+        created_at=now,
+        updated_at=now,
+    ))
+
+    repo.claim_attempt_for_dispatch("attempt-audit")
+    repo.transition_attempt(
+        "attempt-audit", "unknown", last_error="provider transport timed out"
+    )
+    events = repo.list_attempt_events("attempt-audit")
+
+    assert [event.event_type for event in events] == [
+        "attempt_created",
+        "dispatch_claimed",
+        "execution_outcome_unknown",
+    ]
+    assert [(event.from_status, event.to_status) for event in events] == [
+        (None, "ready"),
+        ("ready", "dispatching"),
+        ("dispatching", "unknown"),
+    ]
+    assert events[-1].detail == "provider transport timed out"
+    assert [event.event_id for event in events] == sorted(
+        event.event_id for event in events
+    )

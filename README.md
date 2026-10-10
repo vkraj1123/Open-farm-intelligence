@@ -1052,14 +1052,19 @@ The core closed-loop architecture has a tested implementation, and the execution
 - ✅ HMAC-authenticated reconciliation evidence bound to provider, transaction and attempt
 - ✅ Reconciliation evidence timestamp freshness and clock-skew validation
 - ✅ Reconciliation evidence signed-payload binding
+- ✅ Append-only attempt-level audit ledger for creation and status transitions
+- ✅ Atomic audit writes for dispatch claims, provider outcomes, callbacks and reconciliation
+- ✅ Durable event ordering and read API for attempt audit history
+- ✅ PostgreSQL trigger prevents audit-row updates/deletes
+- ✅ In-memory and PostgreSQL regression tests for audit ordering, replay and immutability
 
 ### Current execution boundary
 
-The callback path verifies HMAC-SHA256, binds typed fields to signed payloads, validates ownership and applies events to the named attempt. The new reconciliation evidence contract similarly verifies HMAC-SHA256, exact provider/transaction/attempt identity, signed-field binding and timestamp freshness. Neither path yet includes provider-specific production adapters, secret rotation, durable reconciliation replay tracking or end-to-end retry orchestration.
+The callback path verifies HMAC-SHA256, binds typed fields to signed payloads, validates ownership and applies events to the named attempt. Reconciliation evidence is signed, freshness-checked, bound to the exact provider/transaction/attempt, durably deduplicated, and applied atomically. Attempt-level audit events now record creation, status transitions, provider callback application and reconciliation decisions. PostgreSQL writes the state transition and its trigger-generated audit event in the same transaction; the audit table rejects row updates/deletes. Provider-specific production adapters, secret rotation, production scheduler configuration, external idempotency guarantees and operational alerting remain open.
 
 ### Next reliability milestone
 
-Move from a single attempt to **reconciliation-driven multi-attempt orchestration**:
+Validate operational recovery and audit semantics under real concurrency and failure injection, then add provider correlation IDs, metrics/alerts and deployment-grade scheduler configuration. Preserve the invariant that audit writes and state changes commit or roll back together.
 
 ```
 Action
@@ -1285,7 +1290,7 @@ The core closed-loop architecture is implemented and tested, but the project is 
 - [ ] Dead-letter handling
 - [x] Explicit execution-attempt ledger
 - [x] Unknown external execution state
-- [ ] Multi-attempt retry orchestration
+- [x] Guarded multi-attempt retry preparation after authoritative non-execution reconciliation
 - [x] Authenticated attempt-scoped reconciliation evidence contract
 - [x] HTTPS provider reconciliation adapter with signed response verification
 - [x] Durable reconciliation receipt ledger with event-ID/payload binding
@@ -1305,11 +1310,15 @@ The core closed-loop architecture is implemented and tested, but the project is 
 - [x] Scheduler-invokable worker for stale-claim recovery and provider reconciliation
 - [x] Retry later when reconciliation is unavailable or remains ambiguous
 - [x] Worker never creates retries or resubmits provider work
+- [x] Append-only attempt audit events for creation and status transitions
+- [x] Audit records for provider callback and reconciliation decisions
+- [x] PostgreSQL audit writes share the state-change transaction
+- [x] Audit-row mutation rejected by database trigger
 - [ ] Deployment scheduler configuration and operational alerting
 - [ ] Provider-supported external idempotency and real service adapter
 - [ ] Production dispatch observability and secret management
 
-**Status: 🟡 Guarded retry, one-time dispatch claims, bounded stale-claim recovery and reconciliation worker are implemented; production scheduling, provider idempotency and real integrations remain**
+**Status: 🟡 Guarded retry, one-time dispatch claims, stale-claim recovery, reconciliation worker and attempt-level audit history are implemented; production scheduling, provider idempotency, operational alerting and real integrations remain**
 
 ---
 
