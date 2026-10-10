@@ -208,3 +208,19 @@ Required variables:
 Run with `pytest -q tests/test_live_provider_reconciliation_contract.py` in an environment where these variables are injected securely. In a dedicated staging validation job, set `OFI_STAGING_REQUIRED=1` so absent configuration is a failure rather than a skip. Do not place secrets in shell history, CI logs, issue comments, or committed files; inject them through the deployment or CI secret manager. Use only provider-approved staging IDs; the test calls the configured read-only reconciliation endpoint and never dispatches or changes OFI state.
 
 A pass demonstrates that the configured endpoint conforms to OFI's signed payload, exact attempt identity, freshness and status contract for those examples. It does not prove that the provider's status claims are authoritative, nor validate provider-side idempotency, production network behavior, scheduler overlap controls or alert delivery. Those remain separate staging acceptance checks.
+
+
+## 9. Kubernetes CronJob starter template
+
+A non-production starter manifest is available at `deploy/kubernetes/ofi-recovery-cronjob.yaml`. It configures `concurrencyPolicy: Forbid`, a bounded active deadline, finite job history, a non-root container security context, and separate ConfigMap/Secret references.
+
+Before applying it:
+
+1. Build and publish the OFI image, then replace the placeholder image with a pinned image tag or digest.
+2. Replace the sample provider ID and HTTPS endpoint with the real provider configuration.
+3. Create `ofi-recovery-secrets` through the cluster's secret-management workflow. The example expects `OFI_DATABASE_URL` and `OFI_RECOVERY_PROVIDER_PROVIDER_DEMO_SECRET`; never commit a populated Secret manifest.
+4. Review the sample hourly schedule, timeouts, resource bounds, retry budget and health thresholds against the provider contract and service objectives.
+5. Confirm the database schema is migrated and reachable from the cluster before enabling the CronJob.
+6. Validate with a staging namespace and synthetic/non-mutating reconciliation cases, then verify logs and alert delivery.
+
+The manifest is a template, not a deployable release: its image and endpoint are intentionally placeholders. Kubernetes `concurrencyPolicy: Forbid` prevents overlapping Jobs created by this CronJob, but it is not a distributed lock against manual invocations or other schedulers. Do not run multiple independent schedulers for the same recovery workload without an additional coordination design. A Job completion does not prove provider correctness or alert delivery.

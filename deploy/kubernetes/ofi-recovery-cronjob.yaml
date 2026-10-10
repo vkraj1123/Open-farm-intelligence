@@ -1,0 +1,78 @@
+# Kubernetes recovery runner template
+#
+# TEMPLATE ONLY: replace the image, schedule, resource requests/limits, and
+# example health thresholds after reviewing the target deployment. Do not
+# apply unchanged. The database schema must already be migrated.
+#
+# Create Secret "ofi-recovery-secrets" out-of-band using your secret manager.
+# Required Secret keys:
+#   OFI_DATABASE_URL
+#   OFI_RECOVERY_PROVIDER_PROVIDER_DEMO_SECRET
+#
+# This template expects one provider whose ID is "provider-demo". If you use
+# another provider ID, update the ConfigMap provider list and the corresponding
+# normalized endpoint/secret environment variable names.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ofi-recovery-config
+data:
+  OFI_RECOVERY_FACTORY: "ofi.services.deployment_recovery:build_worker"
+  OFI_RECOVERY_STALE_AFTER_SECONDS: "300"
+  OFI_RECOVERY_LIMIT: "25"
+  OFI_RECOVERY_WARNING_ERRORS: "1"
+  OFI_RECOVERY_CRITICAL_ERRORS: "3"
+  OFI_RECOVERY_WARNING_UNKNOWN: "1"
+  OFI_RECOVERY_CRITICAL_UNKNOWN: "3"
+  OFI_RECOVERY_WARNING_PENDING: "2"
+  OFI_RECOVERY_CRITICAL_PENDING: "4"
+  OFI_RECOVERY_PROVIDER_IDS: "provider-demo"
+  OFI_RECOVERY_PROVIDER_PROVIDER_DEMO_ENDPOINT: "https://REPLACE_WITH_PROVIDER_STAGING_ENDPOINT"
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: ofi-recovery
+spec:
+  # Example only; choose a reviewed cadence compatible with provider freshness.
+  schedule: "0 * * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 120
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 10
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 300
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: ofi-recovery
+        spec:
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: recovery
+              image: ghcr.io/REPLACE_WITH_OWNER/open-farm-intelligence:REPLACE_WITH_PINNED_TAG
+              imagePullPolicy: IfNotPresent
+              command: ["ofi-recovery"]
+              envFrom:
+                - configMapRef:
+                    name: ofi-recovery-config
+                - secretRef:
+                    name: ofi-recovery-secrets
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests:
+                  cpu: "100m"
+                  memory: "128Mi"
+                limits:
+                  cpu: "500m"
+                  memory: "512Mi"

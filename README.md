@@ -2094,7 +2094,7 @@ This tracker distinguishes deterministic unit coverage from verification against
 | PostgreSQL factory wiring and fail-fast readiness | 100% of repository implementation | Factory and startup checks are present; real PostgreSQL integration is verified in CI |
 | Real PostgreSQL recovery integration | 100% of CI scope | Checked-in schema, factory, repository persistence and worker cycle passed in PostgreSQL CI; real staging remains pending |
 | Real provider reconciliation contract | 50% harness-ready | Read-only staging contract harness now supports fail-closed configuration in dedicated staging jobs; real provider execution remains pending |
-| Staging operations | 20% | Runbook and runner exist; staging credentials, scheduler, alerts, operational owner and incident drills remain |
+| Staging operations | 30% starter-template readiness | Runbook, runner and Kubernetes CronJob starter template exist; image publication, real provider configuration, staging deployment, alerts, operational owner and incident drills remain |
 | Agricultural evidence and scientific validation | Not yet meaningfully measurable | Real evidence pipelines, Rajasthan calibration and field outcomes are still needed |
 
 ## Current verification status
@@ -2122,3 +2122,8 @@ pytest -q tests/test_live_provider_reconciliation_contract.py
 Inject the four required values from a secret manager, and set `OFI_STAGING_REQUIRED=1` in a dedicated staging job to enforce fail-closed behavior. Never commit or print the secret.
 
 This check performs reconciliation GET requests only; it does not dispatch actions or mutate OFI transaction state. It verifies the configured provider's HMAC signature, payload schema, exact provider/transaction/attempt identity, timestamp freshness, digest shape, and expected status. If staging cannot supply authoritative examples for all four states, the full matrix remains unverified. Passing the harness does not by itself validate provider-side idempotency, scheduler operation, or alert delivery.
+
+
+### Kubernetes recovery deployment starter
+
+`deploy/kubernetes/ofi-recovery-cronjob.yaml` is a **template**, not a production-ready manifest. It demonstrates a bounded Kubernetes CronJob with overlap prevention, resource limits and Secret references. Replace the image and provider placeholders, create the referenced Secret through secret management, review cadence/thresholds, and validate in staging before applying to a live cluster. See section 9 of `docs/dispatch-recovery-operations.md`.
