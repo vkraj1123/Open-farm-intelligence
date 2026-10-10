@@ -185,11 +185,22 @@ CREATE TABLE IF NOT EXISTS service_execution_attempts (
     updated_at TIMESTAMPTZ NOT NULL,
     external_reference TEXT,
     last_error TEXT,
+    retry_request_key TEXT,
+    retry_of_attempt_id TEXT REFERENCES service_execution_attempts(attempt_id),
     UNIQUE (transaction_id, attempt_number)
 );
 
 CREATE INDEX IF NOT EXISTS service_execution_attempts_transaction
     ON service_execution_attempts (transaction_id, attempt_number);
+
+-- Safe additive migration for databases created before retry orchestration.
+ALTER TABLE service_execution_attempts
+    ADD COLUMN IF NOT EXISTS retry_request_key TEXT;
+ALTER TABLE service_execution_attempts
+    ADD COLUMN IF NOT EXISTS retry_of_attempt_id TEXT REFERENCES service_execution_attempts(attempt_id);
+CREATE UNIQUE INDEX IF NOT EXISTS service_execution_attempts_retry_request_key_uq
+    ON service_execution_attempts (retry_request_key)
+    WHERE retry_request_key IS NOT NULL;
 
 -- Bind callbacks to the exact attempt they update. Safe for existing databases.
 ALTER TABLE service_transaction_callbacks
