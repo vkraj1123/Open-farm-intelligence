@@ -2208,3 +2208,22 @@ This change is software infrastructure. CI success, when confirmed on the PR, de
 
 
 **Verification:** PR [#49](https://github.com/vkraj1123/Open-farm-intelligence/pull/49) passed standard CI (run #770) and PostgreSQL CI (run #635) before merge. The ledger/schema/API changes were merged to `main` as [`244240b0aee0e2d8fe2944fb7088e130aff52711`](https://github.com/vkraj1123/Open-farm-intelligence/commit/244240b0aee0e2d8fe2944fb7088e130aff52711). This verifies deterministic persistence and audit behavior in CI, not deployment, provider authority or agricultural field validation.
+
+
+# 49. Durable API case and farm-twin persistence
+
+The API now uses one configuration switch for PostgreSQL-backed case/farm state and the versioned evidence-comparison ledger. When `OFI_DATABASE_URL` is unset, the API retains the in-memory reference implementation for local development and tests. When set, `case_manager` is constructed with `PostgresFarmCaseUnitOfWork`, which shares one connection factory across `PostgresCaseRepository` and `PostGISFarmTwinStore`.
+
+| Capability | Status | Boundary |
+|---|---|---|
+| API persistence selection | Implemented | `OFI_DATABASE_URL` opts into PostgreSQL; unset preserves in-memory behavior |
+| Case and farm repository coordination | Implemented | The unit of work binds one connection and transaction for coordinated mutations |
+| Case state and audit events | PostgreSQL-backed when configured | Uses `case_records` and `case_events` from the shared schema |
+| Farm, crop-cycle and observation state | PostgreSQL/PostGIS-backed when configured | Requires the schema and PostGIS extension to be applied |
+| Atomic case/farm mutations | Covered by PostgreSQL integration tests | Verifies persisted state survives manager recreation and a farm-write failure rolls back the case/farm transaction |
+| Dependency configuration | Fail-closed | A configured DSN without `psycopg` causes an actionable startup error; no silent fallback |
+| Comparison-ledger transaction coupling | Not automatic | The ledger uses the same DSN but assessment writes are separate from case/farm operations unless explicitly coordinated |
+| Deployment and recovery readiness | Not demonstrated | Requires deployment configuration, backups/recovery drills and operational monitoring |
+| Agronomic and field validation | Not completed | Software persistence tests do not validate agricultural conclusions |
+
+**Validation status:** implementation and tests are in review; standard CI and PostgreSQL CI must pass before merge. The PostgreSQL integration tests use the dedicated `OFI_POSTGRES_DSN` test database. This milestone provides restart-safe data access and transactional repository coordination, not a claim of production readiness.
