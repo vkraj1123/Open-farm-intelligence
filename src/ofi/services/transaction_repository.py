@@ -372,14 +372,18 @@ class InMemoryTransactionRepository(TransactionRepository):
             return deepcopy(created)
 
     def create_attempt(self, attempt: ExecutionAttempt) -> ExecutionAttempt:
-        existing = self.list_attempts(attempt.transaction_id)
-        expected = len(existing) + 1
-        if attempt.attempt_number != expected:
-            raise TransactionConflictError(f"expected attempt number {expected}, got {attempt.attempt_number}")
-        if attempt.attempt_id in self._attempts:
-            raise ValueError(f"attempt already exists: {attempt.attempt_id}")
-        self._attempts[attempt.attempt_id] = deepcopy(attempt)
-        return deepcopy(attempt)
+        with self._retry_lock:
+            existing = self.list_attempts(attempt.transaction_id)
+            expected = max((item.attempt_number for item in existing), default=0) + 1
+            if attempt.attempt_number != expected:
+                raise TransactionConflictError(f"expected attempt number {expected}, got {attempt.attempt_number}")
+            if attempt.attempt_id in self._attempts:
+                raise ValueError(f"attempt already exists: {attempt.attempt_id}")
+            transaction = self.get(attempt.transaction_id)
+            if attempt.provider_id != transaction.provider_id:
+                raise TransactionConflictError("attempt provider does not own the transaction")
+            self._attempts[attempt.attempt_id] = deepcopy(attempt)
+            return deepcopy(attempt)
 
     def transition_attempt(self, attempt_id: str, status: AttemptStatus, *,
                            external_reference: str | None = None,
@@ -923,6 +927,19 @@ class PostgresTransactionRepository(TransactionRepository):
     def create_attempt(self, attempt: ExecutionAttempt) -> ExecutionAttempt:
         with connection_scope(self._connection_factory) as conn:
             with conn.cursor() as cur:
+                transaction = self._get_with_cursor(cur, attempt.transaction_id, for_update=True)
+                if attempt.provider_id != transaction.provider_id:
+                    raise TransactionConflictError("attempt provider does not own the transaction")
+                cur.execute(
+                    "SELECT COALESCE(MAX(attempt_number), 0) + 1 "
+                    "FROM service_execution_attempts WHERE transaction_id = %s",
+                    (attempt.transaction_id,),
+                )
+                expected = cur.fetchone()[0]
+                if attempt.attempt_number != expected:
+                    raise TransactionConflictError(
+                        f"expected attempt number {expected}, got {attempt.attempt_number}"
+                    )
                 cur.execute(
                     "INSERT INTO service_execution_attempts "
                     "(attempt_id, transaction_id, attempt_number, provider_id, status, created_at, updated_at, external_reference, last_error, retry_request_key, retry_of_attempt_id) "
