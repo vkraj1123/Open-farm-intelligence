@@ -145,3 +145,45 @@ def get_evidence_frame(farm_id: str, request: EvidenceFrameRequest):
             for item in frame.assessments
         ],
     }
+
+@app.post("/cases/{case_id}/reason-with-evidence-policy")
+def reason_with_evidence_policy(case_id: str, request: EvidenceFrameRequest):
+    """Reason over eligible evidence only, using an explicit caller-owned policy."""
+    try:
+        record, frame = case_manager.reason_with_evidence_policy(
+            case_id,
+            max_age_by_kind={
+                kind: timedelta(seconds=seconds)
+                for kind, seconds in request.max_age_seconds_by_kind.items()
+            },
+            require_provenance=request.require_provenance,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="case not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return {
+        "record": record,
+        "evidence_frame": {
+            "farm_id": frame.farm_id,
+            "crop_cycle_id": frame.crop_cycle_id,
+            "as_of": frame.as_of,
+            "eligible_observation_ids": list(frame.eligible_observation_ids),
+            "excluded_counts": dict(frame.excluded_counts),
+            "assessments": [
+                {
+                    "observation_id": item.observation_id,
+                    "freshness": item.freshness,
+                    "age_seconds": item.age_seconds,
+                    "eligible": item.eligible,
+                    "issues": list(item.issues),
+                    "quality": item.quality,
+                    "confidence": item.confidence,
+                    "source": item.source,
+                    "provenance_present": item.provenance_present,
+                }
+                for item in frame.assessments
+            ],
+        },
+    }

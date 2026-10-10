@@ -2147,3 +2147,20 @@ The deterministic evidence-alignment service is implemented in `src/ofi/services
 | Agronomic validation | Not measured | Requires authoritative sources, reviewed policies and field validation |
 
 Freshness windows in documentation examples are illustrative, not production defaults. This service does not make recommendations or claim scientific validity. Standard and PostgreSQL CI must pass before the change is merged; that verifies code and regression behavior, not agricultural correctness.
+
+
+
+# 46. Evidence-gated reasoning milestone
+
+The evidence alignment service now has an opt-in path into the existing case reasoning flow. `POST /cases/{case_id}/reason-with-evidence-policy` requires caller-defined freshness windows and can require provenance; it returns both the case reasoning result and the exact eligibility frame used to filter the observations. The existing `POST /cases/{case_id}/reason` behavior remains unchanged.
+
+| Capability | Status | Boundary |
+|---|---|---|
+| Explicit-policy evidence-gated reasoning | Implemented in this change | Caller must supply positive freshness windows; no hidden defaults |
+| Traceability of reasoning input selection | Implemented in response | Frame lists eligible IDs, assessment issues and exclusion counts |
+| Original case observation history | Preserved | Filtering applies to a deep copy used for reasoning, not stored history |
+| Policy persistence/versioning | Not implemented | Policy remains request-scoped |
+| Contradiction analysis across providers | Not implemented by this change | Requires metric/unit/scope/time comparability and reviewed tolerances |
+| Agronomic or field validation | Not completed | CI verifies software behavior only |
+
+This milestone connects data-quality assessment to reasoning without changing the default endpoint or asserting that eligible evidence is scientifically true. Standard and PostgreSQL CI are required before merge; no staging deployment or field validation is implied.
