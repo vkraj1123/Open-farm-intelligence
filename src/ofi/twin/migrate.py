@@ -31,7 +31,7 @@ def apply_schema(database_url: str | None = None) -> int:
     schema_sql = SCHEMA_PATH.read_text(encoding="utf-8")
     with psycopg.connect(dsn) as connection:
         with connection.cursor() as cursor:
-            cursor.execute("SELECT to_regclass('public.ofi_schema_migrations')")
+            cursor.execute("SELECT to_regclass('ofi_schema_migrations')")
             marker_table = cursor.fetchone()[0]
             if marker_table is not None:
                 cursor.execute("SELECT max(version) FROM ofi_schema_migrations")
