@@ -2093,7 +2093,7 @@ This tracker distinguishes deterministic unit coverage from verification against
 | Recovery worker, health assessment, observability and CLI | 100% of current scoped implementation | Implemented; deployment-owned scheduling and alert delivery remain |
 | PostgreSQL factory wiring and fail-fast readiness | 100% of repository implementation | Factory and startup checks are present; the new real-PostgreSQL integration test must pass CI |
 | Real PostgreSQL recovery integration | 100% of CI scope | Checked-in schema, factory, repository persistence and worker cycle passed in PostgreSQL CI; real staging remains pending |
-| Real provider reconciliation contract | 15% | HTTPS adapter and signed-response contract exist; no real provider endpoint has been validated |
+| Real provider reconciliation contract | 40% harness-ready | An opt-in read-only staging contract test now validates signed identity, freshness and all four statuses; real provider execution remains pending |
 | Staging operations | 20% | Runbook and runner exist; staging credentials, scheduler, alerts, operational owner and incident drills remain |
 | Agricultural evidence and scientific validation | Not yet meaningfully measurable | Real evidence pipelines, Rajasthan calibration and field outcomes are still needed |
 
@@ -2102,3 +2102,21 @@ This tracker distinguishes deterministic unit coverage from verification against
 The new test file tests/test_postgres_recovery_factory_integration.py is intended to run in the PostgreSQL CI job (OFI_POSTGRES_DSN is configured there). It applies src/ofi/twin/schema.sql to the dedicated CI database, builds the actual PostgreSQL/HTTPS recovery factory, creates and reads a uniquely identified transaction and attempt through PostgresTransactionRepository, and runs one bounded worker cycle without contacting the placeholder provider endpoint. Local runs without OFI_POSTGRES_DSN skip this integration test explicitly; they do not count as real-database verification.
 
 **Acceptance gate passed for this change:** standard CI and PostgreSQL CI both passed on the pull-request head. This verifies the repository's CI PostgreSQL integration, not a staging test against a real provider or provider-side idempotency.
+
+
+### Opt-in real-provider contract check
+
+The test `tests/test_live_provider_reconciliation_contract.py` can verify a real staging endpoint's signed response contract. It is skipped by default in normal CI. To run it, supply staging-only credentials via environment variables and four provider-issued read-only reconciliation cases covering `executed`, `not_executed`, `pending`, and `unknown`:
+
+- `OFI_STAGING_PROVIDER_ID`
+- `OFI_STAGING_RECONCILIATION_ENDPOINT` (absolute HTTPS URL)
+- `OFI_STAGING_RECONCILIATION_SECRET` (secret manager; never commit or print)
+- `OFI_STAGING_RECONCILIATION_CASES` (JSON array of objects with `transaction_id`, `attempt_id`, `expected_status`)
+
+Run only against a provider-approved staging endpoint and provider-issued test attempts:
+
+```bash
+pytest -q tests/test_live_provider_reconciliation_contract.py
+```
+
+This check performs reconciliation GET requests only; it does not dispatch actions or mutate OFI transaction state. It verifies the configured provider's HMAC signature, payload schema, exact provider/transaction/attempt identity, timestamp freshness, digest shape, and expected status. If staging cannot supply authoritative examples for all four states, the full matrix remains unverified. Passing the harness does not by itself validate provider-side idempotency, scheduler operation, or alert delivery.
