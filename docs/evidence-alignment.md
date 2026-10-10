@@ -75,7 +75,7 @@ These values are examples only, not endorsed defaults. The response includes the
 
 ## Current boundary
 
-The alignment report is deterministic for the captured snapshot time and supplied policy, but remains in-memory and request-scoped. It does not persist alignment assessments, compare evidence across providers, infer scientific contradictions, provide source-specific policy versioning, or automatically filter the orchestrator's existing reasoning input. A caller must explicitly consume the eligible IDs; automatic reasoning integration is a separate change with a reviewed domain policy.
+The alignment report itself remains deterministic, in-memory and request-scoped. It does not persist assessments, compare evidence across providers, infer scientific contradictions, or provide source-specific policy versioning. The opt-in `POST /cases/{case_id}/reason-with-evidence-policy` endpoint connects eligibility filtering to reasoning; callers must explicitly choose that endpoint and supply a reviewed policy.
 
 ## Evidence-gated reasoning
 
