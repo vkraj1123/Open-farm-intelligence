@@ -7,6 +7,7 @@ remain deployment responsibilities.
 
 from __future__ import annotations
 
+import math
 import os
 import re
 from typing import Mapping
@@ -100,8 +101,8 @@ def build_worker(*, environ: Mapping[str, str] | None = None) -> DispatchRecover
             timeout = float(raw_timeout)
         except ValueError as exc:
             raise ValueError("provider timeout must be a positive number") from exc
-        if timeout <= 0:
-            raise ValueError("provider timeout must be a positive number")
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError("provider timeout must be a finite positive number")
         configured[provider_id] = (endpoint, secret, timeout)
 
     try:
