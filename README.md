@@ -1063,7 +1063,7 @@ The core closed-loop architecture has a tested implementation, and the execution
 
 ### Recovery operations runbook
 
-A deployment-oriented runbook now documents required repository/provider wiring, scheduler concurrency and timeout contracts, explicit health thresholds, structured-log alert routing, ambiguous-outcome safety, and pre-production checks: [`docs/dispatch-recovery-operations.md`](docs/dispatch-recovery-operations.md). It is a deployment contract, not a claim that a production scheduler, alert receiver, or real provider adapter has been configured.
+A deployment-oriented runbook now documents required repository/provider wiring, scheduler concurrency and timeout contracts, explicit health thresholds, structured-log alert routing, ambiguous-outcome safety, and pre-production checks: [`docs/dispatch-recovery-operations.md`](docs/dispatch-recovery-operations.md). It is a deployment contract, not a claim that a production scheduler, alert receiver, or real provider adapter has been configured. The `ofi-recovery` console command now provides the executable environment-driven entry point; deployments must supply a trusted factory for real repository/provider wiring and explicitly configure thresholds.
 
 ### Current execution boundary
 
