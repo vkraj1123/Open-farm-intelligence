@@ -105,6 +105,10 @@ class TransactionRepository(ABC):
         """Create a durable execution attempt with monotonic numbering."""
 
     @abstractmethod
+    def claim_attempt_for_dispatch(self, attempt_id: str) -> ExecutionAttempt:
+        """Atomically claim a ready attempt before making any provider call."""
+
+    @abstractmethod
     def transition_attempt(
         self, attempt_id: str, status: AttemptStatus, *,
         external_reference: str | None = None, last_error: str | None = None,
@@ -383,22 +387,44 @@ class InMemoryTransactionRepository(TransactionRepository):
             self._attempts[attempt.attempt_id] = deepcopy(attempt)
             return deepcopy(attempt)
 
+    def claim_attempt_for_dispatch(self, attempt_id: str) -> ExecutionAttempt:
+        from datetime import datetime, timezone
+        with self._retry_lock:
+            try:
+                current = deepcopy(self._attempts[attempt_id])
+            except KeyError as exc:
+                raise KeyError(attempt_id) from exc
+            if current.status != "ready":
+                raise TransactionConflictError(
+                    f"attempt cannot be dispatched from status {current.status!r}"
+                )
+            transaction = self.get(current.transaction_id)
+            if transaction.status != "submitted":
+                raise TransactionConflictError(
+                    f"attempt cannot be dispatched while transaction is {transaction.status!r}"
+                )
+            current.status = "submitted"
+            current.updated_at = datetime.now(timezone.utc)
+            self._attempts[attempt_id] = deepcopy(current)
+            return deepcopy(current)
+
     def transition_attempt(self, attempt_id: str, status: AttemptStatus, *,
                            external_reference: str | None = None,
                            last_error: str | None = None) -> ExecutionAttempt:
         from datetime import datetime, timezone
-        try:
-            current = deepcopy(self._attempts[attempt_id])
-        except KeyError as exc:
-            raise KeyError(attempt_id) from exc
-        current.status = status
-        current.updated_at = datetime.now(timezone.utc)
-        if external_reference is not None:
-            current.external_reference = external_reference
-        if last_error is not None:
-            current.last_error = last_error
-        self._attempts[attempt_id] = deepcopy(current)
-        return current
+        with self._retry_lock:
+            try:
+                current = deepcopy(self._attempts[attempt_id])
+            except KeyError as exc:
+                raise KeyError(attempt_id) from exc
+            current.status = status
+            current.updated_at = datetime.now(timezone.utc)
+            if external_reference is not None:
+                current.external_reference = external_reference
+            if last_error is not None:
+                current.last_error = last_error
+            self._attempts[attempt_id] = deepcopy(current)
+            return deepcopy(current)
 
     def list_attempts(self, transaction_id: str) -> list[ExecutionAttempt]:
         return sorted(
@@ -947,6 +973,41 @@ class PostgresTransactionRepository(TransactionRepository):
                 )
                 cur.fetchone()
                 return self._get_attempt_with_cursor(cur, attempt.attempt_id)
+
+    def claim_attempt_for_dispatch(self, attempt_id: str) -> ExecutionAttempt:
+        with connection_scope(self._connection_factory) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT transaction_id FROM service_execution_attempts WHERE attempt_id=%s",
+                    (attempt_id,),
+                )
+                identity = cur.fetchone()
+                if identity is None:
+                    raise KeyError(attempt_id)
+                transaction = self._get_with_cursor(cur, identity[0], for_update=True)
+                cur.execute(
+                    "SELECT status FROM service_execution_attempts WHERE attempt_id=%s FOR UPDATE",
+                    (attempt_id,),
+                )
+                row = cur.fetchone()
+                if row is None:
+                    raise KeyError(attempt_id)
+                if row[0] != "ready":
+                    raise TransactionConflictError(
+                        f"attempt cannot be dispatched from status {row[0]!r}"
+                    )
+                if transaction.status != "submitted":
+                    raise TransactionConflictError(
+                        f"attempt cannot be dispatched while transaction is {transaction.status!r}"
+                    )
+                cur.execute(
+                    "UPDATE service_execution_attempts SET status='submitted', updated_at=now() "
+                    "WHERE attempt_id=%s AND status='ready'",
+                    (attempt_id,),
+                )
+                if cur.rowcount != 1:
+                    raise TransactionConflictError("attempt was concurrently claimed for dispatch")
+                return self._get_attempt_with_cursor(cur, attempt_id)
 
     def transition_attempt(self, attempt_id: str, status: AttemptStatus, *,
                            external_reference: str | None = None,
