@@ -1287,11 +1287,11 @@ The core closed-loop architecture is implemented and tested, but the project is 
 - [x] Unknown external execution state
 - [ ] Multi-attempt retry orchestration
 - [x] Authenticated attempt-scoped reconciliation evidence contract
-- [ ] Provider reconciliation adapter
+- [x] HTTPS provider reconciliation adapter with signed response verification
 - [ ] Durable reconciliation replay/idempotency tracking
 - [ ] Real service adapter
 
-**Status: 🟡 Attempt-bound callbacks, safe retry assessment and a signed/freshness-checked reconciliation evidence contract are implemented; provider adapter, durable reconciliation tracking and retry orchestration remain**
+**Status: 🟡 Attempt-bound callbacks, safe retry assessment and an HTTPS adapter for signed/freshness-checked reconciliation evidence are implemented; durable reconciliation tracking and retry orchestration remain**
 
 ---
 
@@ -1466,11 +1466,11 @@ The deterministic `ProviderSelectionPolicy` is implemented and integrated with `
 
 ## Priority 5 — Reconciliation-driven retry orchestration
 
-The attempt ledger, unknown-state representation, pure retry assessment and authenticated evidence verifier exist. `verify_reconciliation_evidence()` validates HMAC-SHA256, signed-field consistency, provider/transaction/attempt binding, timestamp freshness and bounded future clock skew.
+The attempt ledger, unknown-state representation, pure retry assessment, authenticated evidence verifier and HTTPS provider reconciliation adapter exist. The adapter requests reconciliation for one exact transaction/attempt, validates the response schema, and delegates HMAC-SHA256, signed-field consistency, provider/transaction/attempt binding, freshness and bounded future-clock-skew checks to `verify_reconciliation_evidence()`. Transport is injectable for deterministic tests; the HTTPS transport uses a configured endpoint and `X-OFI-Signature` response header.
 
 Still required:
 
-- a real provider reconciliation adapter that obtains authoritative evidence;
+- provider-specific endpoint compatibility and deployment-level secret management for the generic HTTPS adapter;
 - durable reconciliation event idempotency and replay tracking;
 - a recovery service that applies evidence to lifecycle state and permits retry only after verified non-execution;
 - concurrency-safe attempt-number allocation in PostgreSQL;
