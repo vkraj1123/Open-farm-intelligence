@@ -1071,7 +1071,7 @@ Action
        └── failed / unknown
 ```
 
-A provider timeout or lost callback must not be interpreted as confirmed external failure. Attempt-scoped reconciliation evidence can now be authenticated, but it does not itself contact a provider or mutate execution state. The next implementation must add a provider adapter and a recovery service that consumes verified evidence, creates subsequent attempts only when safe, and retains auditable recovery history.
+A provider timeout or lost callback must not be interpreted as confirmed external failure. Attempt-scoped reconciliation evidence is authenticated and applied atomically. The guarded retry orchestrator now creates a prepared `ready` attempt only when the repository confirms applied, provider-bound `not_executed` evidence for the latest failed attempt. Attempt-number allocation and retry-request idempotency are enforced at the persistence boundary. It does not submit to a provider; dispatch/crash recovery between prepared attempt and external execution remains open.
 
 The core closed-loop architecture is implemented and tested, but the project is **not production-ready**.
 
@@ -1291,9 +1291,15 @@ The core closed-loop architecture is implemented and tested, but the project is 
 - [x] Durable reconciliation receipt ledger with event-ID/payload binding
 - [x] Atomic application of verified reconciliation evidence to the exact attempt
 - [x] Retry eligibility assessment without automatic retry submission
+- [x] Guarded retry attempt preparation after applied non-execution evidence
+- [x] Idempotent retry request keys and retry-of attempt lineage
+- [x] Atomic PostgreSQL attempt-number allocation under transaction lock
+- [x] Concurrent duplicate retry request integration test
+- [ ] Provider dispatch from prepared attempt
+- [ ] Crash recovery across prepared attempt/provider submission boundary
 - [ ] Real service adapter
 
-**Status: 🟡 Attempt-bound callbacks, an HTTPS adapter, durable reconciliation receipts, and atomic evidence application/retry assessment are implemented; multi-attempt retry orchestration and real provider integration remain**
+**Status: 🟡 Guarded retry preparation is implemented; provider dispatch, crash recovery and real provider integration remain**
 
 ---
 
@@ -1396,7 +1402,7 @@ execution confirmed?
   └── no  → retry may be allowed
 ```
 
-A local `failed`, `rejected`, or `unknown` state alone is insufficient to authorize a new external attempt. The policy is deterministic and side-effect free; actual reconciliation and retry orchestration remain separate implementation steps.
+A local `failed`, `rejected`, or `unknown` state alone is insufficient to authorize a new external attempt. The repository now requires applied, provider-bound `not_executed` evidence for the latest failed attempt, a submitted parent transaction, and an idempotent retry request key before preparing the next attempt. The new attempt starts as `ready`; it has not been sent externally.
 
 ---
 
@@ -1470,12 +1476,19 @@ The deterministic `ProviderSelectionPolicy` is implemented and integrated with `
 
 The attempt ledger, unknown-state representation, pure retry assessment, authenticated evidence verifier and HTTPS provider reconciliation adapter exist. The adapter requests reconciliation for one exact transaction/attempt, validates the response schema, and delegates HMAC-SHA256, signed-field consistency, provider/transaction/attempt binding, freshness and bounded future-clock-skew checks to `verify_reconciliation_evidence()`. Transport is injectable for deterministic tests; the HTTPS transport uses a configured endpoint and `X-OFI-Signature` response header.
 
+Implemented in the current reliability branch:
+
+- guarded retry preparation after the exact latest attempt has applied, provider-bound `not_executed` evidence;
+- durable retry-request idempotency and retry-of lineage on attempts;
+- transaction-locked, monotonic PostgreSQL attempt-number allocation;
+- duplicate-request concurrency tests for in-memory and real PostgreSQL repositories.
+
 Still required:
 
 - provider-specific endpoint compatibility and deployment-level secret management for the generic HTTPS adapter;
-- multi-attempt retry orchestration that consumes the recovery service's retry assessment and creates attempts atomically only after verified non-execution;
-- concurrency-safe attempt-number allocation in PostgreSQL;
-- crash recovery for interruptions between transaction creation, attempt creation and provider execution.
+- execution-gateway dispatch for a `ready` attempt;
+- crash recovery/reconciliation when a worker stops between attempt preparation and external submission;
+- end-to-end provider tests proving idempotency and status semantics.
 
 The evidence verifier is a trust-boundary primitive, not proof that the provider's claim is truthful: that still depends on provider identity, key management and the authoritative source.
 
