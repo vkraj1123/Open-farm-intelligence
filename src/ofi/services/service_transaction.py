@@ -37,6 +37,8 @@ class ExecutionAttempt:
     updated_at: datetime
     external_reference: str | None = None
     last_error: str | None = None
+    retry_request_key: str | None = None
+    retry_of_attempt_id: str | None = None
 
 
 @dataclass(frozen=True)
