@@ -627,7 +627,7 @@ class PostgresTransactionRepository(TransactionRepository):
                         provider_id, event_id, transaction_id, attempt_id,
                         status, checked_at, payload_sha256, external_reference, message, applied
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, TRUE)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, FALSE)
                     ON CONFLICT (provider_id, event_id) DO NOTHING
                     RETURNING event_id
                     """,
