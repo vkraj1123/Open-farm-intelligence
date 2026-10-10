@@ -192,3 +192,19 @@ Passing this checklist is a deployment-specific decision. The existence of the r
 The PostgreSQL CI job sets OFI_POSTGRES_DSN and runs tests/test_postgres_recovery_factory_integration.py. That test applies src/ofi/twin/schema.sql to the dedicated CI database, builds the concrete deployment factory, performs transaction/attempt persistence through the PostgreSQL repository, and runs a bounded worker cycle. The configured HTTPS endpoint is a placeholder and is not contacted when there are no recovery candidates.
 
 A passing CI integration test proves that the checked-in schema and repository/factory wiring work together in the CI PostgreSQL environment. It does **not** prove connectivity to a deployment's staging database, correctness of a real provider's signed reconciliation responses, provider-side idempotency, scheduler behavior, or end-to-end alert delivery. Those require separate staging credentials and operational verification.
+
+
+## 8. Read-only live-provider contract check
+
+The opt-in test `tests/test_live_provider_reconciliation_contract.py` checks a real configured staging reconciliation endpoint without writing to the OFI repository or dispatching actions. It is skipped unless all required `OFI_STAGING_*` variables are set.
+
+Required variables:
+
+- `OFI_STAGING_PROVIDER_ID`: exact configured provider identity.
+- `OFI_STAGING_RECONCILIATION_ENDPOINT`: absolute HTTPS reconciliation endpoint.
+- `OFI_STAGING_RECONCILIATION_SECRET`: HMAC-SHA256 verification secret from a secret manager.
+- `OFI_STAGING_RECONCILIATION_CASES`: JSON array of four provider-issued test cases covering `executed`, `not_executed`, `pending`, and `unknown`. Each object has `transaction_id`, `attempt_id`, and `expected_status`.
+
+Run with `pytest -q tests/test_live_provider_reconciliation_contract.py` in an environment where these variables are injected securely. Do not place secrets in shell history, CI logs, issue comments, or committed files. Use only provider-approved staging IDs; the test calls the configured read-only reconciliation endpoint and never dispatches or changes OFI state.
+
+A pass demonstrates that the configured endpoint conforms to OFI's signed payload, exact attempt identity, freshness and status contract for those examples. It does not prove that the provider's status claims are authoritative, nor validate provider-side idempotency, production network behavior, scheduler overlap controls or alert delivery. Those remain separate staging acceptance checks.
