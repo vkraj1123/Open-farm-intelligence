@@ -9,7 +9,7 @@ This runbook defines the deployment contract for the recovery runtime in:
 - `ofi.services.recovery_observability`
 - `ofi.services.recovery_runtime.run_recovery_cycle`
 
-It is **not** a ready-to-run production deployment. The repository does not yet provide a universal composition root that constructs the production transaction repository, provider-specific reconciliation adapters, secrets, and logger. A deployment must supply those dependencies before scheduling a cycle.
+It is not a complete production deployment, but the repository now includes a reference composition root: `ofi.services.deployment_recovery:build_worker`. It constructs `PostgresTransactionRepository` and one `ProviderReconciliationAdapter` per configured provider using `HttpsReconciliationTransport`. Deployments still own database provisioning/migrations, credentials, provider endpoint readiness, scheduling, concurrency controls, and alert delivery.
 
 The runtime performs one bounded recovery pass, assesses the report against explicitly supplied thresholds, and emits one structured log event. It does not create retries, resend actions, configure a scheduler, or deliver notifications to an external alert receiver.
 
@@ -42,6 +42,18 @@ The runner requires these deployment variables; it deliberately provides no univ
 | `OFI_RECOVERY_WARNING_ERRORS` / `OFI_RECOVERY_CRITICAL_ERRORS` | Per-run reconciliation error thresholds |
 | `OFI_RECOVERY_WARNING_UNKNOWN` / `OFI_RECOVERY_CRITICAL_UNKNOWN` | Per-run unresolved-unknown thresholds |
 | `OFI_RECOVERY_WARNING_PENDING` / `OFI_RECOVERY_CRITICAL_PENDING` | Per-run pending-reconciliation thresholds |
+
+For a concrete PostgreSQL + HTTPS setup, set `OFI_RECOVERY_FACTORY=ofi.services.deployment_recovery:build_worker` and also configure:
+
+| Variable | Meaning |
+|---|---|
+| `OFI_DATABASE_URL` | PostgreSQL DSN for the transaction repository |
+| `OFI_RECOVERY_PROVIDER_IDS` | Comma-separated provider IDs, for example `kvk-demo,weather-1` |
+| `OFI_RECOVERY_PROVIDER_<NORMALIZED_ID>_ENDPOINT` | Absolute HTTPS reconciliation endpoint for that provider |
+| `OFI_RECOVERY_PROVIDER_<NORMALIZED_ID>_SECRET` | Provider HMAC-SHA256 verification secret, supplied through secret management |
+| `OFI_RECOVERY_PROVIDER_<NORMALIZED_ID>_TIMEOUT_SECONDS` | Optional positive request timeout; defaults to 5 seconds |
+
+Provider IDs are normalized to uppercase environment suffixes, with punctuation mapped to underscores; IDs that collide after normalization are rejected. The factory requires the optional `postgres` dependency (`pip install .[postgres]`) and a database whose transaction/attempt/reconciliation schema has already been migrated. It does not create schema or provision provider credentials. Each endpoint must return the exact signed JSON response format accepted by `ProviderReconciliationAdapter`; a reachable URL alone does not establish that the provider is authoritative.
 
 Example scheduler command after installing the package and configuring the variables:
 

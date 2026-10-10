@@ -1063,7 +1063,7 @@ The core closed-loop architecture has a tested implementation, and the execution
 
 ### Recovery operations runbook
 
-A deployment-oriented runbook now documents required repository/provider wiring, scheduler concurrency and timeout contracts, explicit health thresholds, structured-log alert routing, ambiguous-outcome safety, and pre-production checks: [`docs/dispatch-recovery-operations.md`](docs/dispatch-recovery-operations.md). It is a deployment contract, not a claim that a production scheduler, alert receiver, or real provider adapter has been configured. The `ofi-recovery` console command now provides the executable environment-driven entry point; deployments must supply a trusted factory for real repository/provider wiring and explicitly configure thresholds.
+A deployment-oriented runbook documents scheduler concurrency and timeout contracts, explicit health thresholds, structured-log alert routing, ambiguous-outcome safety, and pre-production checks: [`docs/dispatch-recovery-operations.md`](docs/dispatch-recovery-operations.md). The `ofi-recovery` command supports a concrete composition root, `ofi.services.deployment_recovery:build_worker`, which wires `PostgresTransactionRepository` and signed HTTPS reconciliation adapters from deployment environment variables. It requires a migrated PostgreSQL schema and provider endpoints implementing OFI's signed response contract; scheduler, alert receiver, credentials and provider authority remain deployment responsibilities.
 
 ### Current execution boundary
 
