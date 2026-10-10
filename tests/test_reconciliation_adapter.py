@@ -67,6 +67,16 @@ def test_adapter_fetches_and_verifies_exact_attempt():
     assert transport.calls == [("txn-1", "attempt-1")]
 
 
+def test_adapter_returns_hash_of_exact_signed_response_bytes():
+    response = signed_response()
+    transport = FakeTransport(response)
+    result, digest = adapter(transport).reconcile_with_digest(
+        transaction_id="txn-1", attempt_id="attempt-1", now=NOW
+    )
+    assert result.status == "not_executed"
+    assert digest == hashlib.sha256(response.raw_payload).hexdigest()
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [
