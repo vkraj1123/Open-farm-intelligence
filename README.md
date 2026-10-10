@@ -1274,6 +1274,9 @@ The core closed-loop architecture is implemented and tested, but the project is 
 - [x] Mock execution adapter
 - [x] Signed provider callbacks
 - [x] Callback authentication
+- [x] Signed-payload field binding
+- [x] Callback-to-attempt identity
+- [x] Atomic transaction + attempt callback update
 - [x] External event idempotency
 - [x] Retry policy
 - [ ] Dead-letter handling
