@@ -697,27 +697,13 @@ This provides a foundation for future integration with:
 
 # 19. Service selection
 
-The current implementation performs deterministic provider discovery.
+The implementation separates **eligibility** from **selection**:
 
-The next architectural step is an explicit selection policy rather than first-match behavior.
+1. `ServiceDirectory.discover()` filters providers by service, capability, action, geography and language.
+2. `ProviderSelectionPolicy` ranks eligible matches deterministically.
+3. `ServiceOrchestrator` returns the selected provider with an explainable rationale.
 
-Planned selection dimensions:
-
-```
-Capability
-   ↓
-Geography
-   ↓
-Language
-   ↓
-Availability / health
-   ↓
-Trust / verification
-   ↓
-Urgency / SLA
-   ↓
-Distance / cost where appropriate
-```
+The current metadata-aware ranking considers geography fit, language fit, availability, health, trust score, SLA and distance, with provider ID as a stable final tie-breaker. These are transparent engineering heuristics: metadata quality and score calibration are not yet validated against live provider performance. Cost optimization is not implemented.
 
 The policy should remain explainable and deterministic before introducing opaque AI ranking.
 
@@ -1044,7 +1030,7 @@ The integration should happen through adapters rather than contaminating the cor
 
 **Milestone: Reliability-hardened functional prototype / pre-production foundation**
 
-The core closed-loop architecture is implemented and tested. The execution layer now has durable idempotency and an authenticated, exactly-once callback receipt boundary. The project is still **not production-ready** for agricultural deployment.
+The core closed-loop architecture has a tested implementation, and the execution layer has durable idempotency, callback receipts, explicit attempts and a safe retry assessment. The project is still **not production-ready** for agricultural deployment.
 
 ### Reliability progress — October 2026
 
@@ -1060,14 +1046,17 @@ The core closed-loop architecture is implemented and tested. The execution layer
 - ✅ Provider-to-transaction ownership validation
 - ✅ Callback replay returns the transaction originally bound to the provider event
 - ✅ Real PostgreSQL callback replay integration test
+- ✅ Callback-to-attempt identity (callbacks must name the attempt they update)
+- ✅ Signed-payload field binding to the parsed callback object
+- ✅ Callback updates transaction and named attempt in one PostgreSQL transaction
 
 ### Current execution boundary
 
-The callback layer is safe at the persistence/state-transition seam, but it is **not yet a complete production webhook subsystem**. Remaining hardening includes provider-specific signature schemes where required, signed freshness/replay windows, secret rotation, payload/schema binding, observability, and durable retry/attempt semantics.
+The callback path now verifies HMAC-SHA256, binds the typed callback fields to the signed payload, validates provider ownership, and applies the event to the named attempt. It is still **not a complete production webhook subsystem**. Remaining hardening includes provider-specific signature schemes where required, signed freshness/replay windows, secret rotation, observability, reconciliation-backed retries and crash recovery.
 
 ### Next reliability milestone
 
-Move from a single transaction lifecycle to explicit execution attempts:
+Move from a single attempt to **reconciliation-driven multi-attempt orchestration**:
 
 ```
 Action
@@ -1079,7 +1068,7 @@ Action
        └── failed / unknown
 ```
 
-A provider timeout or lost callback must not be interpreted as confirmed external failure. The system must preserve **unknown external state**, support safe retries, and retain an auditable attempt history.
+A provider timeout or lost callback must not be interpreted as confirmed external failure. The attempt ledger and pure retry assessment now exist; the next implementation must reconcile authoritative provider state, create subsequent attempts only when safe, and retain auditable recovery history.
 
 The core closed-loop architecture is implemented and tested, but the project is **not production-ready**.
 
@@ -1259,15 +1248,17 @@ The core closed-loop architecture is implemented and tested, but the project is 
 - [x] Explicit transaction state machine
 - [x] Action-status projection
 - [x] Provider identity preservation
-- [ ] Deterministic provider-selection policy
-- [ ] Geography-aware selection
-- [ ] Language-aware selection
-- [ ] Availability/health-aware selection
-- [ ] Trust/verification scoring
-- [ ] SLA-aware routing
-- [ ] Cost/distance optimization
+- [x] Deterministic provider-selection policy
+- [x] Geography-aware selection
+- [x] Language-aware selection
+- [x] Availability/health-aware selection
+- [x] Trust-score ranking
+- [x] SLA-aware routing
+- [x] Distance-aware ranking
+- [ ] Cost optimization
+- [ ] Live-provider metadata calibration and monitoring
 
-**Status: 🟡 Core exists; selection policy is next**
+**Status: 🟡 Deterministic policy implemented; live metadata, calibration and cost optimization remain**
 
 ---
 
@@ -1283,15 +1274,19 @@ The core closed-loop architecture is implemented and tested, but the project is 
 - [x] Mock execution adapter
 - [x] Signed provider callbacks
 - [x] Callback authentication
+- [x] Signed-payload field binding
+- [x] Callback-to-attempt identity
+- [x] Atomic transaction + attempt callback update
 - [x] External event idempotency
 - [x] Retry policy
 - [ ] Dead-letter handling
 - [x] Explicit execution-attempt ledger
 - [x] Unknown external execution state
 - [ ] Multi-attempt retry orchestration
+- [ ] Reconciliation adapter and authenticated reconciliation evidence
 - [ ] Real service adapter
 
-**Status: 🟡 Durable execution + authenticated callback boundary + explicit attempt ledger + safe retry policy implemented; reconciliation-driven retry orchestration and production webhook hardening remain**
+**Status: 🟡 Durable execution + attempt-bound authenticated callbacks + safe retry assessment implemented; reconciliation-driven retry orchestration and production webhook hardening remain**
 
 ---
 
@@ -1458,35 +1453,22 @@ This reduces unnecessary writes and makes persistence semantics easier to reason
 
 ---
 
-## Priority 4 — Provider selection policy
+## Completed priority — Provider selection policy
 
-Replace first-match selection with a deterministic policy object.
-
-Candidate interface:
-
-```
-ProviderSelectionPolicy.select(
-    request,
-    candidates,
-    context
-)
-```
-
-Selection must be explainable.
+The deterministic `ProviderSelectionPolicy` is implemented and integrated with `ServiceOrchestrator`. It ranks already-eligible providers by context fit and operational metadata, explains the selection, and uses provider ID as a stable tie-breaker. Live metadata validation and cost optimization remain open.
 
 ---
 
-## Priority 5 — Execution attempts
+## Priority 5 — Reconciliation-driven retry orchestration
 
-A single action may eventually have:
+The attempt ledger, unknown-state representation and pure retry assessment exist. The next milestone must:
 
-```
-Action
- ├── Attempt 1 → Provider A → failed
- └── Attempt 2 → Provider B → completed
-```
-
-The current implementation should evolve toward explicit attempt identity rather than relying on list insertion order.
+- define an authenticated provider-reconciliation contract;
+- bind reconciliation results to provider, transaction and attempt;
+- create a new attempt only after authoritative non-execution is confirmed;
+- prevent stale callbacks from changing a newer attempt;
+- make attempt-number allocation concurrency-safe in PostgreSQL;
+- define crash recovery for a transaction created before its attempt or provider call completes.
 
 ---
 

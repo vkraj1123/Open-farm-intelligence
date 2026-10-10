@@ -190,3 +190,7 @@ CREATE TABLE IF NOT EXISTS service_execution_attempts (
 
 CREATE INDEX IF NOT EXISTS service_execution_attempts_transaction
     ON service_execution_attempts (transaction_id, attempt_number);
+
+-- Bind callbacks to the exact attempt they update. Safe for existing databases.
+ALTER TABLE service_transaction_callbacks
+    ADD COLUMN IF NOT EXISTS attempt_id TEXT REFERENCES service_execution_attempts(attempt_id);

@@ -20,7 +20,7 @@ from ofi.domain.models import (
 from ofi.services.postgres_case_repository import PostgresCaseRepository
 from ofi.services.execution_gateway import ActorIdentity, ConsentGrant, MockServiceAdapter, ServiceExecutionGateway
 from ofi.services.action_router import ActionRequest, ActionRouter
-from ofi.services.service_transaction import ServiceTransaction
+from ofi.services.service_transaction import ExecutionAttempt, ServiceTransaction
 from ofi.services.transaction_repository import PostgresTransactionRepository, TransactionConflictError
 from ofi.services.unit_of_work import PostgresFarmCaseUnitOfWork
 from ofi.twin.postgis import PostGISFarmTwinStore
@@ -317,11 +317,22 @@ def test_real_postgres_provider_callback_is_exactly_once(database):
             status="submitted",
         )
     )
+    now = datetime.now(timezone.utc)
+    repo.create_attempt(ExecutionAttempt(
+        attempt_id="attempt-callback-1",
+        transaction_id="txn-callback",
+        attempt_number=1,
+        provider_id="lab-01",
+        status="submitted",
+        created_at=now,
+        updated_at=now,
+    ))
 
     first = repo.apply_callback(
         provider_id="lab-01",
         event_id="provider-event-1",
         transaction_id="txn-callback",
+        attempt_id="attempt-callback-1",
         status="accepted",
         message="accepted",
     )
@@ -329,6 +340,7 @@ def test_real_postgres_provider_callback_is_exactly_once(database):
         provider_id="lab-01",
         event_id="provider-event-1",
         transaction_id="txn-callback",
+        attempt_id="attempt-callback-1",
         status="accepted",
         message="accepted",
     )
@@ -338,14 +350,15 @@ def test_real_postgres_provider_callback_is_exactly_once(database):
     assert replay.transaction.status == "accepted"
     assert replay.transaction.transaction_id == "txn-callback"
 
-    mismatched_replay = repo.apply_callback(
-        provider_id="lab-01",
-        event_id="provider-event-1",
-        transaction_id="wrong-transaction",
-        status="accepted",
-    )
-    assert mismatched_replay.applied is False
-    assert mismatched_replay.transaction.transaction_id == "txn-callback"
+    with pytest.raises(TransactionConflictError, match="bound to a different transaction or attempt"):
+        repo.apply_callback(
+            provider_id="lab-01",
+            event_id="provider-event-1",
+            transaction_id="wrong-transaction",
+            attempt_id="attempt-callback-1",
+            status="accepted",
+        )
+    assert repo.list_attempts("txn-callback")[0].status == "accepted"
 
 
 def test_real_postgres_execution_attempts_and_unknown_state(database):
