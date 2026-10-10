@@ -64,6 +64,15 @@ class MetricComparisonRuleRequest(BaseModel):
             raise ValueError("rule strings must not be blank")
         return value
 
+    @field_validator("max_time_delta_seconds")
+    @classmethod
+    def time_delta_must_fit_datetime_precision(cls, value: float) -> float:
+        try:
+            timedelta(seconds=value)
+        except OverflowError as exc:
+            raise ValueError("max_time_delta_seconds is too large") from exc
+        return value
+
     @field_validator("observation_kinds")
     @classmethod
     def kinds_must_be_supported_and_unique(cls, value: list[str]) -> list[str]:
