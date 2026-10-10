@@ -119,7 +119,7 @@ class InMemoryTransactionRepository(TransactionRepository):
         self._transactions: dict[str, ServiceTransaction] = {}
         self._idempotency: dict[str, str] = {}
         self._callback_events: dict[tuple[str, str], tuple[str, str]] = {}
-        self._reconciliation_events: dict[tuple[str, str], tuple[str, str, str, str]] = {}
+        self._reconciliation_events: dict[tuple[str, str], tuple[str, str, str, str, bool]] = {}
         self._attempts: dict[str, ExecutionAttempt] = {}
 
     def create_if_absent(self, transaction: ServiceTransaction) -> TransactionCreateResult:
@@ -227,7 +227,7 @@ class InMemoryTransactionRepository(TransactionRepository):
         )
         existing = self._reconciliation_events.get(event_key)
         if existing is not None:
-            if existing != fingerprint:
+            if existing[:4] != fingerprint:
                 raise TransactionConflictError(
                     "reconciliation event is already bound to different evidence"
                 )
@@ -245,7 +245,7 @@ class InMemoryTransactionRepository(TransactionRepository):
             raise TransactionConflictError(
                 "reconciliation attempt does not belong to this provider transaction"
             )
-        self._reconciliation_events[event_key] = fingerprint
+        self._reconciliation_events[event_key] = (*fingerprint, False)
         return True
 
     def apply_reconciliation_evidence(
@@ -259,11 +259,11 @@ class InMemoryTransactionRepository(TransactionRepository):
             payload_sha256, evidence.status,
         )
         existing = self._reconciliation_events.get(event_key)
-        if existing is not None:
-            if existing != fingerprint:
-                raise TransactionConflictError(
-                    "reconciliation event is already bound to different evidence"
-                )
+        if existing is not None and existing[:4] != fingerprint:
+            raise TransactionConflictError(
+                "reconciliation event is already bound to different evidence"
+            )
+        if existing is not None and existing[4]:
             return False
 
         transaction = self.get(evidence.transaction_id)
@@ -306,7 +306,7 @@ class InMemoryTransactionRepository(TransactionRepository):
             attempt.external_reference = evidence.external_reference
         self._attempts[evidence.attempt_id] = deepcopy(attempt)
         self._transactions[evidence.transaction_id] = deepcopy(transaction)
-        self._reconciliation_events[event_key] = fingerprint
+        self._reconciliation_events[event_key] = (*fingerprint, True)
         return True
 
     def create_attempt(self, attempt: ExecutionAttempt) -> ExecutionAttempt:
@@ -625,9 +625,9 @@ class PostgresTransactionRepository(TransactionRepository):
                     """
                     INSERT INTO service_reconciliation_events (
                         provider_id, event_id, transaction_id, attempt_id,
-                        status, checked_at, payload_sha256, external_reference, message
+                        status, checked_at, payload_sha256, external_reference, message, applied
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, TRUE)
                     ON CONFLICT (provider_id, event_id) DO NOTHING
                     RETURNING event_id
                     """,
@@ -643,7 +643,7 @@ class PostgresTransactionRepository(TransactionRepository):
                     return True
                 cur.execute(
                     """
-                    SELECT transaction_id, attempt_id, payload_sha256, status
+                    SELECT transaction_id, attempt_id, payload_sha256, status, applied
                     FROM service_reconciliation_events
                     WHERE provider_id = %s AND event_id = %s
                     """,
@@ -656,7 +656,7 @@ class PostgresTransactionRepository(TransactionRepository):
                     evidence.transaction_id, evidence.attempt_id,
                     payload_sha256, evidence.status,
                 )
-                if tuple(existing) != fingerprint:
+                if tuple(existing[:4]) != fingerprint:
                     raise TransactionConflictError(
                         "reconciliation event is already bound to different evidence"
                     )
@@ -695,7 +695,7 @@ class PostgresTransactionRepository(TransactionRepository):
                 if cur.fetchone() is None:
                     cur.execute(
                         """
-                        SELECT transaction_id, attempt_id, payload_sha256, status
+                        SELECT transaction_id, attempt_id, payload_sha256, status, applied
                         FROM service_reconciliation_events
                         WHERE provider_id = %s AND event_id = %s
                         """,
@@ -708,11 +708,12 @@ class PostgresTransactionRepository(TransactionRepository):
                     )
                     if row is None:
                         raise RuntimeError("reconciliation event receipt disappeared")
-                    if tuple(row) != fingerprint:
+                    if tuple(row[:4]) != fingerprint:
                         raise TransactionConflictError(
                             "reconciliation event is already bound to different evidence"
                         )
-                    return False
+                    if row[4]:
+                        return False
 
                 original_transaction_status = transaction.status
                 if evidence.status == "executed":
@@ -751,6 +752,14 @@ class PostgresTransactionRepository(TransactionRepository):
                         attempt.status, attempt.updated_at, attempt.external_reference,
                         attempt.last_error, attempt.attempt_id,
                     ),
+                )
+                cur.execute(
+                    """
+                    UPDATE service_reconciliation_events
+                    SET applied = TRUE
+                    WHERE provider_id = %s AND event_id = %s
+                    """,
+                    (evidence.provider_id, evidence.event_id),
                 )
                 if transaction.status != original_transaction_status:
                     latest_event = transaction.events[-1]
