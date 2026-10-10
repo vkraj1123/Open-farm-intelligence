@@ -75,7 +75,7 @@ These values are examples only, not endorsed defaults. The response includes the
 
 ## Current boundary
 
-The alignment report itself remains deterministic, in-memory and request-scoped. It does not persist assessments, compare evidence across providers, infer scientific contradictions, or provide source-specific policy versioning. The opt-in `POST /cases/{case_id}/reason-with-evidence-policy` endpoint connects eligibility filtering to reasoning; callers must explicitly choose that endpoint and supply a reviewed policy.
+The alignment report itself remains deterministic, in-memory and request-scoped. It does not persist assessments or provide source-specific policy versioning. The separate, opt-in comparison service described below compares pairs only when caller-declared unit, metric, spatial scope, time separation and crop-cycle rules pass. The opt-in `POST /cases/{case_id}/reason-with-evidence-policy` endpoint connects eligibility filtering to reasoning; callers must explicitly choose that endpoint and supply a reviewed policy.
 
 ## Evidence-gated reasoning
 
@@ -84,3 +84,41 @@ The opt-in endpoint `POST /cases/{case_id}/reason-with-evidence-policy` connects
 The response contains both the updated case record and the exact evidence frame used for filtering, including per-observation issue codes and exclusion counts. The ordinary `POST /cases/{case_id}/reason` path is unchanged for backward compatibility; callers must deliberately choose the policy-gated endpoint. The policy is request-scoped and is not persisted or versioned by this change.
 
 This is an eligibility gate, not a truth detector. It does not compare unlike metrics, resolve conflicting values, verify provider authority, or establish calibrated confidence. If all observations are excluded, the orchestrator receives an empty observation list and should use its existing insufficient-evidence behavior.
+
+
+## Explicit pairwise evidence comparisons
+
+The endpoint `POST /farms/{farm_id}/evidence-comparisons` accepts a freshness policy plus one or more caller-authored comparison rules. The response includes the eligibility assessment and pairwise comparison results. It does not mutate the farm twin or trigger a recommendation.
+
+Each rule declares:
+- `value_key`: one exact top-level numeric field in each observation's `value` object;
+- `observation_kinds`: the observation kinds eligible to participate;
+- `unit`: the exact required `Observation.unit` value for both observations;
+- `spatial_scope`: the exact required non-empty `Observation.spatial_scope` value;
+- `max_time_delta_seconds`: the maximum absolute timestamp separation;
+- `absolute_tolerance`: the declared difference at or below which values are labelled `agree`;
+- `require_same_crop_cycle` and `require_distinct_sources`: explicit scope/source gates, both true by default.
+
+Only observations eligible in the accompanying evidence frame can produce an `agree` or `disagree` result. Pairs failing a gate are returned as `not_comparable` with reason codes. Missing, non-numeric and non-finite values are not compared. The service uses absolute differences; it does not normalize units, infer field equivalence, apply percentage tolerances, or decide whether a disagreement is agronomically important.
+
+Example request (illustrative policy only):
+
+```json
+{
+  "max_age_seconds_by_kind": {"weather": 3600},
+  "require_provenance": true,
+  "comparison_rules": [{
+    "rule_id": "temperature-check-v1",
+    "value_key": "temperature_c",
+    "observation_kinds": ["weather"],
+    "unit": "degC",
+    "spatial_scope": "farm",
+    "max_time_delta_seconds": 7200,
+    "absolute_tolerance": 2.0,
+    "require_same_crop_cycle": true,
+    "require_distinct_sources": true
+  }]
+}
+```
+
+The values above demonstrate the request shape; they are not recommended production thresholds. A result of `disagree` means only that a configured rule was exceeded after comparability gates passed. It does not establish which source is correct or prove an agronomic contradiction. Rule governance, versioning and validation against authoritative agricultural data remain outstanding.
