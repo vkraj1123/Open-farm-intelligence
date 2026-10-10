@@ -1,4 +1,7 @@
+from datetime import timedelta
+
 from ofi.domain.models import CaseEvent, CaseOutcome, CaseRecord, FarmCase, Observation
+from ofi.services.evidence_alignment import EvidenceFrame, align_observations
 from ofi.intelligence.orchestrator import Orchestrator
 from ofi.geospatial.analytics import derived_ndvi_observation
 from ofi.science.registry import default_scientific_registry
@@ -63,6 +66,46 @@ class CaseManager:
         record.latest_reasoning = reasoning
         record.case.status = "actioned"
         return self._event(record, "reasoned", "orchestrator", {"action": reasoning.decision.action})
+
+    def reason_with_evidence_policy(
+        self,
+        case_id: str,
+        *,
+        max_age_by_kind: dict[str, timedelta],
+        require_provenance: bool = False,
+    ) -> tuple[CaseRecord, EvidenceFrame]:
+        """Reason only over observations eligible under an explicit caller policy.
+
+        The ordinary reason() path remains unchanged. This opt-in path returns the
+        exact frame used to filter inputs so callers can audit exclusions.
+        """
+        record = self.store.get(case_id)
+        snapshot = self.farm_twin.snapshot(record.case.farm.id)
+        frame = align_observations(
+            snapshot,
+            record.case.observations,
+            max_age_by_kind=max_age_by_kind,
+            require_provenance=require_provenance,
+        )
+        eligible_ids = set(frame.eligible_observation_ids)
+        filtered_case = record.case.model_copy(deep=True)
+        filtered_case.observations = [
+            item for item in record.case.observations if item.id in eligible_ids
+        ]
+        reasoning = self.orchestrator.reason(filtered_case)
+        record.latest_reasoning = reasoning
+        record.case.status = "actioned"
+        self._event(
+            record,
+            "reasoned_with_evidence_policy",
+            "orchestrator",
+            {
+                "eligible_observation_ids": list(frame.eligible_observation_ids),
+                "excluded_counts": dict(frame.excluded_counts),
+                "require_provenance": require_provenance,
+            },
+        )
+        return self.store.get(case_id), frame
 
     def collect_evidence(self, case_id: str, provider_registry, actor: str = "provider_registry") -> CaseRecord:
         with self.unit_of_work.atomic():
