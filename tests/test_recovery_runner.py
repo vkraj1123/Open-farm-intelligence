@@ -65,7 +65,8 @@ def test_runner_requires_explicit_threshold_configuration():
     assert stdout.getvalue() == ""
     error = json.loads(stderr.getvalue())
     assert error["error_type"] == "ValueError"
-    assert "OFI_RECOVERY_WARNING_UNKNOWN" in error["message"]
+    assert error["message"] == "recovery runner configuration or cycle failed"
+    assert "OFI_RECOVERY_WARNING_UNKNOWN" not in stderr.getvalue()
 
 
 def test_runner_failure_does_not_log_exception_message(monkeypatch):
