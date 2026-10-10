@@ -7,7 +7,8 @@ import pytest
 
 import ofi.api as api
 from ofi.services.case_manager import CaseManager
-from ofi.services.case_repository import InMemoryCaseRepository, PostgresCaseRepository
+from ofi.services.case_repository import InMemoryCaseRepository
+from ofi.services.postgres_case_repository import PostgresCaseRepository
 from ofi.services.unit_of_work import InMemoryFarmCaseUnitOfWork, PostgresFarmCaseUnitOfWork
 from ofi.twin.farm_twin import FarmTwinStore
 from ofi.twin.postgis import PostGISFarmTwinStore
