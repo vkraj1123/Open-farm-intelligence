@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Callable
+from threading import RLock
 
 from ofi.services.db_context import connection_scope
 from ofi.services.reconciliation import ReconciliationEvidence
@@ -93,6 +94,13 @@ class TransactionRepository(ABC):
         """Atomically record verified evidence and update its attempt/transaction."""
 
     @abstractmethod
+    def create_retry_attempt(
+        self, *, transaction_id: str, prior_attempt_id: str,
+        retry_request_key: str, attempt_id: str,
+    ) -> ExecutionAttempt:
+        """Atomically create or recover a retry after applied non-execution evidence."""
+
+    @abstractmethod
     def create_attempt(self, attempt: ExecutionAttempt) -> ExecutionAttempt:
         """Create a durable execution attempt with monotonic numbering."""
 
@@ -121,6 +129,7 @@ class InMemoryTransactionRepository(TransactionRepository):
         self._callback_events: dict[tuple[str, str], tuple[str, str]] = {}
         self._reconciliation_events: dict[tuple[str, str], tuple[str, str, str, str, bool]] = {}
         self._attempts: dict[str, ExecutionAttempt] = {}
+        self._retry_lock = RLock()
 
     def create_if_absent(self, transaction: ServiceTransaction) -> TransactionCreateResult:
         existing_id = self._idempotency.get(transaction.idempotency_key)
@@ -308,6 +317,57 @@ class InMemoryTransactionRepository(TransactionRepository):
         self._transactions[evidence.transaction_id] = deepcopy(transaction)
         self._reconciliation_events[event_key] = (*fingerprint, True)
         return True
+
+    def create_retry_attempt(
+        self, *, transaction_id: str, prior_attempt_id: str,
+        retry_request_key: str, attempt_id: str,
+    ) -> ExecutionAttempt:
+        if not retry_request_key.strip() or not attempt_id.strip():
+            raise ValueError("retry_request_key and attempt_id must be non-empty")
+        with self._retry_lock:
+            for existing in self._attempts.values():
+                if existing.retry_request_key == retry_request_key:
+                    if (existing.transaction_id != transaction_id
+                            or existing.retry_of_attempt_id != prior_attempt_id):
+                        raise TransactionConflictError(
+                            "retry request key is already bound to a different retry"
+                        )
+                    return deepcopy(existing)
+
+            transaction = self.get(transaction_id)
+            if transaction.status != "submitted":
+                raise TransactionConflictError(
+                    "retry requires a submitted transaction with no active execution"
+                )
+            prior = self._attempts.get(prior_attempt_id)
+            if prior is None:
+                raise KeyError(prior_attempt_id)
+            if prior.transaction_id != transaction_id or prior.provider_id != transaction.provider_id:
+                raise TransactionConflictError("prior attempt does not belong to this transaction")
+            if prior.status != "failed":
+                raise TransactionConflictError("retry requires a failed prior attempt")
+            if not any(
+                item[0] == transaction_id and item[1] == prior_attempt_id
+                and item[3] == "not_executed" and item[4]
+                for item in self._reconciliation_events.values()
+            ):
+                raise TransactionConflictError(
+                    "retry requires applied provider evidence confirming non-execution"
+                )
+            if attempt_id in self._attempts:
+                raise TransactionConflictError("attempt ID is already in use")
+            existing_attempts = self.list_attempts(transaction_id)
+            next_number = max((item.attempt_number for item in existing_attempts), default=0) + 1
+            now = __import__("datetime").datetime.now(__import__("datetime").timezone.utc)
+            created = ExecutionAttempt(
+                attempt_id=attempt_id, transaction_id=transaction_id,
+                attempt_number=next_number, provider_id=prior.provider_id,
+                status="ready", created_at=now, updated_at=now,
+                retry_request_key=retry_request_key,
+                retry_of_attempt_id=prior_attempt_id,
+            )
+            self._attempts[attempt_id] = deepcopy(created)
+            return deepcopy(created)
 
     def create_attempt(self, attempt: ExecutionAttempt) -> ExecutionAttempt:
         existing = self.list_attempts(attempt.transaction_id)
@@ -787,16 +847,80 @@ class PostgresTransactionRepository(TransactionRepository):
                     )
                 return True
 
+    def create_retry_attempt(
+        self, *, transaction_id: str, prior_attempt_id: str,
+        retry_request_key: str, attempt_id: str,
+    ) -> ExecutionAttempt:
+        if not retry_request_key.strip() or not attempt_id.strip():
+            raise ValueError("retry_request_key and attempt_id must be non-empty")
+        with connection_scope(self._connection_factory) as conn:
+            with conn.cursor() as cur:
+                transaction = self._get_with_cursor(cur, transaction_id, for_update=True)
+                cur.execute(
+                    "SELECT attempt_id, transaction_id, attempt_number, provider_id, status, "
+                    "created_at, updated_at, external_reference, last_error, retry_request_key, retry_of_attempt_id "
+                    "FROM service_execution_attempts WHERE retry_request_key = %s FOR UPDATE",
+                    (retry_request_key,),
+                )
+                replay = cur.fetchone()
+                if replay is not None:
+                    existing = self._attempt_from_row(replay)
+                    if (existing.transaction_id != transaction_id
+                            or existing.retry_of_attempt_id != prior_attempt_id):
+                        raise TransactionConflictError(
+                            "retry request key is already bound to a different retry"
+                        )
+                    return existing
+
+                if transaction.status != "submitted":
+                    raise TransactionConflictError(
+                        "retry requires a submitted transaction with no active execution"
+                    )
+                prior = self._get_attempt_with_cursor(cur, prior_attempt_id)
+                if prior.transaction_id != transaction_id or prior.provider_id != transaction.provider_id:
+                    raise TransactionConflictError("prior attempt does not belong to this transaction")
+                if prior.status != "failed":
+                    raise TransactionConflictError("retry requires a failed prior attempt")
+                cur.execute(
+                    "SELECT 1 FROM service_reconciliation_events "
+                    "WHERE transaction_id = %s AND attempt_id = %s "
+                    "AND status = 'not_executed' AND applied = TRUE LIMIT 1",
+                    (transaction_id, prior_attempt_id),
+                )
+                if cur.fetchone() is None:
+                    raise TransactionConflictError(
+                        "retry requires applied provider evidence confirming non-execution"
+                    )
+                cur.execute(
+                    "SELECT COALESCE(MAX(attempt_number), 0) + 1 "
+                    "FROM service_execution_attempts WHERE transaction_id = %s",
+                    (transaction_id,),
+                )
+                next_number = cur.fetchone()[0]
+                from datetime import datetime, timezone
+                now = datetime.now(timezone.utc)
+                cur.execute(
+                    "INSERT INTO service_execution_attempts "
+                    "(attempt_id, transaction_id, attempt_number, provider_id, status, created_at, updated_at, "
+                    "retry_request_key, retry_of_attempt_id) "
+                    "VALUES (%s,%s,%s,%s,'ready',%s,%s,%s,%s) RETURNING attempt_id",
+                    (attempt_id, transaction_id, next_number, prior.provider_id, now, now,
+                     retry_request_key, prior_attempt_id),
+                )
+                cur.fetchone()
+                return self._get_attempt_with_cursor(cur, attempt_id)
+
     def create_attempt(self, attempt: ExecutionAttempt) -> ExecutionAttempt:
         with connection_scope(self._connection_factory) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     "INSERT INTO service_execution_attempts "
-                    "(attempt_id, transaction_id, attempt_number, provider_id, status, created_at, updated_at, external_reference, last_error) "
-                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING attempt_id",
+                    "(attempt_id, transaction_id, attempt_number, provider_id, status, created_at, updated_at, external_reference, last_error, retry_request_key, retry_of_attempt_id) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING attempt_id",
                     (attempt.attempt_id, attempt.transaction_id, attempt.attempt_number,
                      attempt.provider_id, attempt.status, attempt.created_at, attempt.updated_at,
-                     attempt.external_reference, attempt.last_error),
+                     attempt.external_reference, attempt.last_error, attempt.retry_request_key,
+                     attempt.retry_of_attempt_id),
                 )
                 cur.fetchone()
                 return self._get_attempt_with_cursor(cur, attempt.attempt_id)
@@ -842,17 +966,22 @@ class PostgresTransactionRepository(TransactionRepository):
     def _get_attempt_with_cursor(cur: Any, attempt_id: str) -> ExecutionAttempt:
         cur.execute(
             "SELECT attempt_id, transaction_id, attempt_number, provider_id, status, "
-            "created_at, updated_at, external_reference, last_error "
+            "created_at, updated_at, external_reference, last_error, retry_request_key, retry_of_attempt_id "
             "FROM service_execution_attempts WHERE attempt_id=%s",
             (attempt_id,),
         )
         row = cur.fetchone()
         if row is None:
             raise KeyError(attempt_id)
+        return PostgresTransactionRepository._attempt_from_row(row)
+
+    @staticmethod
+    def _attempt_from_row(row: Any) -> ExecutionAttempt:
         return ExecutionAttempt(
             attempt_id=row[0], transaction_id=row[1], attempt_number=row[2],
             provider_id=row[3], status=row[4], created_at=row[5],
             updated_at=row[6], external_reference=row[7], last_error=row[8],
+            retry_request_key=row[9], retry_of_attempt_id=row[10],
         )
 
     @staticmethod
