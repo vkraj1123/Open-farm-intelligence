@@ -589,3 +589,171 @@ def test_real_postgres_attempt_audit_is_atomic_and_append_only(database):
                 "WHERE attempt_id = %s",
                 ("attempt-audit-integration",),
             )
+
+
+
+def test_real_postgres_duplicate_callbacks_are_exactly_once_under_concurrency(database):
+    factory = lambda: psycopg.connect(_dsn())
+    repo = PostgresTransactionRepository(factory)
+    repo.create(ServiceTransaction(
+        transaction_id="txn-callback-race",
+        idempotency_key="callback-race-key",
+        request_fingerprint="callback-race-fp",
+        action_id="callback-race-action",
+        provider_id="callback-race-provider",
+        status="submitted",
+    ))
+    now = datetime.now(timezone.utc)
+    repo.create_attempt(ExecutionAttempt(
+        attempt_id="attempt-callback-race",
+        transaction_id="txn-callback-race",
+        attempt_number=1,
+        provider_id="callback-race-provider",
+        status="submitted",
+        created_at=now,
+        updated_at=now,
+    ))
+
+    def apply(_):
+        local_repo = PostgresTransactionRepository(factory)
+        return local_repo.apply_callback(
+            provider_id="callback-race-provider",
+            event_id="same-provider-event",
+            transaction_id="txn-callback-race",
+            attempt_id="attempt-callback-race",
+            status="accepted",
+            message="accepted",
+        )
+
+    with ThreadPoolExecutor(max_workers=12) as executor:
+        results = list(executor.map(apply, range(36)))
+
+    assert sum(result.applied for result in results) == 1
+    assert {result.transaction.status for result in results} == {"accepted"}
+    assert repo.list_attempts("txn-callback-race")[0].status == "accepted"
+    with psycopg.connect(_dsn()) as conn:
+        receipt_count = conn.execute(
+            "SELECT count(*) FROM service_transaction_callbacks "
+            "WHERE provider_id = %s AND event_id = %s",
+            ("callback-race-provider", "same-provider-event"),
+        ).fetchone()[0]
+    assert receipt_count == 1
+    audit = repo.list_attempt_events("attempt-callback-race")
+    assert sum(event.event_type == "provider_callback_applied" for event in audit) == 1
+
+
+def test_real_postgres_reconciliation_receipt_is_exactly_once_under_concurrency(database):
+    factory = lambda: psycopg.connect(_dsn())
+    repo = PostgresTransactionRepository(factory)
+    repo.create(ServiceTransaction(
+        transaction_id="txn-reconcile-race",
+        idempotency_key="reconcile-race-key",
+        request_fingerprint="reconcile-race-fp",
+        action_id="reconcile-race-action",
+        provider_id="reconcile-race-provider",
+        status="submitted",
+    ))
+    now = datetime.now(timezone.utc)
+    repo.create_attempt(ExecutionAttempt(
+        attempt_id="attempt-reconcile-race",
+        transaction_id="txn-reconcile-race",
+        attempt_number=1,
+        provider_id="reconcile-race-provider",
+        status="unknown",
+        created_at=now,
+        updated_at=now,
+    ))
+    evidence = ReconciliationEvidence(
+        provider_id="reconcile-race-provider",
+        transaction_id="txn-reconcile-race",
+        attempt_id="attempt-reconcile-race",
+        event_id="same-reconciliation-event",
+        status="not_executed",
+        checked_at=now,
+        message="provider confirms no execution",
+    )
+
+    def apply(_):
+        local_repo = PostgresTransactionRepository(factory)
+        return local_repo.apply_reconciliation_evidence(
+            evidence, payload_sha256="b" * 64
+        )
+
+    with ThreadPoolExecutor(max_workers=12) as executor:
+        results = list(executor.map(apply, range(36)))
+
+    assert sum(results) == 1
+    assert repo.list_attempts("txn-reconcile-race")[0].status == "failed"
+    audit = repo.list_attempt_events("attempt-reconcile-race")
+    assert sum(
+        event.event_type == "reconciliation_evidence_applied"
+        for event in audit
+    ) == 1
+    with psycopg.connect(_dsn()) as conn:
+        receipt = conn.execute(
+            "SELECT applied FROM service_reconciliation_events "
+            "WHERE provider_id = %s AND event_id = %s",
+            ("reconcile-race-provider", "same-reconciliation-event"),
+        ).fetchone()
+    assert receipt == (True,)
+
+
+def test_real_postgres_attempt_state_rolls_back_when_audit_append_fails(database):
+    factory = lambda: psycopg.connect(_dsn())
+    repo = PostgresTransactionRepository(factory)
+    repo.create(ServiceTransaction(
+        transaction_id="txn-audit-fail",
+        idempotency_key="audit-fail-key",
+        request_fingerprint="audit-fail-fp",
+        action_id="audit-fail-action",
+        provider_id="audit-fail-provider",
+        status="submitted",
+    ))
+    now = datetime.now(timezone.utc)
+    repo.create_attempt(ExecutionAttempt(
+        attempt_id="attempt-audit-fail",
+        transaction_id="txn-audit-fail",
+        attempt_number=1,
+        provider_id="audit-fail-provider",
+        status="ready",
+        created_at=now,
+        updated_at=now,
+    ))
+    repo.claim_attempt_for_dispatch("attempt-audit-fail")
+
+    with psycopg.connect(_dsn()) as conn:
+        conn.execute("""
+            CREATE OR REPLACE FUNCTION ofi_test_fail_attempt_audit()
+            RETURNS TRIGGER AS $$
+            BEGIN
+                IF NEW.to_status = 'unknown' THEN
+                    RAISE EXCEPTION 'injected audit failure';
+                END IF;
+                RETURN NEW;
+            END;
+            $$ LANGUAGE plpgsql
+        """)
+        conn.execute("""
+            CREATE TRIGGER ofi_test_fail_attempt_audit_trigger
+            BEFORE INSERT ON service_execution_attempt_events
+            FOR EACH ROW EXECUTE FUNCTION ofi_test_fail_attempt_audit()
+        """)
+        conn.commit()
+
+    try:
+        with pytest.raises(psycopg.Error, match="injected audit failure"):
+            repo.transition_attempt(
+                "attempt-audit-fail", "unknown",
+                last_error="transport failure",
+            )
+        assert repo.list_attempts("txn-audit-fail")[0].status == "dispatching"
+        events = repo.list_attempt_events("attempt-audit-fail")
+        assert [event.to_status for event in events] == ["ready", "dispatching"]
+    finally:
+        with psycopg.connect(_dsn()) as conn:
+            conn.execute(
+                "DROP TRIGGER IF EXISTS ofi_test_fail_attempt_audit_trigger "
+                "ON service_execution_attempt_events"
+            )
+            conn.execute("DROP FUNCTION IF EXISTS ofi_test_fail_attempt_audit()")
+            conn.commit()
