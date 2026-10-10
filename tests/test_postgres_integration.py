@@ -20,6 +20,7 @@ from ofi.domain.models import (
 from ofi.services.postgres_case_repository import PostgresCaseRepository
 from ofi.services.execution_gateway import ActorIdentity, ConsentGrant, MockServiceAdapter, ServiceExecutionGateway
 from ofi.services.action_router import ActionRequest, ActionRouter
+from ofi.services.reconciliation import ReconciliationEvidence
 from ofi.services.service_transaction import ExecutionAttempt, ServiceTransaction
 from ofi.services.transaction_repository import PostgresTransactionRepository, TransactionConflictError
 from ofi.services.unit_of_work import PostgresFarmCaseUnitOfWork
@@ -392,3 +393,50 @@ def test_real_postgres_execution_attempts_and_unknown_state(database):
     assert len(attempts) == 1
     assert attempts[0].status == "unknown"
     assert attempts[0].last_error == "provider timeout"
+
+
+
+def test_real_postgres_reconciliation_receipt_recovery_is_atomic(database):
+    factory = lambda: psycopg.connect(_dsn())
+    repo = PostgresTransactionRepository(factory)
+    repo.create(ServiceTransaction(
+        transaction_id="txn-reconcile-integration",
+        idempotency_key="reconcile-integration-key",
+        request_fingerprint="reconcile-fp",
+        action_id="action-reconcile",
+        provider_id="lab-reconcile",
+        status="submitted",
+    ))
+    now = datetime.now(timezone.utc)
+    repo.create_attempt(ExecutionAttempt(
+        attempt_id="attempt-reconcile-integration",
+        transaction_id="txn-reconcile-integration",
+        attempt_number=1,
+        provider_id="lab-reconcile",
+        status="unknown",
+        created_at=now,
+        updated_at=now,
+    ))
+    evidence = ReconciliationEvidence(
+        provider_id="lab-reconcile",
+        transaction_id="txn-reconcile-integration",
+        attempt_id="attempt-reconcile-integration",
+        event_id="reconcile-event-integration",
+        status="not_executed",
+        checked_at=now,
+        message="Provider confirmed non-execution.",
+    )
+    digest = "d" * 64
+
+    assert repo.record_reconciliation_evidence(evidence, payload_sha256=digest) is True
+    assert repo.apply_reconciliation_evidence(evidence, payload_sha256=digest) is True
+    assert repo.apply_reconciliation_evidence(evidence, payload_sha256=digest) is False
+    assert repo.get("txn-reconcile-integration").status == "submitted"
+    assert repo.list_attempts("txn-reconcile-integration")[0].status == "failed"
+    with psycopg.connect(_dsn()) as conn:
+        row = conn.execute(
+            "SELECT applied FROM service_reconciliation_events "
+            "WHERE provider_id = %s AND event_id = %s",
+            ("lab-reconcile", "reconcile-event-integration"),
+        ).fetchone()
+    assert row == (True,)
