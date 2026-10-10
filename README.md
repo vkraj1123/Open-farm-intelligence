@@ -1067,7 +1067,7 @@ The callback path verifies HMAC-SHA256, binds typed fields to signed payloads, v
 
 ### Next reliability milestone
 
-The concurrency and audit-failure milestone has in-memory and real-PostgreSQL regression coverage. The canonical correlation ID is the durable transaction ID; the provider request ID is the exact attempt ID. Both are exposed consistently on execution requests/receipts, callbacks, reconciliation evidence and audit events without duplicating stored identifiers. The dispatch recovery report exposes low-cardinality outcome/error counters, and `src/ofi/services/recovery_health.py` provides a deterministic assessment against explicit deployment thresholds for errors, unknown attempts and pending reconciliations. Unit tests cover healthy, warning, critical, pending and invalid-threshold behavior. The new `src/ofi/services/recovery_observability.py` adapter emits a JSON-serializable structured event through Python's standard logger, with UTC timestamp, health status, low-cardinality counters and alert codes. It excludes provider IDs, attempt/transaction IDs, raw provider payloads and exception text; tests cover serialization, timestamp validation, log level and sensitive-detail exclusion. Still open: connect this event to the chosen deployment's log/metrics/alert receiver; select and document real scheduler cadence, timeout/backoff and alert thresholds; validate real provider adapters and provider-supported external idempotency. No universal thresholds or deployment platform are assumed. Preserve the invariant that audit writes and state changes commit or roll back together.
+The concurrency and audit-failure milestone has in-memory and real-PostgreSQL regression coverage. The canonical correlation ID is the durable transaction ID; the provider request ID is the exact attempt ID. Both are exposed consistently on execution requests/receipts, callbacks, reconciliation evidence and audit events without duplicating stored identifiers. The dispatch recovery report exposes low-cardinality outcome/error counters, and `src/ofi/services/recovery_health.py` provides a deterministic assessment against explicit deployment thresholds for errors, unknown attempts and pending reconciliations. Unit tests cover healthy, warning, critical, pending and invalid-threshold behavior. The new `src/ofi/services/recovery_observability.py` adapter emits a JSON-serializable structured event through Python's standard logger, with UTC timestamp, health status, low-cardinality counters and alert codes. It excludes provider IDs, attempt/transaction IDs, raw provider payloads and exception text; tests cover serialization, timestamp validation, log level and sensitive-detail exclusion. `src/ofi/services/recovery_runtime.py` now composes one worker run, threshold assessment and structured log event into a scheduler-callable `run_recovery_cycle`; integration tests verify the shared timestamp, configured worker arguments, health level and safe event payload. This is a runtime entry point, not a scheduler or external alert receiver. Still open: connect this event to the chosen deployment's log/metrics/alert receiver; select and document real scheduler cadence, timeout/backoff and alert thresholds; validate real provider adapters and provider-supported external idempotency. No universal thresholds or deployment platform are assumed. Preserve the invariant that audit writes and state changes commit or roll back together.
 
 ```
 Action
@@ -1322,12 +1322,14 @@ The core closed-loop architecture is implemented and tested, but the project is 
 - [x] Failure-injection test for audit append rollback
 - [x] Canonical correlation ID (transaction ID) and provider request ID (attempt ID) exposed end-to-end
 - [x] Dispatch recovery report exports low-cardinality counters for outcomes and errors
+- [x] Structured health event emitted through standard logging
+- [x] Scheduler-callable recovery cycle combines worker, health policy and structured logging
 - [ ] Deployment scheduler configuration and operational alerting
 - [ ] Operational metrics and alerts
 - [ ] Provider-supported external idempotency and real service adapter
 - [ ] Production dispatch observability and secret management
 
-**Status: 🟡 Guarded retry, one-time dispatch claims, stale-claim recovery, reconciliation worker and attempt-level audit history are implemented; production scheduling, provider idempotency, operational alerting and real integrations remain**
+**Status: 🟡 Guarded retry, one-time dispatch claims, stale-claim recovery, reconciliation worker, attempt-level audit history and scheduler-callable health logging are implemented; production scheduling, provider idempotency, external alerting and real integrations remain**
 
 ---
 
