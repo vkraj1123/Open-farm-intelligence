@@ -215,15 +215,3 @@ CREATE TABLE IF NOT EXISTS service_reconciliation_events (
 CREATE INDEX IF NOT EXISTS service_reconciliation_events_attempt
     ON service_reconciliation_events (transaction_id, attempt_id, checked_at DESC);
 
-
-),
-    external_reference TEXT,
-    message TEXT NOT NULL DEFAULT '',
-    received_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (provider_id, event_id)
-);
-
-CREATE INDEX IF NOT EXISTS service_reconciliation_events_attempt
-    ON service_reconciliation_events (transaction_id, attempt_id, checked_at DESC);
-
-
