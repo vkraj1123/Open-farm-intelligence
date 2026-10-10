@@ -32,6 +32,16 @@ class ReconciliationEvidence:
     external_reference: str | None = None
     message: str = ""
 
+    @property
+    def correlation_id(self) -> str:
+        """Canonical transaction-scoped correlation ID."""
+        return self.transaction_id
+
+    @property
+    def provider_request_id(self) -> str:
+        """Canonical request ID for the exact provider attempt."""
+        return self.attempt_id
+
 
 def verify_reconciliation_evidence(
     evidence: ReconciliationEvidence,

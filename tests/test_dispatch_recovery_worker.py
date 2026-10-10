@@ -64,6 +64,15 @@ def test_worker_reconciles_stale_dispatch_and_never_submits_retry():
     attempts = repo.list_attempts("txn-worker")
     assert len(attempts) == 1
     assert attempts[0].status == "failed"
+    assert report.metrics == {
+        "candidates": 1,
+        "reconciled": 1,
+        "errors": 0,
+        "confirmed_executed": 0,
+        "confirmed_not_executed": 1,
+        "pending": 0,
+        "unknown": 0,
+    }
 
 
 def test_worker_keeps_ambiguous_provider_response_unknown_for_later_recheck():
@@ -73,6 +82,8 @@ def test_worker_keeps_ambiguous_provider_response_unknown_for_later_recheck():
     first = worker.run_once(now=now + timedelta(hours=1), stale_after=timedelta(minutes=5))
     assert first.reconciled == 1
     assert repo.list_attempts("txn-worker")[0].status == "unknown"
+    assert first.metrics["unknown"] == 1
+    assert first.metrics["pending"] == 0
 
     second = worker.run_once(now=now + timedelta(hours=2), stale_after=timedelta(minutes=5))
     assert second.candidates == 1

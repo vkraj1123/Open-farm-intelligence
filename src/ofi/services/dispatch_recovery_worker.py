@@ -37,6 +37,35 @@ class DispatchRecoveryReport:
     def errors(self) -> int:
         return sum(item.error is not None for item in self.items)
 
+    @property
+    def confirmed_executed(self) -> int:
+        return sum(item.result is not None and item.result.evidence.status == "executed" for item in self.items)
+
+    @property
+    def confirmed_not_executed(self) -> int:
+        return sum(item.result is not None and item.result.evidence.status == "not_executed" for item in self.items)
+
+    @property
+    def pending(self) -> int:
+        return sum(item.result is not None and item.result.evidence.status == "pending" for item in self.items)
+
+    @property
+    def unknown(self) -> int:
+        return sum(item.status == "unknown" for item in self.items)
+
+    @property
+    def metrics(self) -> dict[str, int]:
+        """Low-cardinality counters suitable for logs, metrics, or health endpoints."""
+        return {
+            "candidates": self.candidates,
+            "reconciled": self.reconciled,
+            "errors": self.errors,
+            "confirmed_executed": self.confirmed_executed,
+            "confirmed_not_executed": self.confirmed_not_executed,
+            "pending": self.pending,
+            "unknown": self.unknown,
+        }
+
 
 class DispatchRecoveryWorker:
     """Recover stale dispatch claims and reconcile them with their provider.

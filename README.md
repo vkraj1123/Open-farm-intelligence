@@ -1067,7 +1067,7 @@ The callback path verifies HMAC-SHA256, binds typed fields to signed payloads, v
 
 ### Next reliability milestone
 
-The concurrency and audit-failure milestone now has in-memory and real-PostgreSQL regression coverage. Next, propagate stable provider correlation/request IDs through dispatch, callback, reconciliation and audit records; add operational metrics/alerts; and define deployment-grade scheduler configuration. Preserve the invariant that audit writes and state changes commit or roll back together.
+The concurrency and audit-failure milestone has in-memory and real-PostgreSQL regression coverage. The canonical correlation ID is the durable transaction ID; the provider request ID is the exact attempt ID. Both are exposed consistently on execution requests/receipts, callbacks, reconciliation evidence and audit events without duplicating stored identifiers. The dispatch recovery report exposes low-cardinality outcome/error counters for scheduler logging or metrics export. Next, add deployment-specific alert thresholds and scheduler configuration, then validate real provider adapters and provider-supported external idempotency. Preserve the invariant that audit writes and state changes commit or roll back together.
 
 ```
 Action
@@ -1320,7 +1320,8 @@ The core closed-loop architecture is implemented and tested, but the project is 
 - [x] Concurrent duplicate callback stress tests (in-memory and PostgreSQL)
 - [x] Concurrent duplicate reconciliation stress tests (in-memory and PostgreSQL)
 - [x] Failure-injection test for audit append rollback
-- [ ] Stable provider correlation/request IDs end-to-end
+- [x] Canonical correlation ID (transaction ID) and provider request ID (attempt ID) exposed end-to-end
+- [x] Dispatch recovery report exports low-cardinality counters for outcomes and errors
 - [ ] Deployment scheduler configuration and operational alerting
 - [ ] Operational metrics and alerts
 - [ ] Provider-supported external idempotency and real service adapter

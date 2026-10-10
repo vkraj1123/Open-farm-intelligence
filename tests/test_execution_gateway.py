@@ -394,3 +394,53 @@ def test_concurrent_dispatch_claims_only_one_worker():
     assert adapter.calls == 1
     assert repo.list_attempts("txn-ready-dispatch")[0].status == "submitted"
 
+
+
+
+def test_provider_request_and_correlation_ids_are_stable_across_dispatch_receipt_and_callback():
+    class CapturingAdapter(MockServiceAdapter):
+        def __init__(self):
+            super().__init__("soil_test", provider_id="lab-01")
+            self.request_ids = []
+
+        def execute(self, request):
+            self.request_ids.append((
+                request.correlation_id,
+                request.provider_request_id,
+                request.transaction_id,
+                request.attempt_id,
+            ))
+            return super().execute(request)
+
+    adapter = CapturingAdapter()
+    repo = InMemoryTransactionRepository()
+    gateway = ServiceExecutionGateway([adapter], transaction_repository=repo)
+    receipt = gateway.submit(
+        action=action(), route=route(), actor=ActorIdentity("u1", "farmer"),
+        consent=consent(), idempotency_key="stable-correlation-test",
+        provider_id="lab-01",
+    )
+
+    assert receipt.correlation_id == receipt.transaction_id
+    assert receipt.provider_request_id == receipt.attempt_id
+    assert adapter.request_ids == [(
+        receipt.transaction_id,
+        receipt.attempt_id,
+        receipt.transaction_id,
+        receipt.attempt_id,
+    )]
+
+    callback = ProviderCallback(
+        provider_id=receipt.provider_id,
+        event_id="correlation-callback-event",
+        transaction_id=receipt.correlation_id,
+        attempt_id=receipt.provider_request_id,
+        status="accepted",
+    )
+    assert callback.correlation_id == receipt.correlation_id
+    assert callback.provider_request_id == receipt.provider_request_id
+
+    audit = repo.list_attempt_events(receipt.attempt_id)
+    assert audit
+    assert all(event.correlation_id == receipt.correlation_id for event in audit)
+    assert all(event.provider_request_id == receipt.provider_request_id for event in audit)

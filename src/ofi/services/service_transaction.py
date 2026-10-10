@@ -55,6 +55,14 @@ class AttemptAuditEvent:
     external_reference: str | None = None
     detail: str = ""
 
+    @property
+    def correlation_id(self) -> str:
+        return self.transaction_id
+
+    @property
+    def provider_request_id(self) -> str:
+        return self.attempt_id
+
 
 @dataclass(frozen=True)
 class TransactionEvent:

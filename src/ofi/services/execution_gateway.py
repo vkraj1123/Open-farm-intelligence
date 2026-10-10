@@ -59,6 +59,16 @@ class ExecutionRequest:
     transaction_id: str | None = None
     attempt_id: str | None = None
 
+    @property
+    def correlation_id(self) -> str | None:
+        """Stable transaction-scoped identifier shared across provider boundaries."""
+        return self.transaction_id
+
+    @property
+    def provider_request_id(self) -> str | None:
+        """Stable provider request identifier for this exact attempt."""
+        return self.attempt_id
+
 
 @dataclass(frozen=True)
 class ExecutionReceipt:
@@ -72,6 +82,14 @@ class ExecutionReceipt:
     transaction_id: str
     idempotency_key: str
     attempt_id: str | None = None
+
+    @property
+    def correlation_id(self) -> str:
+        return self.transaction_id
+
+    @property
+    def provider_request_id(self) -> str | None:
+        return self.attempt_id
 
 
 class ServiceAdapter(Protocol):
@@ -95,6 +113,14 @@ class ProviderCallback:
     status: ExecutionStatus
     external_reference: str | None = None
     message: str = ""
+
+    @property
+    def correlation_id(self) -> str:
+        return self.transaction_id
+
+    @property
+    def provider_request_id(self) -> str:
+        return self.attempt_id
 
 
 def verify_callback_signature(
