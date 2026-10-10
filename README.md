@@ -2227,3 +2227,24 @@ The API now uses one configuration switch for PostgreSQL-backed case/farm state 
 | Agronomic and field validation | Not completed | Software persistence tests do not validate agricultural conclusions |
 
 **Verification:** PR [#51](https://github.com/vkraj1123/Open-farm-intelligence/pull/51) passed standard CI (run #774) and PostgreSQL CI (run #639) before merge. The implementation was merged to `main` as [`5f9ee680dcedc7a885c7c2691233a1876c5ab321`](https://github.com/vkraj1123/Open-farm-intelligence/commit/5f9ee680dcedc7a885c7c2691233a1876c5ab321). PostgreSQL integration tests use the dedicated `OFI_POSTGRES_DSN` test database. These checks verify software persistence, restart retrieval and rollback behavior, not live deployment, operational recovery readiness or agricultural validity.
+
+
+# 50. Versioned schema bootstrap and persistence readiness
+
+The canonical PostgreSQL/PostGIS schema script now records version 1 in `ofi_schema_migrations`. The `ofi-schema` CLI applies the idempotent schema script transactionally and refuses to proceed when the database's recorded schema is newer than the running application. This is a versioned bootstrap/upgrade script, not yet a chain of independently replayable migration files.
+
+The API's `GET /health` remains a liveness-only endpoint. `GET /ready` evaluates the configured storage mode: memory mode is explicitly reported as non-durable, while PostgreSQL mode requires a successful connection, PostGIS, expected schema relations and the exact supported schema version. Unready PostgreSQL persistence returns HTTP 503. The report does not disclose the database URL or raw driver exception text.
+
+| Capability | Status | Boundary |
+|---|---|---|
+| Schema version registry | Implemented | Current application schema version is 1; future revisions must increment the constant and add a new marker row |
+| `ofi-schema` command | Implemented | Uses `OFI_DATABASE_URL` by default and applies `src/ofi/twin/schema.sql`; database permissions and PostGIS are prerequisites |
+| Refuse newer database schema | Implemented | Prevents an older application from blindly reapplying its older baseline script |
+| Runtime readiness probe | Implemented | Checks database connection, PostGIS, required persistence relations and exact schema version |
+| Separate liveness and readiness | Implemented | `/health` does not require DB availability; `/ready` reports persistence readiness |
+| Sanitized failure response | Implemented | HTTP 503 in unready PostgreSQL mode without returning DSN or raw database exception details |
+| Incremental migration history | Not yet implemented | Version 1 is a baseline marker; future non-idempotent changes should become ordered migration files |
+| Operational recovery and production deployment | Not demonstrated | Requires staging verification, backups and recovery drills, monitored readiness probes and deployment-specific secrets |
+| Agricultural field validation | Not completed | Persistence readiness is infrastructure health, not model or agronomic validation |
+
+Operational steps and future versioning rules are documented in `docs/database-operations.md`. Standard and PostgreSQL CI must pass on this PR before merge; green CI does not itself demonstrate live database operations or field validity.
