@@ -1280,7 +1280,6 @@ The core closed-loop architecture is implemented and tested, but the project is 
 - [x] Explicit execution-attempt ledger
 - [x] Unknown external execution state
 - [ ] Multi-attempt retry orchestration
-- [ ] Dead-letter handling
 - [ ] Reconciliation adapter and authenticated reconciliation evidence
 - [ ] Real service adapter
 
