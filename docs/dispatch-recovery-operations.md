@@ -13,6 +13,8 @@ It is **not** a ready-to-run production deployment. The repository does not yet 
 
 The runtime performs one bounded recovery pass, assesses the report against explicitly supplied thresholds, and emits one structured log event. It does not create retries, resend actions, configure a scheduler, or deliver notifications to an external alert receiver.
 
+The package exposes the `ofi-recovery` console command. It loads a trusted factory from `OFI_RECOVERY_FACTORY=package.module:callable`; that no-argument callable must return a configured `DispatchRecoveryWorker` with real repository and reconciliation adapters. The runner reads all thresholds and bounds from required environment variables, emits JSON Lines to stdout, and exits with code 2 on configuration/runtime failure. Health status `warning` or `critical` is a successful cycle with a corresponding event; alert delivery is the log pipeline's responsibility.
+
 ## 1. Required deployment wiring
 
 A deployment-owned runner must:
@@ -26,6 +28,28 @@ A deployment-owned runner must:
 7. Return a non-zero process exit code for an uncaught runner/configuration failure. A health assessment of `warning` or `critical` is represented in the structured event and should be translated to deployment-specific alerting by the runner or log pipeline.
 
 Do not point the runner at mock providers or an in-memory repository in a production environment. Fail closed if required provider adapters, database connectivity, or threshold configuration is missing.
+
+
+### CLI environment variables
+
+The runner requires these deployment variables; it deliberately provides no universal threshold defaults:
+
+| Variable | Meaning |
+|---|---|
+| `OFI_RECOVERY_FACTORY` | Trusted `module:callable` factory returning a configured recovery worker |
+| `OFI_RECOVERY_STALE_AFTER_SECONDS` | Positive stale-claim age threshold in seconds |
+| `OFI_RECOVERY_LIMIT` | Positive maximum candidate count per run |
+| `OFI_RECOVERY_WARNING_ERRORS` / `OFI_RECOVERY_CRITICAL_ERRORS` | Per-run reconciliation error thresholds |
+| `OFI_RECOVERY_WARNING_UNKNOWN` / `OFI_RECOVERY_CRITICAL_UNKNOWN` | Per-run unresolved-unknown thresholds |
+| `OFI_RECOVERY_WARNING_PENDING` / `OFI_RECOVERY_CRITICAL_PENDING` | Per-run pending-reconciliation thresholds |
+
+Example scheduler command after installing the package and configuring the variables:
+
+```bash
+ofi-recovery
+```
+
+The factory module must be trusted deployment code and should obtain credentials from a secret manager. Never put secrets into the factory path, command line, repository, or logs. Exit code 0 means a cycle ran and emitted a health event; route warning/critical JSON events through the log pipeline. Exit code 2 indicates configuration or cycle failure. A scheduler should prevent overlapping invocations and configure bounded process runtime.
 
 ## 2. Scheduler contract
 
