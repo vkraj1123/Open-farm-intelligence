@@ -294,7 +294,7 @@ class ServiceExecutionGateway:
             item for item in self._transactions.list_attempts(transaction.transaction_id)
             if item.attempt_id == attempt_id
         )
-        if current_attempt.status == "submitted":
+        if current_attempt.status == "dispatching":
             self._transactions.transition_attempt(
                 attempt_id, receipt.status,
                 external_reference=receipt.external_reference,

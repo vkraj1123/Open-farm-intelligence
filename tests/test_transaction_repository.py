@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -210,3 +210,41 @@ def test_attempt_numbers_are_monotonic():
             attempt_number=4, provider_id="lab-03", status="submitted",
             created_at=now, updated_at=now,
         ))
+
+
+def test_stale_dispatch_recovery_marks_unknown_without_claiming_nonexecution():
+    repo = InMemoryTransactionRepository()
+    tx = ServiceTransaction(
+        transaction_id="txn-stale-dispatch",
+        idempotency_key="stale-dispatch-key",
+        request_fingerprint="stale-dispatch-fp",
+        action_id="stale-dispatch-action",
+        provider_id="lab-01",
+        status="submitted",
+    )
+    repo.create(tx)
+    now = datetime.now(timezone.utc)
+    repo.create_attempt(ExecutionAttempt(
+        attempt_id="attempt-stale-dispatch",
+        transaction_id=tx.transaction_id,
+        attempt_number=1,
+        provider_id="lab-01",
+        status="ready",
+        created_at=now,
+        updated_at=now,
+    ))
+    claimed = repo.claim_attempt_for_dispatch("attempt-stale-dispatch")
+    assert claimed.status == "dispatching"
+
+    assert repo.recover_stale_dispatches(older_than=now - timedelta(seconds=1)) == []
+    recovered = repo.recover_stale_dispatches(
+        older_than=datetime.now(timezone.utc) + timedelta(seconds=1), limit=10
+    )
+    assert len(recovered) == 1
+    assert recovered[0].status == "unknown"
+    assert "outcome unknown" in recovered[0].last_error
+    assert repo.recover_stale_dispatches(
+        older_than=datetime.now(timezone.utc) + timedelta(seconds=1), limit=10
+    ) == []
+
+

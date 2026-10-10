@@ -1071,7 +1071,7 @@ Action
        └── failed / unknown
 ```
 
-A provider timeout or lost callback must not be interpreted as confirmed external failure. Attempt-scoped reconciliation evidence is authenticated and applied atomically. The guarded retry orchestrator creates a prepared `ready` attempt only after applied, provider-bound `not_executed` evidence for the latest failed attempt. The execution gateway now claims a `ready` attempt atomically before provider dispatch, refuses a second local dispatch of the same attempt, and marks transport exceptions as `unknown`. A crash after the claim is deliberately treated as ambiguous: reconciliation is required before another attempt. Production provider idempotency, worker recovery/observability and deployment validation remain open.
+A provider timeout or lost callback must not be interpreted as confirmed external failure. Attempt-scoped reconciliation evidence is authenticated and applied atomically. The guarded retry orchestrator creates a prepared `ready` attempt only after applied, provider-bound `not_executed` evidence for the latest failed attempt. The execution gateway now claims a `ready` attempt atomically into a distinct `dispatching` state before provider dispatch, refuses a second local dispatch of the same attempt, and marks transport exceptions as `unknown`. A bounded stale-dispatch recovery operation changes abandoned `dispatching` attempts to `unknown`—never to failed or not-executed—so reconciliation is required before another attempt. Production provider idempotency, worker scheduling/observability and deployment validation remain open.
 
 The core closed-loop architecture is implemented and tested, but the project is **not production-ready**.
 
@@ -1297,13 +1297,16 @@ The core closed-loop architecture is implemented and tested, but the project is 
 - [x] Concurrent duplicate retry request integration test
 - [x] One-time atomic dispatch claim for prepared attempts
 - [x] Gateway dispatch of prepared attempts through registered provider adapters
+- [x] Separate `dispatching` state for claimed but not yet acknowledged attempts
 - [x] Ambiguous dispatch exceptions transition attempt to unknown
+- [x] Bounded stale-dispatch recovery transitions abandoned claims to unknown
 - [x] Concurrent dispatch claim test for in-memory and PostgreSQL repositories
-- [ ] Worker crash detection and recovery/reconciliation runbook
+- [x] Stale-dispatch recovery tests for in-memory and PostgreSQL repositories
+- [ ] Scheduled worker to invoke stale-dispatch recovery and provider reconciliation
 - [ ] Provider-supported external idempotency and real service adapter
 - [ ] Production dispatch observability and secret management
 
-**Status: 🟡 Guarded retry preparation and one-time dispatch claims are implemented; worker recovery, provider idempotency and real integrations remain**
+**Status: 🟡 Guarded retry, one-time dispatch claims and bounded stale-claim recovery are implemented; scheduled recovery, provider idempotency and real integrations remain**
 
 ---
 
@@ -1490,7 +1493,7 @@ Implemented in the current reliability branch:
 Still required:
 
 - provider-specific endpoint compatibility and deployment-level secret management for the generic HTTPS adapter;
-- worker crash detection/reconciliation when a process stops after the durable dispatch claim but before a definitive provider response;
+- scheduled orchestration that invokes stale-dispatch recovery and then provider reconciliation;
 - provider-supported external idempotency semantics and provider-specific endpoint compatibility;
 - deployment-level secret management, observability and end-to-end provider tests proving status semantics.
 

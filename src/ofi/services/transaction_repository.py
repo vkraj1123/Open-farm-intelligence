@@ -109,6 +109,12 @@ class TransactionRepository(ABC):
         """Atomically claim a ready attempt before making any provider call."""
 
     @abstractmethod
+    def recover_stale_dispatches(
+        self, *, older_than: Any, limit: int = 100
+    ) -> list[ExecutionAttempt]:
+        """Mark abandoned dispatching attempts unknown; never infer non-execution."""
+
+    @abstractmethod
     def transition_attempt(
         self, attempt_id: str, status: AttemptStatus, *,
         external_reference: str | None = None, last_error: str | None = None,
@@ -403,10 +409,35 @@ class InMemoryTransactionRepository(TransactionRepository):
                 raise TransactionConflictError(
                     f"attempt cannot be dispatched while transaction is {transaction.status!r}"
                 )
-            current.status = "submitted"
+            current.status = "dispatching"
             current.updated_at = datetime.now(timezone.utc)
             self._attempts[attempt_id] = deepcopy(current)
             return deepcopy(current)
+
+    def recover_stale_dispatches(
+        self, *, older_than: Any, limit: int = 100
+    ) -> list[ExecutionAttempt]:
+        from datetime import datetime, timezone
+        if limit < 1:
+            raise ValueError("limit must be positive")
+        cutoff = older_than.astimezone(timezone.utc)
+        recovered = []
+        with self._retry_lock:
+            candidates = sorted(
+                (item for item in self._attempts.values()
+                 if item.status == "dispatching" and item.updated_at <= cutoff),
+                key=lambda item: (item.updated_at, item.attempt_id),
+            )[:limit]
+            for item in candidates:
+                current = deepcopy(item)
+                current.status = "unknown"
+                current.updated_at = datetime.now(timezone.utc)
+                current.last_error = (
+                    "dispatch claim exceeded recovery threshold; provider outcome unknown"
+                )
+                self._attempts[current.attempt_id] = deepcopy(current)
+                recovered.append(deepcopy(current))
+        return recovered
 
     def transition_attempt(self, attempt_id: str, status: AttemptStatus, *,
                            external_reference: str | None = None,
@@ -1001,13 +1032,44 @@ class PostgresTransactionRepository(TransactionRepository):
                         f"attempt cannot be dispatched while transaction is {transaction.status!r}"
                     )
                 cur.execute(
-                    "UPDATE service_execution_attempts SET status='submitted', updated_at=now() "
+                    "UPDATE service_execution_attempts SET status='dispatching', updated_at=now() "
                     "WHERE attempt_id=%s AND status='ready'",
                     (attempt_id,),
                 )
                 if cur.rowcount != 1:
                     raise TransactionConflictError("attempt was concurrently claimed for dispatch")
                 return self._get_attempt_with_cursor(cur, attempt_id)
+
+    def recover_stale_dispatches(
+        self, *, older_than: Any, limit: int = 100
+    ) -> list[ExecutionAttempt]:
+        if limit < 1:
+            raise ValueError("limit must be positive")
+        with connection_scope(self._connection_factory) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    WITH stale AS (
+                        SELECT attempt_id
+                        FROM service_execution_attempts
+                        WHERE status = 'dispatching' AND updated_at <= %s
+                        ORDER BY updated_at, attempt_id
+                        LIMIT %s
+                        FOR UPDATE SKIP LOCKED
+                    )
+                    UPDATE service_execution_attempts AS attempt
+                    SET status = 'unknown',
+                        updated_at = now(),
+                        last_error = 'dispatch claim exceeded recovery threshold; provider outcome unknown'
+                    FROM stale
+                    WHERE attempt.attempt_id = stale.attempt_id
+                      AND attempt.status = 'dispatching'
+                    RETURNING attempt.attempt_id
+                    """,
+                    (older_than, limit),
+                )
+                ids = [row[0] for row in cur.fetchall()]
+                return [self._get_attempt_with_cursor(cur, attempt_id) for attempt_id in ids]
 
     def transition_attempt(self, attempt_id: str, status: AttemptStatus, *,
                            external_reference: str | None = None,

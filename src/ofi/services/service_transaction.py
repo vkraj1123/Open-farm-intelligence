@@ -6,7 +6,7 @@ from ofi.services.action_router import ActionStatus
 
 
 AttemptStatus = Literal[
-    "ready", "submitted", "accepted", "in_progress", "completed", "rejected", "failed", "unknown",
+    "ready", "dispatching", "submitted", "accepted", "in_progress", "completed", "rejected", "failed", "unknown",
 ]
 
 TransactionStatus = Literal[
