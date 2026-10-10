@@ -2143,7 +2143,7 @@ The deterministic evidence-alignment service is implemented in `src/ofi/services
 | Provenance visibility | Implemented in scoped service | Missing provenance is reported; strict exclusion is configurable |
 | Preserve uncertainty inputs | Implemented in scoped service | Quality and confidence remain separate and are not treated as calibrated probabilities |
 | Request-scoped evidence-frame API | Implemented | `POST /farms/{farm_id}/evidence-frame`; caller supplies explicit freshness policy; no persistence or automatic reasoning filter |
-| Cross-provider contradiction analysis | Not implemented | Must define comparable metrics, units, time windows and domain tolerances before implementation |
+| Explicit pairwise evidence comparison | Implemented as opt-in rule-based screening | Caller specifies metric key, exact unit and spatial scope, time limit and absolute tolerance; result is not agronomic truth |
 | Agronomic validation | Not measured | Requires authoritative sources, reviewed policies and field validation |
 
 Freshness windows in documentation examples are illustrative, not production defaults. This service does not make recommendations or claim scientific validity. Standard and PostgreSQL CI must pass before the change is merged; that verifies code and regression behavior, not agricultural correctness.
@@ -2164,3 +2164,22 @@ The evidence alignment service now has an opt-in path into the existing case rea
 | Agronomic or field validation | Not completed | CI verifies software behavior only |
 
 This milestone connects data-quality assessment to reasoning without changing the default endpoint or asserting that eligible evidence is scientifically true. PR [#45](https://github.com/vkraj1123/Open-farm-intelligence/pull/45) passed standard CI (run 604) and PostgreSQL CI (run 739) before merge. It was merged to `main` as `239dc81c3a5613e939f9e6dea098afaa68a40ee2`. No staging deployment or field validation is implied.
+
+
+
+
+# 47. Explicit evidence comparability milestone
+
+An opt-in deterministic comparison service is available in `src/ofi/services/evidence_comparison.py`, with unit coverage in `tests/test_evidence_comparison.py`. The request-scoped API `POST /farms/{farm_id}/evidence-comparisons` returns both the existing evidence-alignment assessment and comparison outcomes. It only labels a pair `agree` or `disagree` when both observations are eligible and caller-defined metric, unit, spatial-scope, time and crop-cycle/source gates pass.
+
+| Capability | Status | Boundary |
+|---|---|---|
+| Explicit comparison-rule schema | Implemented | No universal units, tolerances or time windows are invented |
+| Pairwise assessment | Implemented | `agree`, `disagree` or `not_comparable` with reason codes |
+| Eligibility gating | Implemented | Stale, future, unconfigured or otherwise excluded observations cannot drive a disagreement |
+| API exposure and synthetic tests | Implemented | Standard and PostgreSQL CI required for this PR before merge |
+| Rule persistence, ownership and versioning | Not implemented | Rules are caller-supplied per request |
+| Scientific significance / source authority | Not inferred | A discrepancy does not establish which source is right or a crop diagnosis |
+| Rajasthan field validation | Not completed | Requires authoritative data, expert review and measured field outcomes |
+
+Comparison thresholds in examples are illustrative, not production recommendations. The service does not convert units or treat every numeric mismatch as a contradiction. These checks are deterministic software screening, not validated agricultural science.
