@@ -66,9 +66,7 @@ def test_recovery_health_critical_signal_takes_precedence_over_warnings():
     assessment = assess_recovery_health(report(*items), thresholds=thresholds())
 
     assert assessment.status == "critical"
-    assert assessment.alerts == (
-        assessment.alerts[0],
-    )
+    assert len(assessment.alerts) == 1
     assert assessment.alerts[0].code == "unresolved_unknown"
     assert assessment.alerts[0].severity == "critical"
     assert assessment.alerts[0].observed == 3
@@ -78,7 +76,7 @@ def test_pending_reconciliation_has_its_own_threshold():
     item = DispatchRecoveryItem(
         attempt_id="attempt-pending",
         provider_id="provider-1",
-        status="unknown",
+        status="pending",
         result=SimpleNamespace(evidence=SimpleNamespace(status="pending")),
     )
     assessment = assess_recovery_health(
