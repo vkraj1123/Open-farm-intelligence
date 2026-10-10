@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from itertools import combinations
 from typing import Literal, Sequence
 
@@ -73,7 +73,7 @@ class ObservationPairComparison:
 class EvidenceComparisonReport:
     farm_id: str
     crop_cycle_id: str
-    as_of: object
+    as_of: datetime
     comparisons: tuple[ObservationPairComparison, ...]
 
 
@@ -145,7 +145,7 @@ def compare_aligned_observations(
             if rule.require_distinct_sources:
                 if not left.source.strip() or not right.source.strip():
                     reasons.append("source_missing")
-                elif left.source == right.source:
+                elif left.source.strip() == right.source.strip():
                     reasons.append("same_source")
 
             difference: float | None = None
