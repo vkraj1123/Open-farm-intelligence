@@ -84,3 +84,14 @@ def test_reconciliation_receipt_requires_sha256_length():
     repo = setup_repo()
     with pytest.raises(ValueError, match="SHA-256"):
         repo.record_reconciliation_evidence(evidence(), payload_sha256="short")
+
+
+
+def test_unapplied_receipt_can_be_recovered_and_marked_applied_atomically():
+    repo = setup_repo()
+    item = evidence()
+    digest = "c" * 64
+    assert repo.record_reconciliation_evidence(item, payload_sha256=digest) is True
+    assert repo.apply_reconciliation_evidence(item, payload_sha256=digest) is True
+    assert repo.apply_reconciliation_evidence(item, payload_sha256=digest) is False
+    assert repo.list_attempts("txn-1")[0].status == "failed"
