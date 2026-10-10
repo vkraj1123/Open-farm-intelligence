@@ -346,6 +346,9 @@ class InMemoryTransactionRepository(TransactionRepository):
                 raise TransactionConflictError("prior attempt does not belong to this transaction")
             if prior.status != "failed":
                 raise TransactionConflictError("retry requires a failed prior attempt")
+            existing_attempts = self.list_attempts(transaction_id)
+            if not existing_attempts or existing_attempts[-1].attempt_id != prior_attempt_id:
+                raise TransactionConflictError("retry must follow the latest execution attempt")
             if not any(
                 item[0] == transaction_id and item[1] == prior_attempt_id
                 and item[3] == "not_executed" and item[4]
@@ -356,7 +359,6 @@ class InMemoryTransactionRepository(TransactionRepository):
                 )
             if attempt_id in self._attempts:
                 raise TransactionConflictError("attempt ID is already in use")
-            existing_attempts = self.list_attempts(transaction_id)
             next_number = max((item.attempt_number for item in existing_attempts), default=0) + 1
             now = __import__("datetime").datetime.now(__import__("datetime").timezone.utc)
             created = ExecutionAttempt(
@@ -882,10 +884,18 @@ class PostgresTransactionRepository(TransactionRepository):
                 if prior.status != "failed":
                     raise TransactionConflictError("retry requires a failed prior attempt")
                 cur.execute(
+                    "SELECT attempt_id FROM service_execution_attempts "
+                    "WHERE transaction_id = %s ORDER BY attempt_number DESC LIMIT 1",
+                    (transaction_id,),
+                )
+                latest = cur.fetchone()
+                if latest is None or latest[0] != prior_attempt_id:
+                    raise TransactionConflictError("retry must follow the latest execution attempt")
+                cur.execute(
                     "SELECT 1 FROM service_reconciliation_events "
-                    "WHERE transaction_id = %s AND attempt_id = %s "
+                    "WHERE provider_id = %s AND transaction_id = %s AND attempt_id = %s "
                     "AND status = 'not_executed' AND applied = TRUE LIMIT 1",
-                    (transaction_id, prior_attempt_id),
+                    (transaction.provider_id, transaction_id, prior_attempt_id),
                 )
                 if cur.fetchone() is None:
                     raise TransactionConflictError(
