@@ -2127,3 +2127,23 @@ This check performs reconciliation GET requests only; it does not dispatch actio
 ### Kubernetes recovery deployment starter
 
 `deploy/kubernetes/ofi-recovery-cronjob.yaml` is a **template**, not a production-ready manifest. It demonstrates a bounded Kubernetes CronJob with overlap prevention, resource limits and Secret references. Replace the image and provider placeholders, create the referenced Secret through secret management, review cadence/thresholds, and validate in staging before applying to a live cluster. See section 9 of `docs/dispatch-recovery-operations.md`.
+
+
+---
+
+# 45. Farm evidence alignment milestone
+
+The first deterministic evidence-alignment service is implemented in \`src/ofi/services/evidence_alignment.py\`, with regression tests in \`tests/test_evidence_alignment.py\` and its contract documented in \`docs/evidence-alignment.md\`.
+
+| Evidence-pipeline capability | Status | Boundary |
+|---|---|---|
+| Freshness classification | Implemented in scoped service | Requires caller-supplied positive freshness windows; missing policy excludes evidence |
+| Active crop-cycle alignment | Implemented in scoped service | Explicitly crop-cycle-bound observations from another cycle are excluded |
+| Duplicate-ID protection | Implemented in scoped service | Duplicate observation IDs are all excluded from the frame |
+| Provenance visibility | Implemented in scoped service | Missing provenance is reported; strict exclusion is configurable |
+| Preserve uncertainty inputs | Implemented in scoped service | Quality and confidence remain separate and are not treated as calibrated probabilities |
+| Persistent alignment history / API wiring | Not implemented | Requires a separate repository/API design |
+| Cross-provider contradiction analysis | Not implemented | Must define comparable metrics, units, time windows and domain tolerances before implementation |
+| Agronomic validation | Not measured | Requires authoritative sources, reviewed policies and field validation |
+
+Freshness windows in documentation examples are illustrative, not production defaults. This service does not make recommendations or claim scientific validity. Standard and PostgreSQL CI must pass before the change is merged; that verifies code and regression behavior, not agricultural correctness.
