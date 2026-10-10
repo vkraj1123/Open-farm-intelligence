@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from ofi.services.db_context import connection_scope
+from ofi.services.reconciliation import ReconciliationEvidence
 from ofi.services.service_transaction import (
     ExecutionAttempt,
     ServiceTransaction,
@@ -80,6 +81,12 @@ class TransactionRepository(ABC):
         """Atomically apply a provider callback exactly once."""
 
     @abstractmethod
+    def record_reconciliation_evidence(
+        self, evidence: ReconciliationEvidence, *, payload_sha256: str
+    ) -> bool:
+        """Persist verified evidence once; return False for an identical replay."""
+
+    @abstractmethod
     def create_attempt(self, attempt: ExecutionAttempt) -> ExecutionAttempt:
         """Create a durable execution attempt with monotonic numbering."""
 
@@ -106,6 +113,7 @@ class InMemoryTransactionRepository(TransactionRepository):
         self._transactions: dict[str, ServiceTransaction] = {}
         self._idempotency: dict[str, str] = {}
         self._callback_events: dict[tuple[str, str], tuple[str, str]] = {}
+        self._reconciliation_events: dict[tuple[str, str], tuple[str, str, str, str]] = {}
         self._attempts: dict[str, ExecutionAttempt] = {}
 
     def create_if_absent(self, transaction: ServiceTransaction) -> TransactionCreateResult:
@@ -200,6 +208,39 @@ class InMemoryTransactionRepository(TransactionRepository):
         )
         self._callback_events[event_key] = (transaction_id, attempt_id)
         return CallbackResult(transaction, True)
+
+    def record_reconciliation_evidence(
+        self, evidence: ReconciliationEvidence, *, payload_sha256: str
+    ) -> bool:
+        if len(payload_sha256) != 64:
+            raise ValueError("payload_sha256 must be a SHA-256 hex digest")
+        event_key = (evidence.provider_id, evidence.event_id)
+        fingerprint = (
+            evidence.transaction_id, evidence.attempt_id,
+            payload_sha256, evidence.status,
+        )
+        existing = self._reconciliation_events.get(event_key)
+        if existing is not None:
+            if existing != fingerprint:
+                raise TransactionConflictError(
+                    "reconciliation event is already bound to different evidence"
+                )
+            return False
+        transaction = self.get(evidence.transaction_id)
+        if transaction.provider_id != evidence.provider_id:
+            raise TransactionConflictError(
+                "reconciliation provider does not own the transaction"
+            )
+        try:
+            attempt = self._attempts[evidence.attempt_id]
+        except KeyError as exc:
+            raise KeyError(evidence.attempt_id) from exc
+        if attempt.transaction_id != evidence.transaction_id or attempt.provider_id != evidence.provider_id:
+            raise TransactionConflictError(
+                "reconciliation attempt does not belong to this provider transaction"
+            )
+        self._reconciliation_events[event_key] = fingerprint
+        return True
 
     def create_attempt(self, attempt: ExecutionAttempt) -> ExecutionAttempt:
         existing = self.list_attempts(attempt.transaction_id)
@@ -487,6 +528,72 @@ class PostgresTransactionRepository(TransactionRepository):
                 if cur.rowcount != 1:
                     raise TransactionConflictError("callback attempt changed during update")
                 return CallbackResult(working, True)
+
+    def record_reconciliation_evidence(
+        self, evidence: ReconciliationEvidence, *, payload_sha256: str
+    ) -> bool:
+        if len(payload_sha256) != 64:
+            raise ValueError("payload_sha256 must be a SHA-256 hex digest")
+        with connection_scope(self._connection_factory) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT t.provider_id, a.transaction_id, a.provider_id
+                    FROM service_transactions AS t
+                    JOIN service_execution_attempts AS a
+                      ON a.attempt_id = %s
+                    WHERE t.transaction_id = %s
+                    FOR UPDATE OF t, a
+                    """,
+                    (evidence.attempt_id, evidence.transaction_id),
+                )
+                owner = cur.fetchone()
+                if owner is None:
+                    raise KeyError(evidence.attempt_id)
+                if owner[0] != evidence.provider_id or owner[1] != evidence.transaction_id or owner[2] != evidence.provider_id:
+                    raise TransactionConflictError(
+                        "reconciliation attempt does not belong to this provider transaction"
+                    )
+                cur.execute(
+                    """
+                    INSERT INTO service_reconciliation_events (
+                        provider_id, event_id, transaction_id, attempt_id,
+                        status, checked_at, payload_sha256, external_reference, message
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (provider_id, event_id) DO NOTHING
+                    RETURNING event_id
+                    """,
+                    (
+                        evidence.provider_id, evidence.event_id,
+                        evidence.transaction_id, evidence.attempt_id,
+                        evidence.status, evidence.checked_at, payload_sha256,
+                        evidence.external_reference, evidence.message,
+                    ),
+                )
+                inserted = cur.fetchone()
+                if inserted is not None:
+                    return True
+                cur.execute(
+                    """
+                    SELECT transaction_id, attempt_id, payload_sha256, status
+                    FROM service_reconciliation_events
+                    WHERE provider_id = %s AND event_id = %s
+                    """,
+                    (evidence.provider_id, evidence.event_id),
+                )
+                existing = cur.fetchone()
+                if existing is None:
+                    raise RuntimeError("reconciliation event receipt disappeared")
+                fingerprint = (
+                    evidence.transaction_id, evidence.attempt_id,
+                    payload_sha256, evidence.status,
+                )
+                if tuple(existing) != fingerprint:
+                    raise TransactionConflictError(
+                        "reconciliation event is already bound to different evidence"
+                    )
+                return False
 
     def create_attempt(self, attempt: ExecutionAttempt) -> ExecutionAttempt:
         with connection_scope(self._connection_factory) as conn:
