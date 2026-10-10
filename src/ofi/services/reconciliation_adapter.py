@@ -116,6 +116,15 @@ class ProviderReconciliationAdapter:
             payload = json.loads(response.raw_payload)
             if not isinstance(payload, dict):
                 raise ValueError("payload must be an object")
+            required_strings = ("provider_id", "transaction_id", "attempt_id", "event_id", "status", "checked_at")
+            if any(not isinstance(payload.get(key), str) for key in required_strings):
+                raise ValueError("required fields must be strings")
+            external_reference = payload.get("external_reference")
+            message = payload.get("message", "")
+            if external_reference is not None and not isinstance(external_reference, str):
+                raise ValueError("external_reference must be a string or null")
+            if not isinstance(message, str):
+                raise ValueError("message must be a string")
             checked_at = datetime.fromisoformat(payload["checked_at"])
             evidence = ReconciliationEvidence(
                 provider_id=payload["provider_id"],
@@ -124,8 +133,8 @@ class ProviderReconciliationAdapter:
                 event_id=payload["event_id"],
                 status=payload["status"],
                 checked_at=checked_at,
-                external_reference=payload.get("external_reference"),
-                message=payload.get("message", ""),
+                external_reference=external_reference,
+                message=message,
             )
         except (UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
             raise ReconciliationError("invalid provider reconciliation payload schema") from exc
