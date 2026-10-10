@@ -205,7 +205,18 @@ CREATE TABLE IF NOT EXISTS service_reconciliation_events (
     attempt_id TEXT NOT NULL REFERENCES service_execution_attempts(attempt_id) ON DELETE CASCADE,
     status TEXT NOT NULL CHECK (status IN ('executed', 'not_executed', 'pending', 'unknown')),
     checked_at TIMESTAMPTZ NOT NULL,
-    payload_sha256 TEXT NOT NULL CHECK (length(payload_sha256) = 64),
+    payload_sha256 TEXT NOT NULL CHECK (payload_sha256 ~ '^[0-9a-f]{64}
+    external_reference TEXT,
+    message TEXT NOT NULL DEFAULT '',
+    received_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (provider_id, event_id)
+);
+
+CREATE INDEX IF NOT EXISTS service_reconciliation_events_attempt
+    ON service_reconciliation_events (transaction_id, attempt_id, checked_at DESC);
+
+
+),
     external_reference TEXT,
     message TEXT NOT NULL DEFAULT '',
     received_at TIMESTAMPTZ NOT NULL DEFAULT now(),
