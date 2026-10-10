@@ -212,8 +212,8 @@ class InMemoryTransactionRepository(TransactionRepository):
     def record_reconciliation_evidence(
         self, evidence: ReconciliationEvidence, *, payload_sha256: str
     ) -> bool:
-        if len(payload_sha256) != 64:
-            raise ValueError("payload_sha256 must be a SHA-256 hex digest")
+        if len(payload_sha256) != 64 or any(ch not in "0123456789abcdef" for ch in payload_sha256):
+            raise ValueError("payload_sha256 must be a lowercase SHA-256 hex digest")
         event_key = (evidence.provider_id, evidence.event_id)
         fingerprint = (
             evidence.transaction_id, evidence.attempt_id,
