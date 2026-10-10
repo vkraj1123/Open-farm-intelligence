@@ -231,16 +231,19 @@ class ServiceExecutionGateway:
         if request.consent is not None and not request.consent.active():
             raise ExecutionError("consent is not active")
 
-        try:
-            attempt = self._transactions.claim_attempt_for_dispatch(attempt_id)
-            transaction = self._transactions.get(attempt.transaction_id)
-        except (KeyError, TransactionConflictError) as exc:
-            raise ExecutionError(str(exc)) from exc
-
-        if request.transaction_id is not None and request.transaction_id != transaction.transaction_id:
-            raise ExecutionError("request transaction does not match prepared attempt")
-        if request.attempt_id is not None and request.attempt_id != attempt_id:
+        if request.transaction_id is None or request.transaction_id == "":
+            raise ExecutionError("transaction_id is required to dispatch a prepared attempt")
+        if request.attempt_id != attempt_id:
             raise ExecutionError("request attempt does not match prepared attempt")
+        try:
+            transaction = self._transactions.get(request.transaction_id)
+            attempt = next(
+                item for item in self._transactions.list_attempts(request.transaction_id)
+                if item.attempt_id == attempt_id
+            )
+        except (KeyError, StopIteration) as exc:
+            raise ExecutionError("prepared attempt or transaction was not found") from exc
+
         if request.action.id != transaction.action_id:
             raise ExecutionError("request action does not match prepared transaction")
         if request.provider_id != attempt.provider_id or request.provider_id != transaction.provider_id:
@@ -250,6 +253,10 @@ class ServiceExecutionGateway:
             raise ExecutionError("no matching provider adapter registered for prepared attempt")
         if adapter.name != request.route.service:
             raise ExecutionError("provider adapter service does not match requested route")
+        try:
+            attempt = self._transactions.claim_attempt_for_dispatch(attempt_id)
+        except (KeyError, TransactionConflictError) as exc:
+            raise ExecutionError(str(exc)) from exc
 
         # Stable per-attempt identity is passed to the provider adapter so it
         # can use it as an external idempotency key if the provider supports it.
@@ -293,12 +300,20 @@ class ServiceExecutionGateway:
                 external_reference=receipt.external_reference,
             )
 
+        transaction = self._transactions.get(transaction.transaction_id)
         if receipt.status != "submitted" and transaction.status == "submitted":
-            transaction = self._transactions.transition(
-                transaction.transaction_id, receipt.status,
-                external_reference=receipt.external_reference,
-                message=receipt.message,
-            )
+            try:
+                transaction = self._transactions.transition(
+                    transaction.transaction_id, receipt.status,
+                    external_reference=receipt.external_reference,
+                    message=receipt.message,
+                )
+            except ValueError:
+                # A concurrent callback may have advanced the lifecycle after
+                # the read; reload authoritative state rather than regress it.
+                transaction = self._transactions.get(transaction.transaction_id)
+        else:
+            transaction = self._transactions.get(transaction.transaction_id)
 
         return ExecutionReceipt(
             action_id=receipt.action_id,
