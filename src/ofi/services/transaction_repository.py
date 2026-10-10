@@ -417,7 +417,7 @@ class InMemoryTransactionRepository(TransactionRepository):
     def recover_stale_dispatches(
         self, *, older_than: Any, limit: int = 100
     ) -> list[ExecutionAttempt]:
-        from datetime import timezone
+        from datetime import datetime, timezone
         if limit < 1:
             raise ValueError("limit must be positive")
         cutoff = older_than.astimezone(timezone.utc)
@@ -437,7 +437,7 @@ class InMemoryTransactionRepository(TransactionRepository):
                 current = deepcopy(item)
                 if current.status == "dispatching":
                     current.status = "unknown"
-                    current.updated_at = __import__("datetime").datetime.now(timezone.utc)
+                    current.updated_at = datetime.now(timezone.utc)
                     current.last_error = (
                         "dispatch claim exceeded recovery threshold; provider outcome unknown"
                     )
