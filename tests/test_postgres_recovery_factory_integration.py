@@ -12,6 +12,7 @@ from uuid import uuid4
 
 import pytest
 
+from ofi.services.db_context import bind_connection
 from ofi.services.deployment_recovery import build_worker
 from ofi.services.service_transaction import ExecutionAttempt, ServiceTransaction
 
@@ -51,69 +52,49 @@ def test_factory_and_repository_operate_against_real_postgres_schema(monkeypatch
     worker = build_worker()
     repository = worker._repository
 
+    connection = psycopg.connect(DATABASE_URL)
     try:
-        transaction = ServiceTransaction(
-            transaction_id=transaction_id,
-            idempotency_key=f"it-key-{uuid4().hex}",
-            request_fingerprint="postgres-integration-fingerprint",
-            action_id=f"it-action-{uuid4().hex}",
-            provider_id=provider_id,
-            status="submitted",
-        )
-        repository.create(transaction)
-        repository.create_attempt(
-            ExecutionAttempt(
-                attempt_id=attempt_id,
+        # Repositories share this unit-of-work connection. Rolling it back at
+        # the end removes all test writes without mutating append-only audit rows.
+        with bind_connection(connection):
+            transaction = ServiceTransaction(
                 transaction_id=transaction_id,
-                attempt_number=1,
+                idempotency_key=f"it-key-{uuid4().hex}",
+                request_fingerprint="postgres-integration-fingerprint",
+                action_id=f"it-action-{uuid4().hex}",
                 provider_id=provider_id,
-                status="ready",
-                created_at=now,
-                updated_at=now,
+                status="submitted",
             )
-        )
+            repository.create(transaction)
+            repository.create_attempt(
+                ExecutionAttempt(
+                    attempt_id=attempt_id,
+                    transaction_id=transaction_id,
+                    attempt_number=1,
+                    provider_id=provider_id,
+                    status="ready",
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
 
-        assert repository.get(transaction_id).status == "submitted"
-        attempts = repository.list_attempts(transaction_id)
-        assert [(item.attempt_id, item.status) for item in attempts] == [
-            (attempt_id, "ready")
-        ]
+            assert repository.get(transaction_id).status == "submitted"
+            attempts = repository.list_attempts(transaction_id)
+            assert [(item.attempt_id, item.status) for item in attempts] == [
+                (attempt_id, "ready")
+            ]
 
-        # A real worker cycle against the real repository must be able to query
-        # the database and leave a fresh ready attempt untouched. The placeholder
-        # provider endpoint is never contacted because there are no candidates.
-        report = worker.run_once(
-            now=now + timedelta(seconds=1),
-            stale_after=timedelta(minutes=5),
-        )
-        assert report.candidates == 0
-        assert report.reconciled == 0
-        assert repository.list_attempts(transaction_id)[0].status == "ready"
+            # A real worker cycle against the real repository must be able to
+            # query the database and leave a fresh ready attempt untouched.
+            # The placeholder endpoint is never contacted because no candidates exist.
+            report = worker.run_once(
+                now=now + timedelta(seconds=1),
+                stale_after=timedelta(minutes=5),
+            )
+            assert report.candidates == 0
+            assert report.reconciled == 0
+            assert repository.list_attempts(transaction_id)[0].status == "ready"
     finally:
-        # Remove only this test's records; keep the schema for other tests.
-        with psycopg.connect(DATABASE_URL) as connection:
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    "DELETE FROM service_reconciliation_events WHERE transaction_id = %s",
-                    (transaction_id,),
-                )
-                cursor.execute(
-                    "DELETE FROM service_execution_attempt_events WHERE transaction_id = %s",
-                    (transaction_id,),
-                )
-                cursor.execute(
-                    "DELETE FROM service_transaction_callbacks WHERE transaction_id = %s",
-                    (transaction_id,),
-                )
-                cursor.execute(
-                    "DELETE FROM service_execution_attempts WHERE transaction_id = %s",
-                    (transaction_id,),
-                )
-                cursor.execute(
-                    "DELETE FROM service_transaction_events WHERE transaction_id = %s",
-                    (transaction_id,),
-                )
-                cursor.execute(
-                    "DELETE FROM service_transactions WHERE transaction_id = %s",
-                    (transaction_id,),
-                )
+        connection.rollback()
+        connection.close()
+
