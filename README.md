@@ -2205,3 +2205,6 @@ The policy-and-assessment ledger is implemented in src/ofi/services/evidence_com
 | Scientific validation and policy governance | Not completed | Persisted reproducibility does not validate thresholds, source authority or agronomic conclusions |
 
 This change is software infrastructure. CI success, when confirmed on the PR, demonstrates repository tests and PostgreSQL schema/repository behavior only; it does not constitute a deployment or field validation.
+
+
+**Verification:** PR [#49](https://github.com/vkraj1123/Open-farm-intelligence/pull/49) passed standard CI (run #770) and PostgreSQL CI (run #635) before merge. The ledger/schema/API changes were merged to `main` as [`244240b0aee0e2d8fe2944fb7088e130aff52711`](https://github.com/vkraj1123/Open-farm-intelligence/commit/244240b0aee0e2d8fe2944fb7088e130aff52711). This verifies deterministic persistence and audit behavior in CI, not deployment, provider authority or agricultural field validation.
