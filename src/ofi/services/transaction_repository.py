@@ -931,6 +931,7 @@ class PostgresTransactionRepository(TransactionRepository):
                     if row[4]:
                         return False
 
+                prior_attempt_status = attempt.status
                 original_transaction_status = transaction.status
                 if evidence.status == "executed":
                     if attempt.status in {"rejected", "failed"} or transaction.status in {"rejected", "failed", "cancelled"}:
