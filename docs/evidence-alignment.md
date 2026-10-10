@@ -76,3 +76,11 @@ These values are examples only, not endorsed defaults. The response includes the
 ## Current boundary
 
 The alignment report is deterministic for the captured snapshot time and supplied policy, but remains in-memory and request-scoped. It does not persist alignment assessments, compare evidence across providers, infer scientific contradictions, provide source-specific policy versioning, or automatically filter the orchestrator's existing reasoning input. A caller must explicitly consume the eligible IDs; automatic reasoning integration is a separate change with a reviewed domain policy.
+
+## Evidence-gated reasoning
+
+The opt-in endpoint `POST /cases/{case_id}/reason-with-evidence-policy` connects the alignment boundary to the existing orchestrator. It requires the same explicit positive freshness windows as the evidence-frame endpoint and accepts `require_provenance`. The case manager assesses the case's observations against a farm snapshot, creates a deep copy of the case containing only eligible observations, and sends that copy to the orchestrator. The original observation history remains intact.
+
+The response contains both the updated case record and the exact evidence frame used for filtering, including per-observation issue codes and exclusion counts. The ordinary `POST /cases/{case_id}/reason` path is unchanged for backward compatibility; callers must deliberately choose the policy-gated endpoint. The policy is request-scoped and is not persisted or versioned by this change.
+
+This is an eligibility gate, not a truth detector. It does not compare unlike metrics, resolve conflicting values, verify provider authority, or establish calibrated confidence. If all observations are excluded, the orchestrator receives an empty observation list and should use its existing insufficient-evidence behavior.
