@@ -527,6 +527,11 @@ def test_real_postgres_reconciliation_receipt_recovery_is_atomic(database):
     assert repo.apply_reconciliation_evidence(evidence, payload_sha256=digest) is False
     assert repo.get("txn-reconcile-integration").status == "submitted"
     assert repo.list_attempts("txn-reconcile-integration")[0].status == "failed"
+    audit = repo.list_attempt_events("attempt-reconcile-integration")
+    assert [event.event_type for event in audit].count(
+        "reconciliation_evidence_applied"
+    ) == 1
+    assert len(audit) == 3  # creation, failed transition, and applied evidence
     with psycopg.connect(_dsn()) as conn:
         row = conn.execute(
             "SELECT applied FROM service_reconciliation_events "
