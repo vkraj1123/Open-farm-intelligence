@@ -2177,9 +2177,12 @@ An opt-in deterministic comparison service is available in `src/ofi/services/evi
 | Explicit comparison-rule schema | Implemented | No universal units, tolerances or time windows are invented |
 | Pairwise assessment | Implemented | `agree`, `disagree` or `not_comparable` with reason codes |
 | Eligibility gating | Implemented | Stale, future, unconfigured or otherwise excluded observations cannot drive a disagreement |
-| API exposure and synthetic tests | Implemented | Standard and PostgreSQL CI required for this PR before merge |
+| API exposure and synthetic tests | CI verified | Standard run #622 and PostgreSQL run #757 passed before PR #47 merged |
 | Rule persistence, ownership and versioning | Not implemented | Rules are caller-supplied per request |
 | Scientific significance / source authority | Not inferred | A discrepancy does not establish which source is right or a crop diagnosis |
 | Rajasthan field validation | Not completed | Requires authoritative data, expert review and measured field outcomes |
 
 Comparison thresholds in examples are illustrative, not production recommendations. The service does not convert units or treat every numeric mismatch as a contradiction. These checks are deterministic software screening, not validated agricultural science.
+
+
+**Verification:** PR [#47](https://github.com/vkraj1123/Open-farm-intelligence/pull/47) passed standard CI (run #622) and PostgreSQL CI (run #757) before merge. The feature was merged to `main` as [`f843aef402a43a9e2cf3f1d5531fbc6504a18579`](https://github.com/vkraj1123/Open-farm-intelligence/commit/f843aef402a43a9e2cf3f1d5531fbc6504a18579). These checks verify software behavior, not source authority, agronomic validity or field performance.
