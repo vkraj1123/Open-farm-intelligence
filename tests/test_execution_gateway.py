@@ -10,12 +10,13 @@ from ofi.services.execution_gateway import (
     ActorIdentity,
     ConsentGrant,
     ExecutionError,
+    ExecutionRequest,
     MockServiceAdapter,
     ProviderCallback,
     ServiceExecutionGateway,
 )
 from ofi.services.service_directory import ServiceCapability, ServiceDirectory, ServiceProvider
-from ofi.services.service_transaction import ServiceTransaction
+from ofi.services.service_transaction import ExecutionAttempt, ServiceTransaction
 from ofi.services.transaction_repository import InMemoryTransactionRepository
 from ofi.services.service_orchestrator import ServiceOrchestrator
 
@@ -295,3 +296,101 @@ def test_callback_updates_named_attempt_not_latest_attempt():
     attempts = repo.list_attempts(receipt.transaction_id)
     assert attempts[0].status == "accepted"
     assert attempts[1].status == "submitted"
+
+
+def _prepared_dispatch(adapter=None, repo=None):
+    adapter = adapter or MockServiceAdapter("soil_test", provider_id="lab-01")
+    repo = repo or InMemoryTransactionRepository()
+    tx = ServiceTransaction(
+        transaction_id="txn-ready-dispatch",
+        idempotency_key="dispatch-key",
+        request_fingerprint="dispatch-fingerprint",
+        action_id=action().id,
+        provider_id="lab-01",
+        status="submitted",
+    )
+    repo.create(tx)
+    now = datetime.now(timezone.utc)
+    repo.create_attempt(ExecutionAttempt(
+        attempt_id="attempt-ready-dispatch",
+        transaction_id=tx.transaction_id,
+        attempt_number=1,
+        provider_id="lab-01",
+        status="ready",
+        created_at=now,
+        updated_at=now,
+    ))
+    request = ExecutionRequest(
+        action=action(),
+        route=route(),
+        actor=ActorIdentity("u1", "farmer"),
+        consent=consent(),
+        idempotency_key=tx.idempotency_key,
+        provider_id="lab-01",
+        transaction_id=tx.transaction_id,
+        attempt_id="attempt-ready-dispatch",
+    )
+    return ServiceExecutionGateway([adapter], transaction_repository=repo), repo, adapter, request
+
+
+def test_ready_attempt_is_claimed_before_dispatch_and_cannot_be_dispatched_twice():
+    class CountingAdapter(MockServiceAdapter):
+        calls = 0
+
+        def execute(self, request):
+            self.calls += 1
+            assert request.attempt_id == "attempt-ready-dispatch"
+            assert request.transaction_id == "txn-ready-dispatch"
+            return super().execute(request)
+
+    gateway, repo, adapter, request = _prepared_dispatch(CountingAdapter("soil_test", "lab-01"))
+    receipt = gateway.dispatch_ready_attempt(attempt_id="attempt-ready-dispatch", request=request)
+    assert receipt.status == "submitted"
+    assert adapter.calls == 1
+    assert repo.list_attempts("txn-ready-dispatch")[0].status == "submitted"
+    with pytest.raises(ExecutionError, match="cannot be dispatched from status"):
+        gateway.dispatch_ready_attempt(attempt_id="attempt-ready-dispatch", request=request)
+    assert adapter.calls == 1
+
+
+def test_dispatch_transport_exception_marks_attempt_unknown_and_blocks_resend():
+    class CrashAdapter(MockServiceAdapter):
+        calls = 0
+
+        def execute(self, request):
+            self.calls += 1
+            raise RuntimeError("worker lost connection after send")
+
+    gateway, repo, adapter, request = _prepared_dispatch(CrashAdapter("soil_test", "lab-01"))
+    with pytest.raises(ExecutionError, match="outcome is unknown"):
+        gateway.dispatch_ready_attempt(attempt_id="attempt-ready-dispatch", request=request)
+    assert repo.list_attempts("txn-ready-dispatch")[0].status == "unknown"
+    with pytest.raises(ExecutionError, match="cannot be dispatched from status"):
+        gateway.dispatch_ready_attempt(attempt_id="attempt-ready-dispatch", request=request)
+    assert adapter.calls == 1
+
+
+def test_concurrent_dispatch_claims_only_one_worker():
+    from concurrent.futures import ThreadPoolExecutor
+
+    class CountingAdapter(MockServiceAdapter):
+        calls = 0
+
+        def execute(self, request):
+            self.calls += 1
+            return super().execute(request)
+
+    gateway, repo, adapter, request = _prepared_dispatch(CountingAdapter("soil_test", "lab-01"))
+
+    def dispatch(_):
+        try:
+            return gateway.dispatch_ready_attempt(attempt_id="attempt-ready-dispatch", request=request)
+        except ExecutionError:
+            return None
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(dispatch, range(8)))
+    assert sum(item is not None for item in results) == 1
+    assert adapter.calls == 1
+    assert repo.list_attempts("txn-ready-dispatch")[0].status == "submitted"
+

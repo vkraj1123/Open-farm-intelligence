@@ -396,6 +396,44 @@ def test_real_postgres_execution_attempts_and_unknown_state(database):
 
 
 
+def test_real_postgres_dispatch_claim_allows_only_one_worker(database):
+    factory = lambda: psycopg.connect(_dsn())
+    repo = PostgresTransactionRepository(factory)
+    repo.create(ServiceTransaction(
+        transaction_id="txn-dispatch-claim",
+        idempotency_key="dispatch-claim-key",
+        request_fingerprint="dispatch-claim-fp",
+        action_id="dispatch-claim-action",
+        provider_id="dispatch-claim-provider",
+        status="submitted",
+    ))
+    now = datetime.now(timezone.utc)
+    repo.create_attempt(ExecutionAttempt(
+        attempt_id="attempt-dispatch-claim",
+        transaction_id="txn-dispatch-claim",
+        attempt_number=1,
+        provider_id="dispatch-claim-provider",
+        status="ready",
+        created_at=now,
+        updated_at=now,
+    ))
+
+    def claim(_):
+        local_repo = PostgresTransactionRepository(factory)
+        try:
+            local_repo.claim_attempt_for_dispatch("attempt-dispatch-claim")
+            return "claimed"
+        except TransactionConflictError:
+            return "conflict"
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        results = list(executor.map(claim, range(8)))
+
+    assert results.count("claimed") == 1
+    assert results.count("conflict") == 7
+    assert repo.list_attempts("txn-dispatch-claim")[0].status == "submitted"
+
+
 def test_real_postgres_guarded_retry_is_idempotent_under_concurrency(database):
     factory = lambda: psycopg.connect(_dsn())
     repo = PostgresTransactionRepository(factory)
