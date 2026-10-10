@@ -1071,7 +1071,7 @@ Action
        └── failed / unknown
 ```
 
-A provider timeout or lost callback must not be interpreted as confirmed external failure. Attempt-scoped reconciliation evidence is authenticated and applied atomically. The guarded retry orchestrator now creates a prepared `ready` attempt only when the repository confirms applied, provider-bound `not_executed` evidence for the latest failed attempt. Attempt-number allocation and retry-request idempotency are enforced at the persistence boundary. It does not submit to a provider; dispatch/crash recovery between prepared attempt and external execution remains open.
+A provider timeout or lost callback must not be interpreted as confirmed external failure. Attempt-scoped reconciliation evidence is authenticated and applied atomically. The guarded retry orchestrator creates a prepared `ready` attempt only after applied, provider-bound `not_executed` evidence for the latest failed attempt. The execution gateway now claims a `ready` attempt atomically before provider dispatch, refuses a second local dispatch of the same attempt, and marks transport exceptions as `unknown`. A crash after the claim is deliberately treated as ambiguous: reconciliation is required before another attempt. Production provider idempotency, worker recovery/observability and deployment validation remain open.
 
 The core closed-loop architecture is implemented and tested, but the project is **not production-ready**.
 
@@ -1295,11 +1295,15 @@ The core closed-loop architecture is implemented and tested, but the project is 
 - [x] Idempotent retry request keys and retry-of attempt lineage
 - [x] Atomic PostgreSQL attempt-number allocation under transaction lock
 - [x] Concurrent duplicate retry request integration test
-- [ ] Provider dispatch from prepared attempt
-- [ ] Crash recovery across prepared attempt/provider submission boundary
-- [ ] Real service adapter
+- [x] One-time atomic dispatch claim for prepared attempts
+- [x] Gateway dispatch of prepared attempts through registered provider adapters
+- [x] Ambiguous dispatch exceptions transition attempt to unknown
+- [x] Concurrent dispatch claim test for in-memory and PostgreSQL repositories
+- [ ] Worker crash detection and recovery/reconciliation runbook
+- [ ] Provider-supported external idempotency and real service adapter
+- [ ] Production dispatch observability and secret management
 
-**Status: 🟡 Guarded retry preparation is implemented; provider dispatch, crash recovery and real provider integration remain**
+**Status: 🟡 Guarded retry preparation and one-time dispatch claims are implemented; worker recovery, provider idempotency and real integrations remain**
 
 ---
 
@@ -1486,9 +1490,9 @@ Implemented in the current reliability branch:
 Still required:
 
 - provider-specific endpoint compatibility and deployment-level secret management for the generic HTTPS adapter;
-- execution-gateway dispatch for a `ready` attempt;
-- crash recovery/reconciliation when a worker stops between attempt preparation and external submission;
-- end-to-end provider tests proving idempotency and status semantics.
+- worker crash detection/reconciliation when a process stops after the durable dispatch claim but before a definitive provider response;
+- provider-supported external idempotency semantics and provider-specific endpoint compatibility;
+- deployment-level secret management, observability and end-to-end provider tests proving status semantics.
 
 The evidence verifier is a trust-boundary primitive, not proof that the provider's claim is truthful: that still depends on provider identity, key management and the authoritative source.
 
