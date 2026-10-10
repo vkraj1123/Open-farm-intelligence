@@ -118,8 +118,12 @@ def test_measurements_exceeding_rule_tolerance_are_reported_as_disagree_not_trut
 def test_non_comparable_pairs_are_reported_with_explicit_reasons(
     left_options, right_options, rule_options, reason
 ):
-    left = make_observation("a", {"temperature_c": 30}, source="station-a", **left_options)
-    right = make_observation("b", {"temperature_c": 36}, source="station-b", **right_options)
+    left_arguments = {"value": {"temperature_c": 30}, "source": "station-a"}
+    left_arguments.update(left_options)
+    right_arguments = {"value": {"temperature_c": 36}, "source": "station-b"}
+    right_arguments.update(right_options)
+    left = make_observation("a", **left_arguments)
+    right = make_observation("b", **right_arguments)
     comparison = assess([left, right], rule(**rule_options)).comparisons[0]
     assert comparison.status == "not_comparable"
     assert reason in comparison.reasons
@@ -179,3 +183,14 @@ def test_output_order_is_deterministic():
         for item in report.comparisons
     ]
     assert projection(report1) == projection(report2)
+
+
+def test_non_finite_difference_is_not_serialized_as_a_disagreement():
+    observations = [
+        make_observation("a", {"temperature_c": 1e308}, source="station-a"),
+        make_observation("b", {"temperature_c": -1e308}, source="station-b"),
+    ]
+    comparison = assess(observations).comparisons[0]
+    assert comparison.status == "not_comparable"
+    assert comparison.absolute_difference is None
+    assert "absolute_difference_non_finite" in comparison.reasons
