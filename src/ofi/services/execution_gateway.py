@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 import hashlib
 import hmac
+import json
 from datetime import datetime, timezone
 from typing import Literal, Protocol
 from uuid import uuid4
@@ -68,6 +69,7 @@ class ExecutionReceipt:
     message: str
     transaction_id: str
     idempotency_key: str
+    attempt_id: str | None = None
 
 
 class ServiceAdapter(Protocol):
@@ -87,6 +89,7 @@ class ProviderCallback:
     provider_id: str
     event_id: str
     transaction_id: str
+    attempt_id: str
     status: ExecutionStatus
     external_reference: str | None = None
     message: str = ""
@@ -183,9 +186,10 @@ class ServiceExecutionGateway:
             )
         transaction = creation.transaction
         now = datetime.now(timezone.utc)
+        attempt_id = f"attempt:{uuid4()}"
         self._transactions.create_attempt(
             ExecutionAttempt(
-                attempt_id=f"attempt:{uuid4()}",
+                attempt_id=attempt_id,
                 transaction_id=transaction.transaction_id,
                 attempt_number=1,
                 provider_id=selected_provider,
@@ -206,9 +210,8 @@ class ServiceExecutionGateway:
         try:
             receipt = adapter.execute(request)
         except (TimeoutError, ConnectionError) as exc:
-            attempts = self._transactions.list_attempts(transaction.transaction_id)
             self._transactions.transition_attempt(
-                attempts[-1].attempt_id,
+                attempt_id,
                 "unknown",
                 last_error=str(exc),
             )
@@ -216,7 +219,6 @@ class ServiceExecutionGateway:
                 "provider execution outcome is unknown; retry requires a new attempt"
             ) from exc
 
-        attempts = self._transactions.list_attempts(transaction.transaction_id)
         if receipt.external_reference is not None:
             transaction = self._transactions.update_external_reference(
                 transaction.transaction_id,
@@ -224,7 +226,7 @@ class ServiceExecutionGateway:
             )
 
         self._transactions.transition_attempt(
-            attempts[-1].attempt_id,
+            attempt_id,
             receipt.status,
             external_reference=receipt.external_reference,
         )
@@ -247,6 +249,7 @@ class ServiceExecutionGateway:
             message=receipt.message,
             transaction_id=transaction.transaction_id,
             idempotency_key=key,
+            attempt_id=attempt_id,
         )
 
     def handle_provider_callback(
@@ -263,25 +266,46 @@ class ServiceExecutionGateway:
             signature=signature,
         ):
             raise ExecutionError("invalid provider callback signature")
+        self._validate_callback_payload(callback, raw_payload)
         try:
             result = self._transactions.apply_callback(
                 provider_id=callback.provider_id,
                 event_id=callback.event_id,
                 transaction_id=callback.transaction_id,
+                attempt_id=callback.attempt_id,
                 status=callback.status,
                 external_reference=callback.external_reference,
                 message=callback.message,
             )
         except (KeyError, TransactionConflictError) as exc:
             raise ExecutionError(str(exc)) from exc
-        attempts = self._transactions.list_attempts(callback.transaction_id)
-        if attempts and result.applied and result.transaction.status != "submitted":
-            self._transactions.transition_attempt(
-                attempts[-1].attempt_id,
-                result.transaction.status,
-                external_reference=result.transaction.external_reference,
-            )
         return result.transaction
+
+    @staticmethod
+    def _validate_callback_payload(callback: ProviderCallback, raw_payload: bytes) -> None:
+        """Ensure the typed callback is exactly the data covered by the signature."""
+        try:
+            payload = json.loads(raw_payload)
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ExecutionError("invalid provider callback payload") from exc
+        if not isinstance(payload, dict):
+            raise ExecutionError("invalid provider callback payload")
+
+        required = {
+            "provider_id": callback.provider_id,
+            "event_id": callback.event_id,
+            "transaction_id": callback.transaction_id,
+            "attempt_id": callback.attempt_id,
+            "status": callback.status,
+        }
+        optional = {
+            "external_reference": callback.external_reference,
+            "message": callback.message,
+        }
+        if any(payload.get(key) != value for key, value in required.items()):
+            raise ExecutionError("provider callback fields do not match signed payload")
+        if any(key in payload and payload[key] != value for key, value in optional.items()):
+            raise ExecutionError("provider callback fields do not match signed payload")
 
     def action_status(self, action_id: str) -> str:
         matches = self._transactions.list_for_action(action_id)
@@ -334,6 +358,8 @@ class ServiceExecutionGateway:
             message="Replayed idempotent submission.",
             transaction_id=transaction.transaction_id,
             idempotency_key=transaction.idempotency_key,
+            attempt_id=(self._transactions.list_attempts(transaction.transaction_id)[-1].attempt_id
+                        if self._transactions.list_attempts(transaction.transaction_id) else None),
         )
 
 
