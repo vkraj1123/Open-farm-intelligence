@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
+import json
 
 import pytest
 
@@ -194,14 +195,21 @@ def test_provider_callback_requires_valid_signature_and_is_idempotent():
         idempotency_key="callback-test",
     )
     receipt = gateway.submit(**kwargs)
-    raw = b'{"event_id":"evt-1","status":"accepted"}'
-    signature = hmac.new(b"secret", raw, hashlib.sha256).hexdigest()
     callback = ProviderCallback(
         provider_id=receipt.provider_id,
         event_id="evt-1",
         transaction_id=receipt.transaction_id,
+        attempt_id=receipt.attempt_id,
         status="accepted",
     )
+    raw = json.dumps({
+        "provider_id": callback.provider_id,
+        "event_id": callback.event_id,
+        "transaction_id": callback.transaction_id,
+        "attempt_id": callback.attempt_id,
+        "status": callback.status,
+    }, separators=(",", ":")).encode()
+    signature = hmac.new(b"secret", raw, hashlib.sha256).hexdigest()
 
     with pytest.raises(ExecutionError, match="invalid provider callback"):
         gateway.handle_provider_callback(
@@ -218,3 +226,72 @@ def test_provider_callback_requires_valid_signature_and_is_idempotent():
     assert first.status == "accepted"
     assert second.status == "accepted"
     assert len(second.events) == 2
+
+    attempts = gateway._transactions.list_attempts(receipt.transaction_id)
+    assert len(attempts) == 1
+    assert attempts[0].attempt_id == receipt.attempt_id
+    assert attempts[0].status == "accepted"
+
+
+def test_signed_payload_cannot_be_used_with_different_typed_callback_fields():
+    gateway = ServiceExecutionGateway([MockServiceAdapter("soil_test")])
+    receipt = gateway.submit(
+        action=action(), route=route(), actor=ActorIdentity("u1", "farmer"),
+        consent=consent(), idempotency_key="payload-binding-test",
+    )
+    payload = {
+        "provider_id": receipt.provider_id,
+        "event_id": "evt-bound",
+        "transaction_id": receipt.transaction_id,
+        "attempt_id": receipt.attempt_id,
+        "status": "accepted",
+    }
+    raw = json.dumps(payload, separators=(",", ":")).encode()
+    signature = hmac.new(b"secret", raw, hashlib.sha256).hexdigest()
+    callback = ProviderCallback(
+        provider_id=receipt.provider_id,
+        event_id="evt-other",
+        transaction_id=receipt.transaction_id,
+        attempt_id=receipt.attempt_id,
+        status="accepted",
+    )
+    with pytest.raises(ExecutionError, match="do not match signed payload"):
+        gateway.handle_provider_callback(
+            callback, raw_payload=raw, signature=signature, provider_secret="secret"
+        )
+
+
+def test_callback_updates_named_attempt_not_latest_attempt():
+    repo = InMemoryTransactionRepository()
+    gateway = ServiceExecutionGateway(
+        [MockServiceAdapter("soil_test")], transaction_repository=repo
+    )
+    receipt = gateway.submit(
+        action=action(), route=route(), actor=ActorIdentity("u1", "farmer"),
+        consent=consent(), idempotency_key="attempt-binding-test",
+    )
+    repo.transition_attempt(receipt.attempt_id, "unknown", last_error="timeout")
+    from ofi.services.service_transaction import ExecutionAttempt
+    now = datetime.now(timezone.utc)
+    repo.create_attempt(ExecutionAttempt(
+        attempt_id="attempt:newer", transaction_id=receipt.transaction_id,
+        attempt_number=2, provider_id=receipt.provider_id, status="submitted",
+        created_at=now, updated_at=now,
+    ))
+    callback = ProviderCallback(
+        provider_id=receipt.provider_id, event_id="evt-old-attempt",
+        transaction_id=receipt.transaction_id, attempt_id=receipt.attempt_id,
+        status="accepted",
+    )
+    raw = json.dumps({
+        "provider_id": callback.provider_id, "event_id": callback.event_id,
+        "transaction_id": callback.transaction_id, "attempt_id": callback.attempt_id,
+        "status": callback.status,
+    }, separators=(",", ":")).encode()
+    signature = hmac.new(b"secret", raw, hashlib.sha256).hexdigest()
+    gateway.handle_provider_callback(
+        callback, raw_payload=raw, signature=signature, provider_secret="secret"
+    )
+    attempts = repo.list_attempts(receipt.transaction_id)
+    assert attempts[0].status == "accepted"
+    assert attempts[1].status == "submitted"
