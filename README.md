@@ -1049,10 +1049,13 @@ The core closed-loop architecture has a tested implementation, and the execution
 - ✅ Callback-to-attempt identity (callbacks must name the attempt they update)
 - ✅ Signed-payload field binding to the parsed callback object
 - ✅ Callback updates transaction and named attempt in one PostgreSQL transaction
+- ✅ HMAC-authenticated reconciliation evidence bound to provider, transaction and attempt
+- ✅ Reconciliation evidence timestamp freshness and clock-skew validation
+- ✅ Reconciliation evidence signed-payload binding
 
 ### Current execution boundary
 
-The callback path now verifies HMAC-SHA256, binds the typed callback fields to the signed payload, validates provider ownership, and applies the event to the named attempt. It is still **not a complete production webhook subsystem**. Remaining hardening includes provider-specific signature schemes where required, signed freshness/replay windows, secret rotation, observability, reconciliation-backed retries and crash recovery.
+The callback path verifies HMAC-SHA256, binds typed fields to signed payloads, validates ownership and applies events to the named attempt. The new reconciliation evidence contract similarly verifies HMAC-SHA256, exact provider/transaction/attempt identity, signed-field binding and timestamp freshness. Neither path yet includes provider-specific production adapters, secret rotation, durable reconciliation replay tracking or end-to-end retry orchestration.
 
 ### Next reliability milestone
 
@@ -1068,7 +1071,7 @@ Action
        └── failed / unknown
 ```
 
-A provider timeout or lost callback must not be interpreted as confirmed external failure. The attempt ledger and pure retry assessment now exist; the next implementation must reconcile authoritative provider state, create subsequent attempts only when safe, and retain auditable recovery history.
+A provider timeout or lost callback must not be interpreted as confirmed external failure. Attempt-scoped reconciliation evidence can now be authenticated, but it does not itself contact a provider or mutate execution state. The next implementation must add a provider adapter and a recovery service that consumes verified evidence, creates subsequent attempts only when safe, and retains auditable recovery history.
 
 The core closed-loop architecture is implemented and tested, but the project is **not production-ready**.
 
@@ -1283,10 +1286,12 @@ The core closed-loop architecture is implemented and tested, but the project is 
 - [x] Explicit execution-attempt ledger
 - [x] Unknown external execution state
 - [ ] Multi-attempt retry orchestration
-- [ ] Reconciliation adapter and authenticated reconciliation evidence
+- [x] Authenticated attempt-scoped reconciliation evidence contract
+- [ ] Provider reconciliation adapter
+- [ ] Durable reconciliation replay/idempotency tracking
 - [ ] Real service adapter
 
-**Status: 🟡 Durable execution + attempt-bound authenticated callbacks + safe retry assessment implemented; reconciliation-driven retry orchestration and production webhook hardening remain**
+**Status: 🟡 Attempt-bound callbacks, safe retry assessment and a signed/freshness-checked reconciliation evidence contract are implemented; provider adapter, durable reconciliation tracking and retry orchestration remain**
 
 ---
 
@@ -1461,14 +1466,17 @@ The deterministic `ProviderSelectionPolicy` is implemented and integrated with `
 
 ## Priority 5 — Reconciliation-driven retry orchestration
 
-The attempt ledger, unknown-state representation and pure retry assessment exist. The next milestone must:
+The attempt ledger, unknown-state representation, pure retry assessment and authenticated evidence verifier exist. `verify_reconciliation_evidence()` validates HMAC-SHA256, signed-field consistency, provider/transaction/attempt binding, timestamp freshness and bounded future clock skew.
 
-- define an authenticated provider-reconciliation contract;
-- bind reconciliation results to provider, transaction and attempt;
-- create a new attempt only after authoritative non-execution is confirmed;
-- prevent stale callbacks from changing a newer attempt;
-- make attempt-number allocation concurrency-safe in PostgreSQL;
-- define crash recovery for a transaction created before its attempt or provider call completes.
+Still required:
+
+- a real provider reconciliation adapter that obtains authoritative evidence;
+- durable reconciliation event idempotency and replay tracking;
+- a recovery service that applies evidence to lifecycle state and permits retry only after verified non-execution;
+- concurrency-safe attempt-number allocation in PostgreSQL;
+- crash recovery for interruptions between transaction creation, attempt creation and provider execution.
+
+The evidence verifier is a trust-boundary primitive, not proof that the provider's claim is truthful: that still depends on provider identity, key management and the authoritative source.
 
 ---
 
