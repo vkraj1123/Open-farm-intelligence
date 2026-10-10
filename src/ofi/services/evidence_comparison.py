@@ -154,10 +154,15 @@ def compare_aligned_observations(
                 status = "not_comparable"
             else:
                 # Values are known finite numbers after the gates above.
-                difference = abs(left_value - right_value)  # type: ignore[operator]
-                status = "agree" if difference <= rule.absolute_tolerance else "disagree"
-                if status == "disagree":
-                    reasons.append("difference_exceeds_absolute_tolerance")
+                raw_difference = abs(left_value - right_value)  # type: ignore[operator]
+                if not math.isfinite(raw_difference):
+                    status = "not_comparable"
+                    reasons.append("absolute_difference_non_finite")
+                else:
+                    difference = raw_difference
+                    status = "agree" if difference <= rule.absolute_tolerance else "disagree"
+                    if status == "disagree":
+                        reasons.append("difference_exceeds_absolute_tolerance")
 
             comparisons.append(
                 ObservationPairComparison(
