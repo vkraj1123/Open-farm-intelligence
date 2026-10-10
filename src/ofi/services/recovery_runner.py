@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import sys
+from datetime import timedelta
 from typing import Any, Mapping, TextIO
 
 from ofi.services.recovery_health import RecoveryHealthThresholds
@@ -123,7 +124,7 @@ def run_from_environment(
             worker,
             thresholds=thresholds,
             logger=logger,
-            stale_after=__import__("datetime").timedelta(seconds=stale_after_seconds),
+            stale_after=timedelta(seconds=stale_after_seconds),
             limit=limit,
         )
         return 0
