@@ -11,12 +11,7 @@ from ofi.domain.models import CaseOutcome, CaseRecord, FarmCase, Observation, Ob
 from ofi.providers.registry import default_mock_registry
 from ofi.services.case_manager import CaseManager
 from ofi.services.evidence_alignment import align_observations
-from ofi.services.case_repository import InMemoryCaseRepository
-from ofi.twin.farm_twin import FarmTwinStore
-from ofi.services.unit_of_work import (
-    InMemoryFarmCaseUnitOfWork,
-    PostgresFarmCaseUnitOfWork,
-)
+from ofi.services.unit_of_work import PostgresFarmCaseUnitOfWork
 from ofi.services.evidence_comparison import MetricComparisonRule, compare_aligned_observations
 from ofi.services.evidence_comparison_ledger import (
     EvidenceComparisonAssessment,
