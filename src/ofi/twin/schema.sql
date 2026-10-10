@@ -173,26 +173,6 @@ CREATE INDEX IF NOT EXISTS service_transaction_callbacks_transaction
     ON service_transaction_callbacks (transaction_id);
 
 
--- Durable reconciliation receipt ledger. Event identity is provider-scoped;
--- payload hash prevents an event ID from being reused for different evidence.
-CREATE TABLE IF NOT EXISTS service_reconciliation_events (
-    provider_id TEXT NOT NULL,
-    event_id TEXT NOT NULL,
-    transaction_id TEXT NOT NULL REFERENCES service_transactions(transaction_id) ON DELETE CASCADE,
-    attempt_id TEXT NOT NULL REFERENCES service_execution_attempts(attempt_id) ON DELETE CASCADE,
-    status TEXT NOT NULL CHECK (status IN ('executed', 'not_executed', 'pending', 'unknown')),
-    checked_at TIMESTAMPTZ NOT NULL,
-    payload_sha256 TEXT NOT NULL CHECK (length(payload_sha256) = 64),
-    external_reference TEXT,
-    message TEXT NOT NULL DEFAULT '',
-    received_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (provider_id, event_id)
-);
-
-CREATE INDEX IF NOT EXISTS service_reconciliation_events_attempt
-    ON service_reconciliation_events (transaction_id, attempt_id, checked_at DESC);
-
-
 -- Explicit external execution attempts. One transaction may have multiple
 -- attempts when a provider fails, times out, or remains externally unknown.
 CREATE TABLE IF NOT EXISTS service_execution_attempts (
@@ -214,3 +194,25 @@ CREATE INDEX IF NOT EXISTS service_execution_attempts_transaction
 -- Bind callbacks to the exact attempt they update. Safe for existing databases.
 ALTER TABLE service_transaction_callbacks
     ADD COLUMN IF NOT EXISTS attempt_id TEXT REFERENCES service_execution_attempts(attempt_id);
+
+
+-- Durable reconciliation receipt ledger. Event identity is provider-scoped;
+-- payload hash prevents an event ID from being reused for different evidence.
+CREATE TABLE IF NOT EXISTS service_reconciliation_events (
+    provider_id TEXT NOT NULL,
+    event_id TEXT NOT NULL,
+    transaction_id TEXT NOT NULL REFERENCES service_transactions(transaction_id) ON DELETE CASCADE,
+    attempt_id TEXT NOT NULL REFERENCES service_execution_attempts(attempt_id) ON DELETE CASCADE,
+    status TEXT NOT NULL CHECK (status IN ('executed', 'not_executed', 'pending', 'unknown')),
+    checked_at TIMESTAMPTZ NOT NULL,
+    payload_sha256 TEXT NOT NULL CHECK (length(payload_sha256) = 64),
+    external_reference TEXT,
+    message TEXT NOT NULL DEFAULT '',
+    received_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (provider_id, event_id)
+);
+
+CREATE INDEX IF NOT EXISTS service_reconciliation_events_attempt
+    ON service_reconciliation_events (transaction_id, attempt_id, checked_at DESC);
+
+
