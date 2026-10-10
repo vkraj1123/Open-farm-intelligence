@@ -72,6 +72,7 @@ class TransactionRepository(ABC):
         provider_id: str,
         event_id: str,
         transaction_id: str,
+        attempt_id: str,
         status: TransactionStatus,
         external_reference: str | None = None,
         message: str = "",
@@ -104,7 +105,7 @@ class InMemoryTransactionRepository(TransactionRepository):
     def __init__(self) -> None:
         self._transactions: dict[str, ServiceTransaction] = {}
         self._idempotency: dict[str, str] = {}
-        self._callback_events: dict[tuple[str, str], str] = {}
+        self._callback_events: dict[tuple[str, str], tuple[str, str]] = {}
         self._attempts: dict[str, ExecutionAttempt] = {}
 
     def create_if_absent(self, transaction: ServiceTransaction) -> TransactionCreateResult:
@@ -165,26 +166,39 @@ class InMemoryTransactionRepository(TransactionRepository):
         provider_id: str,
         event_id: str,
         transaction_id: str,
+        attempt_id: str,
         status: TransactionStatus,
         external_reference: str | None = None,
         message: str = "",
     ) -> CallbackResult:
         event_key = (provider_id, event_id)
-        original_transaction_id = self._callback_events.get(event_key)
-        if original_transaction_id is not None:
+        original = self._callback_events.get(event_key)
+        if original is not None:
+            original_transaction_id, original_attempt_id = original
+            if (original_transaction_id, original_attempt_id) != (transaction_id, attempt_id):
+                raise TransactionConflictError("provider event is already bound to a different transaction or attempt")
             return CallbackResult(self.get(original_transaction_id), False)
         transaction = self.get(transaction_id)
         if transaction.provider_id != provider_id:
             raise TransactionConflictError(
                 "callback provider does not own the transaction"
             )
+        try:
+            attempt = self._attempts[attempt_id]
+        except KeyError as exc:
+            raise KeyError(attempt_id) from exc
+        if attempt.transaction_id != transaction_id or attempt.provider_id != provider_id:
+            raise TransactionConflictError("callback attempt does not belong to this provider transaction")
         transaction = self.transition(
             transaction_id,
             status,
             external_reference=external_reference,
             message=message,
         )
-        self._callback_events[event_key] = transaction_id
+        self.transition_attempt(
+            attempt_id, status, external_reference=external_reference
+        )
+        self._callback_events[event_key] = (transaction_id, attempt_id)
         return CallbackResult(transaction, True)
 
     def create_attempt(self, attempt: ExecutionAttempt) -> ExecutionAttempt:
@@ -387,6 +401,7 @@ class PostgresTransactionRepository(TransactionRepository):
         provider_id: str,
         event_id: str,
         transaction_id: str,
+        attempt_id: str,
         status: TransactionStatus,
         external_reference: str | None = None,
         message: str = "",
@@ -396,19 +411,19 @@ class PostgresTransactionRepository(TransactionRepository):
                 cur.execute(
                     """
                     INSERT INTO service_transaction_callbacks (
-                        provider_id, event_id, transaction_id
+                        provider_id, event_id, transaction_id, attempt_id
                     )
-                    VALUES (%s, %s, %s)
+                    VALUES (%s, %s, %s, %s)
                     ON CONFLICT (provider_id, event_id) DO NOTHING
                     RETURNING event_id
                     """,
-                    (provider_id, event_id, transaction_id),
+                    (provider_id, event_id, transaction_id, attempt_id),
                 )
                 inserted = cur.fetchone()
                 if inserted is None:
                     cur.execute(
                         """
-                        SELECT transaction_id
+                        SELECT transaction_id, attempt_id
                         FROM service_transaction_callbacks
                         WHERE provider_id = %s AND event_id = %s
                         """,
@@ -417,7 +432,9 @@ class PostgresTransactionRepository(TransactionRepository):
                     row = cur.fetchone()
                     if row is None:
                         raise RuntimeError("callback receipt disappeared")
-                    original_transaction_id = row[0]
+                    original_transaction_id, original_attempt_id = row
+                    if (original_transaction_id, original_attempt_id) != (transaction_id, attempt_id):
+                        raise TransactionConflictError("provider event is already bound to a different transaction or attempt")
                     return CallbackResult(
                         self._get_with_cursor(cur, original_transaction_id), False
                     )
@@ -427,6 +444,9 @@ class PostgresTransactionRepository(TransactionRepository):
                     raise TransactionConflictError(
                         "callback provider does not own the transaction"
                     )
+                attempt = self._get_attempt_with_cursor(cur, attempt_id)
+                if attempt.transaction_id != transaction_id or attempt.provider_id != provider_id:
+                    raise TransactionConflictError("callback attempt does not belong to this provider transaction")
                 working.transition(
                     status,
                     external_reference=external_reference,
@@ -455,6 +475,17 @@ class PostgresTransactionRepository(TransactionRepository):
                         event.occurred_at, event.external_reference, event.message,
                     ),
                 )
+                cur.execute(
+                    """
+                    UPDATE service_execution_attempts
+                    SET status = %s, updated_at = now(),
+                        external_reference = COALESCE(%s, external_reference)
+                    WHERE attempt_id = %s AND transaction_id = %s AND provider_id = %s
+                    """,
+                    (status, external_reference, attempt_id, transaction_id, provider_id),
+                )
+                if cur.rowcount != 1:
+                    raise TransactionConflictError("callback attempt changed during update")
                 return CallbackResult(working, True)
 
     def create_attempt(self, attempt: ExecutionAttempt) -> ExecutionAttempt:
