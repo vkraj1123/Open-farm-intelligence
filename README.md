@@ -2133,7 +2133,7 @@ This check performs reconciliation GET requests only; it does not dispatch actio
 
 # 45. Farm evidence alignment milestone
 
-The first deterministic evidence-alignment service is implemented in \`src/ofi/services/evidence_alignment.py\`, with regression tests in \`tests/test_evidence_alignment.py\` and its contract documented in \`docs/evidence-alignment.md\`.
+The first deterministic evidence-alignment service is implemented in `src/ofi/services/evidence_alignment.py`, with regression tests in `tests/test_evidence_alignment.py` and its contract documented in `docs/evidence-alignment.md`.
 
 | Evidence-pipeline capability | Status | Boundary |
 |---|---|---|
