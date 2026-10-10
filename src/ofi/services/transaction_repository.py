@@ -87,6 +87,12 @@ class TransactionRepository(ABC):
         """Persist verified evidence once; return False for an identical replay."""
 
     @abstractmethod
+    def apply_reconciliation_evidence(
+        self, evidence: ReconciliationEvidence, *, payload_sha256: str
+    ) -> bool:
+        """Atomically record verified evidence and update its attempt/transaction."""
+
+    @abstractmethod
     def create_attempt(self, attempt: ExecutionAttempt) -> ExecutionAttempt:
         """Create a durable execution attempt with monotonic numbering."""
 
@@ -239,6 +245,67 @@ class InMemoryTransactionRepository(TransactionRepository):
             raise TransactionConflictError(
                 "reconciliation attempt does not belong to this provider transaction"
             )
+        self._reconciliation_events[event_key] = fingerprint
+        return True
+
+    def apply_reconciliation_evidence(
+        self, evidence: ReconciliationEvidence, *, payload_sha256: str
+    ) -> bool:
+        if len(payload_sha256) != 64 or any(ch not in "0123456789abcdef" for ch in payload_sha256):
+            raise ValueError("payload_sha256 must be a lowercase SHA-256 hex digest")
+        event_key = (evidence.provider_id, evidence.event_id)
+        fingerprint = (
+            evidence.transaction_id, evidence.attempt_id,
+            payload_sha256, evidence.status,
+        )
+        existing = self._reconciliation_events.get(event_key)
+        if existing is not None:
+            if existing != fingerprint:
+                raise TransactionConflictError(
+                    "reconciliation event is already bound to different evidence"
+                )
+            return False
+
+        transaction = self.get(evidence.transaction_id)
+        if transaction.provider_id != evidence.provider_id:
+            raise TransactionConflictError(
+                "reconciliation provider does not own the transaction"
+            )
+        try:
+            attempt = deepcopy(self._attempts[evidence.attempt_id])
+        except KeyError as exc:
+            raise KeyError(evidence.attempt_id) from exc
+        if attempt.transaction_id != evidence.transaction_id or attempt.provider_id != evidence.provider_id:
+            raise TransactionConflictError(
+                "reconciliation attempt does not belong to this provider transaction"
+            )
+
+        if evidence.status == "executed":
+            if attempt.status in {"rejected", "failed"} or transaction.status in {"rejected", "failed", "cancelled"}:
+                raise TransactionConflictError("executed reconciliation contradicts terminal failure state")
+            if attempt.status not in {"completed", "in_progress"}:
+                attempt.status = "in_progress"
+            if transaction.status in {"submitted", "accepted"}:
+                transaction.transition(
+                    "in_progress",
+                    external_reference=evidence.external_reference,
+                    message=evidence.message or "Provider reconciliation confirms execution.",
+                )
+        elif evidence.status == "not_executed":
+            if attempt.status in {"accepted", "in_progress", "completed"} or transaction.status in {"accepted", "in_progress", "completed"}:
+                raise TransactionConflictError("not-executed reconciliation contradicts active or completed execution")
+            attempt.status = "failed"
+            attempt.last_error = evidence.message or "Provider reconciliation confirms non-execution."
+        elif evidence.status in {"pending", "unknown"}:
+            if attempt.status not in {"completed", "rejected", "failed"}:
+                attempt.status = "unknown"
+
+        from datetime import datetime, timezone
+        attempt.updated_at = datetime.now(timezone.utc)
+        if evidence.external_reference is not None:
+            attempt.external_reference = evidence.external_reference
+        self._attempts[evidence.attempt_id] = deepcopy(attempt)
+        self._transactions[evidence.transaction_id] = deepcopy(transaction)
         self._reconciliation_events[event_key] = fingerprint
         return True
 
@@ -532,8 +599,8 @@ class PostgresTransactionRepository(TransactionRepository):
     def record_reconciliation_evidence(
         self, evidence: ReconciliationEvidence, *, payload_sha256: str
     ) -> bool:
-        if len(payload_sha256) != 64:
-            raise ValueError("payload_sha256 must be a SHA-256 hex digest")
+        if len(payload_sha256) != 64 or any(ch not in "0123456789abcdef" for ch in payload_sha256):
+            raise ValueError("payload_sha256 must be a lowercase SHA-256 hex digest")
         with connection_scope(self._connection_factory) as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -594,6 +661,122 @@ class PostgresTransactionRepository(TransactionRepository):
                         "reconciliation event is already bound to different evidence"
                     )
                 return False
+
+    def apply_reconciliation_evidence(
+        self, evidence: ReconciliationEvidence, *, payload_sha256: str
+    ) -> bool:
+        if len(payload_sha256) != 64 or any(ch not in "0123456789abcdef" for ch in payload_sha256):
+            raise ValueError("payload_sha256 must be a lowercase SHA-256 hex digest")
+        with connection_scope(self._connection_factory) as conn:
+            with conn.cursor() as cur:
+                transaction = self._get_with_cursor(cur, evidence.transaction_id, for_update=True)
+                attempt = self._get_attempt_with_cursor(cur, evidence.attempt_id)
+                if transaction.provider_id != evidence.provider_id or attempt.provider_id != evidence.provider_id or attempt.transaction_id != evidence.transaction_id:
+                    raise TransactionConflictError(
+                        "reconciliation attempt does not belong to this provider transaction"
+                    )
+                cur.execute(
+                    """
+                    INSERT INTO service_reconciliation_events (
+                        provider_id, event_id, transaction_id, attempt_id,
+                        status, checked_at, payload_sha256, external_reference, message
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (provider_id, event_id) DO NOTHING
+                    RETURNING event_id
+                    """,
+                    (
+                        evidence.provider_id, evidence.event_id,
+                        evidence.transaction_id, evidence.attempt_id,
+                        evidence.status, evidence.checked_at, payload_sha256,
+                        evidence.external_reference, evidence.message,
+                    ),
+                )
+                if cur.fetchone() is None:
+                    cur.execute(
+                        """
+                        SELECT transaction_id, attempt_id, payload_sha256, status
+                        FROM service_reconciliation_events
+                        WHERE provider_id = %s AND event_id = %s
+                        """,
+                        (evidence.provider_id, evidence.event_id),
+                    )
+                    row = cur.fetchone()
+                    fingerprint = (
+                        evidence.transaction_id, evidence.attempt_id,
+                        payload_sha256, evidence.status,
+                    )
+                    if row is None:
+                        raise RuntimeError("reconciliation event receipt disappeared")
+                    if tuple(row) != fingerprint:
+                        raise TransactionConflictError(
+                            "reconciliation event is already bound to different evidence"
+                        )
+                    return False
+
+                original_transaction_status = transaction.status
+                if evidence.status == "executed":
+                    if attempt.status in {"rejected", "failed"} or transaction.status in {"rejected", "failed", "cancelled"}:
+                        raise TransactionConflictError("executed reconciliation contradicts terminal failure state")
+                    if attempt.status not in {"completed", "in_progress"}:
+                        attempt.status = "in_progress"
+                    if transaction.status in {"submitted", "accepted"}:
+                        transaction.transition(
+                            "in_progress",
+                            external_reference=evidence.external_reference,
+                            message=evidence.message or "Provider reconciliation confirms execution.",
+                        )
+                elif evidence.status == "not_executed":
+                    if attempt.status in {"accepted", "in_progress", "completed"} or transaction.status in {"accepted", "in_progress", "completed"}:
+                        raise TransactionConflictError("not-executed reconciliation contradicts active or completed execution")
+                    attempt.status = "failed"
+                    attempt.last_error = evidence.message or "Provider reconciliation confirms non-execution."
+                elif evidence.status in {"pending", "unknown"}:
+                    if attempt.status not in {"completed", "rejected", "failed"}:
+                        attempt.status = "unknown"
+
+                from datetime import datetime, timezone
+                attempt.updated_at = datetime.now(timezone.utc)
+                if evidence.external_reference is not None:
+                    attempt.external_reference = evidence.external_reference
+                cur.execute(
+                    """
+                    UPDATE service_execution_attempts
+                    SET status=%s, updated_at=%s,
+                        external_reference=COALESCE(%s, external_reference),
+                        last_error=COALESCE(%s, last_error)
+                    WHERE attempt_id=%s
+                    """,
+                    (
+                        attempt.status, attempt.updated_at, attempt.external_reference,
+                        attempt.last_error, attempt.attempt_id,
+                    ),
+                )
+                if transaction.status != original_transaction_status:
+                    latest_event = transaction.events[-1]
+                    cur.execute(
+                        """
+                        UPDATE service_transactions
+                        SET status=%s, external_reference=%s
+                        WHERE transaction_id=%s
+                        """,
+                        (transaction.status, transaction.external_reference, transaction.transaction_id),
+                    )
+                    cur.execute(
+                        """
+                        INSERT INTO service_transaction_events (
+                            transaction_id, sequence, status, occurred_at,
+                            external_reference, message
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                        """,
+                        (
+                            latest_event.transaction_id, len(transaction.events),
+                            latest_event.status, latest_event.occurred_at,
+                            latest_event.external_reference, latest_event.message,
+                        ),
+                    )
+                return True
 
     def create_attempt(self, attempt: ExecutionAttempt) -> ExecutionAttempt:
         with connection_scope(self._connection_factory) as conn:
