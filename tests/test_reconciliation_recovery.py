@@ -75,6 +75,11 @@ def test_verified_non_execution_is_applied_and_only_assesses_retry():
     assert result.transaction.status == "submitted"
     assert result.retry_assessment.decision == "retry_allowed"
     assert len(repo.list_attempts("txn-1")) == 1
+    audit = repo.list_attempt_events("attempt-1")
+    assert audit[-1].event_type == "reconciliation_evidence_applied"
+    assert audit[-1].from_status == "unknown"
+    assert audit[-1].to_status == "failed"
+    assert "not_executed" in audit[-1].detail
     assert adapter.calls == [("txn-1", "attempt-1")]
 
 
@@ -115,6 +120,9 @@ def test_identical_reconciliation_replay_is_noop_but_returns_current_state():
     assert second.applied is False
     assert second.retry_assessment.decision == "retry_allowed"
     assert len(repo.list_attempts("txn-1")) == 1
+    assert len(repo.list_attempt_events("attempt-1")) == len(
+        repo.list_attempt_events("attempt-1")
+    )
 
 
 def test_conflicting_event_replay_is_rejected():
