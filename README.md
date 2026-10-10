@@ -1061,6 +1061,10 @@ The core closed-loop architecture has a tested implementation, and the execution
 - ✅ Concurrent duplicate reconciliation stress tests for in-memory and PostgreSQL repositories
 - ✅ Failure-injection test proves an audit append failure rolls back the associated PostgreSQL attempt transition
 
+### Recovery operations runbook
+
+A deployment-oriented runbook now documents required repository/provider wiring, scheduler concurrency and timeout contracts, explicit health thresholds, structured-log alert routing, ambiguous-outcome safety, and pre-production checks: [`docs/dispatch-recovery-operations.md`](docs/dispatch-recovery-operations.md). It is a deployment contract, not a claim that a production scheduler, alert receiver, or real provider adapter has been configured.
+
 ### Current execution boundary
 
 The callback path verifies HMAC-SHA256, binds typed fields to signed payloads, validates ownership and applies events to the named attempt. Reconciliation evidence is signed, freshness-checked, bound to the exact provider/transaction/attempt, durably deduplicated, and applied atomically. Attempt-level audit events now record creation, status transitions, provider callback application and reconciliation decisions. PostgreSQL writes the state transition and its trigger-generated audit event in the same transaction; the audit table rejects row updates/deletes. Provider-specific production adapters, secret rotation, production scheduler configuration, external idempotency guarantees and operational alerting remain open.
