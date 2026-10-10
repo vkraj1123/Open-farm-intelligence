@@ -2079,3 +2079,26 @@ See the repository license file for the current licensing terms.
 > **The goal is not to build an AI that talks about farming.**
 >
 > **The goal is to build an open intelligence layer that can continuously understand a farm, reason from evidence, act through the agricultural ecosystem, observe outcomes, and improve decisions responsibly.**
+
+
+---
+
+# 44. Recovery integration verification tracker
+
+This tracker distinguishes deterministic unit coverage from verification against a real database. Percentages below are **engineering estimates for the recovery/deployment milestone**, not a claim that the whole agricultural product is that percentage complete.
+
+| Recovery milestone | Estimated completion | Evidence / remaining work |
+|---|---:|---|
+| Execution-attempt lifecycle and retry safety | 100% of current scoped implementation | Unit and concurrency regression coverage; external provider guarantees still require contract validation |
+| Recovery worker, health assessment, observability and CLI | 100% of current scoped implementation | Implemented; deployment-owned scheduling and alert delivery remain |
+| PostgreSQL factory wiring and fail-fast readiness | 100% of repository implementation | Factory and startup checks are present; the new real-PostgreSQL integration test must pass CI |
+| Real PostgreSQL recovery integration | 75% | Integration test now applies the checked-in schema and exercises factory/repository/worker; CI result is the next gate |
+| Real provider reconciliation contract | 15% | HTTPS adapter and signed-response contract exist; no real provider endpoint has been validated |
+| Staging operations | 20% | Runbook and runner exist; staging credentials, scheduler, alerts, operational owner and incident drills remain |
+| Agricultural evidence and scientific validation | Not yet meaningfully measurable | Real evidence pipelines, Rajasthan calibration and field outcomes are still needed |
+
+## Current change in progress
+
+The new test file tests/test_postgres_recovery_factory_integration.py is intended to run in the PostgreSQL CI job (OFI_POSTGRES_DSN is configured there). It applies src/ofi/twin/schema.sql to the dedicated CI database, builds the actual PostgreSQL/HTTPS recovery factory, creates and reads a uniquely identified transaction and attempt through PostgresTransactionRepository, and runs one bounded worker cycle without contacting the placeholder provider endpoint. Local runs without OFI_POSTGRES_DSN skip this integration test explicitly; they do not count as real-database verification.
+
+**Acceptance gate:** do not mark the integration milestone complete until both standard CI and PostgreSQL CI pass on the pull-request head. This test is not a substitute for a staging test against a real provider or for provider-side idempotency validation.
