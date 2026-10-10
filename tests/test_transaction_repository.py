@@ -243,8 +243,10 @@ def test_stale_dispatch_recovery_marks_unknown_without_claiming_nonexecution():
     assert len(recovered) == 1
     assert recovered[0].status == "unknown"
     assert "outcome unknown" in recovered[0].last_error
-    assert repo.recover_stale_dispatches(
+    unresolved = repo.recover_stale_dispatches(
         older_than=datetime.now(timezone.utc) + timedelta(seconds=1), limit=10
-    ) == []
+    )
+    assert len(unresolved) == 1
+    assert unresolved[0].status == "unknown"
 
 
