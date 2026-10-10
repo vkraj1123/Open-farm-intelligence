@@ -1063,8 +1063,9 @@ class PostgresTransactionRepository(TransactionRepository):
                     WHERE updated_at <= %s
                       AND (
                         status = 'dispatching'
-                        OR (status = 'unknown' AND last_error LIKE
-                            'dispatch claim exceeded recovery threshold%')
+                        OR (status = 'unknown' AND starts_with(
+                            last_error, 'dispatch claim exceeded recovery threshold'
+                        ))
                       )
                     ORDER BY updated_at, attempt_id
                     LIMIT %s
