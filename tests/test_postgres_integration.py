@@ -47,7 +47,7 @@ def database():
     yield
     with psycopg.connect(_dsn()) as conn:
         conn.execute(
-            "TRUNCATE service_execution_attempts, service_transaction_callbacks, service_transaction_events, service_transactions, case_events, case_records, observations, "
+            "TRUNCATE service_execution_attempt_events, service_execution_attempts, service_transaction_callbacks, service_transaction_events, service_transactions, case_events, case_records, observations, "
             "production_contracts, land_parties, crop_cycles, parcels, farms "
             "CASCADE"
         )
@@ -534,3 +534,53 @@ def test_real_postgres_reconciliation_receipt_recovery_is_atomic(database):
             ("lab-reconcile", "reconcile-event-integration"),
         ).fetchone()
     assert row == (True,)
+
+
+
+def test_real_postgres_attempt_audit_is_atomic_and_append_only(database):
+    factory = lambda: psycopg.connect(_dsn())
+    repo = PostgresTransactionRepository(factory)
+    repo.create(ServiceTransaction(
+        transaction_id="txn-audit-integration",
+        idempotency_key="audit-integration-key",
+        request_fingerprint="audit-integration-fp",
+        action_id="audit-integration-action",
+        provider_id="audit-integration-provider",
+        status="submitted",
+    ))
+    now = datetime.now(timezone.utc)
+    repo.create_attempt(ExecutionAttempt(
+        attempt_id="attempt-audit-integration",
+        transaction_id="txn-audit-integration",
+        attempt_number=1,
+        provider_id="audit-integration-provider",
+        status="ready",
+        created_at=now,
+        updated_at=now,
+    ))
+    repo.claim_attempt_for_dispatch("attempt-audit-integration")
+    repo.transition_attempt(
+        "attempt-audit-integration", "unknown",
+        last_error="provider transport timed out",
+    )
+
+    events = repo.list_attempt_events("attempt-audit-integration")
+    assert [event.event_type for event in events] == [
+        "attempt_created",
+        "dispatch_claimed",
+        "execution_outcome_unknown",
+    ]
+    assert [(event.from_status, event.to_status) for event in events] == [
+        (None, "ready"),
+        ("ready", "dispatching"),
+        ("dispatching", "unknown"),
+    ]
+    assert events[-1].detail == "provider transport timed out"
+
+    with pytest.raises(psycopg.Error, match="append-only"):
+        with psycopg.connect(_dsn()) as conn:
+            conn.execute(
+                "UPDATE service_execution_attempt_events SET detail = 'rewritten' "
+                "WHERE attempt_id = %s",
+                ("attempt-audit-integration",),
+            )
