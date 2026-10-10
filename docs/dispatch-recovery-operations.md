@@ -43,6 +43,18 @@ The runner requires these deployment variables; it deliberately provides no univ
 | `OFI_RECOVERY_WARNING_UNKNOWN` / `OFI_RECOVERY_CRITICAL_UNKNOWN` | Per-run unresolved-unknown thresholds |
 | `OFI_RECOVERY_WARNING_PENDING` / `OFI_RECOVERY_CRITICAL_PENDING` | Per-run pending-reconciliation thresholds |
 
+For a concrete PostgreSQL + HTTPS setup, set `OFI_RECOVERY_FACTORY=ofi.services.deployment_recovery:build_worker` and also configure:
+
+| Variable | Meaning |
+|---|---|
+| `OFI_DATABASE_URL` | PostgreSQL DSN for the transaction repository |
+| `OFI_RECOVERY_PROVIDER_IDS` | Comma-separated provider IDs, for example `kvk-demo,weather-1` |
+| `OFI_RECOVERY_PROVIDER_<NORMALIZED_ID>_ENDPOINT` | Absolute HTTPS reconciliation endpoint for that provider |
+| `OFI_RECOVERY_PROVIDER_<NORMALIZED_ID>_SECRET` | Provider HMAC-SHA256 verification secret, supplied through secret management |
+| `OFI_RECOVERY_PROVIDER_<NORMALIZED_ID>_TIMEOUT_SECONDS` | Optional positive request timeout; defaults to 5 seconds |
+
+Provider IDs are normalized to uppercase environment suffixes, with punctuation mapped to underscores; IDs that collide after normalization are rejected. The factory requires the optional `postgres` dependency (`pip install .[postgres]`) and a database whose transaction/attempt/reconciliation schema has already been migrated. It does not create schema or provision provider credentials. Each endpoint must return the exact signed JSON response format accepted by `ProviderReconciliationAdapter`; a reachable URL alone does not establish that the provider is authoritative.
+
 Example scheduler command after installing the package and configuring the variables:
 
 ```bash
