@@ -64,7 +64,7 @@ def reconcile_not_executed(repo):
 
 
 def test_retry_requires_applied_verified_non_execution_evidence():
-    repo = setup()
+    repo = setup(status="failed")
     retry = GuardedRetryOrchestrator(repo)
     with pytest.raises(TransactionConflictError, match="applied provider evidence"):
         retry.prepare_retry(
