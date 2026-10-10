@@ -431,7 +431,13 @@ def test_real_postgres_dispatch_claim_allows_only_one_worker(database):
 
     assert results.count("claimed") == 1
     assert results.count("conflict") == 7
-    assert repo.list_attempts("txn-dispatch-claim")[0].status == "submitted"
+    assert repo.list_attempts("txn-dispatch-claim")[0].status == "dispatching"
+    recovered = repo.recover_stale_dispatches(
+        older_than=datetime.now(timezone.utc) + timedelta(seconds=1), limit=10
+    )
+    assert [item.attempt_id for item in recovered] == ["attempt-dispatch-claim"]
+    assert recovered[0].status == "unknown"
+    assert "outcome unknown" in recovered[0].last_error
 
 
 def test_real_postgres_guarded_retry_is_idempotent_under_concurrency(database):
