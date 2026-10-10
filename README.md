@@ -1289,9 +1289,11 @@ The core closed-loop architecture is implemented and tested, but the project is 
 - [x] Authenticated attempt-scoped reconciliation evidence contract
 - [x] HTTPS provider reconciliation adapter with signed response verification
 - [x] Durable reconciliation receipt ledger with event-ID/payload binding
+- [x] Atomic application of verified reconciliation evidence to the exact attempt
+- [x] Retry eligibility assessment without automatic retry submission
 - [ ] Real service adapter
 
-**Status: 🟡 Attempt-bound callbacks, safe retry assessment, an HTTPS adapter, and a durable reconciliation receipt ledger are implemented; applying evidence to lifecycle state and retry orchestration remain**
+**Status: 🟡 Attempt-bound callbacks, an HTTPS adapter, durable reconciliation receipts, and atomic evidence application/retry assessment are implemented; multi-attempt retry orchestration and real provider integration remain**
 
 ---
 
@@ -1471,8 +1473,7 @@ The attempt ledger, unknown-state representation, pure retry assessment, authent
 Still required:
 
 - provider-specific endpoint compatibility and deployment-level secret management for the generic HTTPS adapter;
-- connect verified adapter responses to the receipt ledger in a recovery service;
-- a recovery service that applies evidence to lifecycle state and permits retry only after verified non-execution;
+- multi-attempt retry orchestration that consumes the recovery service's retry assessment and creates attempts atomically only after verified non-execution;
 - concurrency-safe attempt-number allocation in PostgreSQL;
 - crash recovery for interruptions between transaction creation, attempt creation and provider execution.
 
