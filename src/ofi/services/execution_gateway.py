@@ -56,6 +56,8 @@ class ExecutionRequest:
     consent: ConsentGrant | None
     idempotency_key: str
     provider_id: str
+    transaction_id: str | None = None
+    attempt_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -193,7 +195,7 @@ class ServiceExecutionGateway:
                 transaction_id=transaction.transaction_id,
                 attempt_number=1,
                 provider_id=selected_provider,
-                status="submitted",
+                status="ready",
                 created_at=now,
                 updated_at=now,
             )
@@ -206,35 +208,94 @@ class ServiceExecutionGateway:
             consent=consent,
             idempotency_key=key,
             provider_id=selected_provider,
+            transaction_id=transaction.transaction_id,
+            attempt_id=attempt_id,
+        )
+        return self.dispatch_ready_attempt(attempt_id=attempt_id, request=request)
+
+    def dispatch_ready_attempt(
+        self, *, attempt_id: str, request: ExecutionRequest
+    ) -> ExecutionReceipt:
+        """Claim and dispatch one prepared attempt at most once locally.
+
+        The durable claim is written before the network call. If the process
+        crashes or transport fails after that point, the attempt is ambiguous
+        and must be reconciled rather than dispatched again.
+        """
+        if not request.actor.authenticated:
+            raise ExecutionError("authenticated actor is required")
+        if request.consent is None and request.route.capability not in {"expert", "verification"}:
+            raise ExecutionError("explicit consent is required for this service")
+        if request.consent is not None and request.consent.actor_id != request.actor.actor_id:
+            raise ExecutionError("consent actor does not match authenticated actor")
+        if request.consent is not None and not request.consent.active():
+            raise ExecutionError("consent is not active")
+
+        try:
+            attempt = self._transactions.claim_attempt_for_dispatch(attempt_id)
+            transaction = self._transactions.get(attempt.transaction_id)
+        except (KeyError, TransactionConflictError) as exc:
+            raise ExecutionError(str(exc)) from exc
+
+        if request.transaction_id is not None and request.transaction_id != transaction.transaction_id:
+            raise ExecutionError("request transaction does not match prepared attempt")
+        if request.attempt_id is not None and request.attempt_id != attempt_id:
+            raise ExecutionError("request attempt does not match prepared attempt")
+        if request.action.id != transaction.action_id:
+            raise ExecutionError("request action does not match prepared transaction")
+        if request.provider_id != attempt.provider_id or request.provider_id != transaction.provider_id:
+            raise ExecutionError("request provider does not match prepared attempt")
+        adapter = self._adapters.get(attempt.provider_id)
+        if adapter is None or adapter.provider_id != attempt.provider_id:
+            raise ExecutionError("no matching provider adapter registered for prepared attempt")
+        if adapter.name != request.route.service:
+            raise ExecutionError("provider adapter service does not match requested route")
+
+        # Stable per-attempt identity is passed to the provider adapter so it
+        # can use it as an external idempotency key if the provider supports it.
+        dispatch_request = ExecutionRequest(
+            action=request.action,
+            route=request.route,
+            actor=request.actor,
+            consent=request.consent,
+            idempotency_key=request.idempotency_key,
+            provider_id=request.provider_id,
+            transaction_id=transaction.transaction_id,
+            attempt_id=attempt_id,
         )
         try:
-            receipt = adapter.execute(request)
-        except (TimeoutError, ConnectionError) as exc:
-            self._transactions.transition_attempt(
-                attempt_id,
-                "unknown",
-                last_error=str(exc),
-            )
+            receipt = adapter.execute(dispatch_request)
+        except Exception as exc:
+            try:
+                self._transactions.transition_attempt(
+                    attempt_id, "unknown", last_error=str(exc)
+                )
+            except (KeyError, TransactionConflictError):
+                pass
             raise ExecutionError(
-                "provider execution outcome is unknown; retry requires a new attempt"
+                "provider execution outcome is unknown; reconcile before any retry"
             ) from exc
 
         if receipt.external_reference is not None:
             transaction = self._transactions.update_external_reference(
-                transaction.transaction_id,
-                receipt.external_reference,
+                transaction.transaction_id, receipt.external_reference,
             )
 
-        self._transactions.transition_attempt(
-            attempt_id,
-            receipt.status,
-            external_reference=receipt.external_reference,
+        # A callback may have advanced the attempt while execute() was in
+        # flight. Do not overwrite that newer state with a stale sync receipt.
+        current_attempt = next(
+            item for item in self._transactions.list_attempts(transaction.transaction_id)
+            if item.attempt_id == attempt_id
         )
+        if current_attempt.status == "submitted":
+            self._transactions.transition_attempt(
+                attempt_id, receipt.status,
+                external_reference=receipt.external_reference,
+            )
 
-        if receipt.status != "submitted":
+        if receipt.status != "submitted" and transaction.status == "submitted":
             transaction = self._transactions.transition(
-                transaction.transaction_id,
-                receipt.status,
+                transaction.transaction_id, receipt.status,
                 external_reference=receipt.external_reference,
                 message=receipt.message,
             )
@@ -242,13 +303,13 @@ class ServiceExecutionGateway:
         return ExecutionReceipt(
             action_id=receipt.action_id,
             service=receipt.service,
-            provider_id=selected_provider,
+            provider_id=attempt.provider_id,
             status=receipt.status,
             external_reference=receipt.external_reference,
             submitted_at=receipt.submitted_at,
             message=receipt.message,
             transaction_id=transaction.transaction_id,
-            idempotency_key=key,
+            idempotency_key=request.idempotency_key,
             attempt_id=attempt_id,
         )
 
