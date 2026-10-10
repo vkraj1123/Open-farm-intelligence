@@ -7,9 +7,9 @@ remain deployment responsibilities.
 
 from __future__ import annotations
 
+import math
 import os
 import re
-from datetime import timedelta
 from typing import Mapping
 
 from ofi.services.dispatch_recovery_worker import DispatchRecoveryWorker
@@ -21,6 +21,32 @@ from ofi.services.transaction_repository import PostgresTransactionRepository
 
 
 _PROVIDER_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+_REQUIRED_TABLES = {
+    "service_transactions",
+    "service_transaction_events",
+    "service_execution_attempts",
+    "service_reconciliation_events",
+}
+
+
+def _validate_database(psycopg_module, database_url: str) -> None:
+    """Fail startup if PostgreSQL is unreachable or the recovery schema is absent."""
+    with psycopg_module.connect(database_url) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_schema = current_schema() "
+                "AND table_name IN (%s, %s, %s, %s)",
+                tuple(sorted(_REQUIRED_TABLES)),
+            )
+            existing = {row[0] for row in cursor.fetchall()}
+    missing = _REQUIRED_TABLES - existing
+    if missing:
+        raise RuntimeError(
+            "recovery database schema is incomplete; missing required tables: "
+            + ", ".join(sorted(missing))
+        )
 
 
 def _required(name: str, environ: Mapping[str, str]) -> str:
@@ -75,8 +101,8 @@ def build_worker(*, environ: Mapping[str, str] | None = None) -> DispatchRecover
             timeout = float(raw_timeout)
         except ValueError as exc:
             raise ValueError("provider timeout must be a positive number") from exc
-        if timeout <= 0:
-            raise ValueError("provider timeout must be a positive number")
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError("provider timeout must be a finite positive number")
         configured[provider_id] = (endpoint, secret, timeout)
 
     try:
@@ -86,6 +112,7 @@ def build_worker(*, environ: Mapping[str, str] | None = None) -> DispatchRecover
             "PostgreSQL recovery requires the optional 'postgres' dependency"
         ) from exc
 
+    _validate_database(psycopg, database_url)
     repository = PostgresTransactionRepository(
         connection_factory=lambda: psycopg.connect(database_url)
     )
