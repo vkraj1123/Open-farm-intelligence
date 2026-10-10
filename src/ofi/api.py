@@ -11,6 +11,12 @@ from ofi.domain.models import CaseOutcome, CaseRecord, FarmCase, Observation, Ob
 from ofi.providers.registry import default_mock_registry
 from ofi.services.case_manager import CaseManager
 from ofi.services.evidence_alignment import align_observations
+from ofi.services.case_repository import InMemoryCaseRepository
+from ofi.twin.farm_twin import FarmTwinStore
+from ofi.services.unit_of_work import (
+    InMemoryFarmCaseUnitOfWork,
+    PostgresFarmCaseUnitOfWork,
+)
 from ofi.services.evidence_comparison import MetricComparisonRule, compare_aligned_observations
 from ofi.services.evidence_comparison_ledger import (
     EvidenceComparisonAssessment,
@@ -20,12 +26,39 @@ from ofi.services.evidence_comparison_ledger import (
 )
 
 
+def _build_postgres_connection_factory():
+    """Return a shared-configuration connection factory, or None for memory mode.
+
+    A configured DSN is fail-closed: missing PostgreSQL dependencies must not
+    silently switch the application back to process-local state.
+    """
+    dsn = os.getenv("OFI_DATABASE_URL")
+    if not dsn:
+        return None
+    try:
+        import psycopg
+    except ImportError as exc:
+        raise RuntimeError(
+            "OFI_DATABASE_URL is configured but psycopg is not installed; "
+            "install the postgres extra to enable durable case/farm persistence"
+        ) from exc
+    return lambda: psycopg.connect(dsn)
+
+
+def _build_case_manager() -> CaseManager:
+    """Select a coordinated durable case/farm store when PostgreSQL is configured."""
+    connection_factory = _build_postgres_connection_factory()
+    if connection_factory is None:
+        return CaseManager()
+    return CaseManager(unit_of_work=PostgresFarmCaseUnitOfWork(connection_factory))
+
+
 app = FastAPI(
     title="Open Farm Intelligence",
     version="0.2.0",
     description="Farm-level intelligence and orchestration layer for Indian agriculture.",
 )
-case_manager = CaseManager()
+case_manager = _build_case_manager()
 provider_registry = default_mock_registry()
 
 
@@ -127,17 +160,10 @@ class EvidenceComparisonAssessmentRequest(BaseModel):
 
 def _build_evidence_comparison_ledger() -> EvidenceComparisonLedger:
     """Use PostgreSQL for durable records when OFI_DATABASE_URL is configured."""
-    dsn = os.getenv("OFI_DATABASE_URL")
-    if not dsn:
+    connection_factory = _build_postgres_connection_factory()
+    if connection_factory is None:
         return InMemoryEvidenceComparisonLedger()
-    try:
-        import psycopg
-    except ImportError as exc:
-        raise RuntimeError(
-            "OFI_DATABASE_URL is configured but psycopg is not installed; "
-            "install the postgres extra to enable durable evidence comparison records"
-        ) from exc
-    return PostgresEvidenceComparisonLedger(lambda: psycopg.connect(dsn))
+    return PostgresEvidenceComparisonLedger(connection_factory)
 
 
 def _policy_payload(policy):
