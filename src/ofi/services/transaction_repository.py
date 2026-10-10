@@ -714,6 +714,7 @@ class PostgresTransactionRepository(TransactionRepository):
                         )
                     return False
 
+                original_transaction_status = transaction.status
                 if evidence.status == "executed":
                     if attempt.status in {"rejected", "failed"} or transaction.status in {"rejected", "failed", "cancelled"}:
                         raise TransactionConflictError("executed reconciliation contradicts terminal failure state")
@@ -751,34 +752,30 @@ class PostgresTransactionRepository(TransactionRepository):
                         attempt.last_error, attempt.attempt_id,
                     ),
                 )
-                if transaction.status != self._get_with_cursor(cur, evidence.transaction_id).status:
-                    pass
-                # The transaction object was locked before its status mutation.
-                if transaction.events:
+                if transaction.status != original_transaction_status:
                     latest_event = transaction.events[-1]
-                    if latest_event.occurred_at >= attempt.updated_at and latest_event.status == transaction.status:
-                        cur.execute(
-                            """
-                            UPDATE service_transactions
-                            SET status=%s, external_reference=%s
-                            WHERE transaction_id=%s
-                            """,
-                            (transaction.status, transaction.external_reference, transaction.transaction_id),
+                    cur.execute(
+                        """
+                        UPDATE service_transactions
+                        SET status=%s, external_reference=%s
+                        WHERE transaction_id=%s
+                        """,
+                        (transaction.status, transaction.external_reference, transaction.transaction_id),
+                    )
+                    cur.execute(
+                        """
+                        INSERT INTO service_transaction_events (
+                            transaction_id, sequence, status, occurred_at,
+                            external_reference, message
                         )
-                        cur.execute(
-                            """
-                            INSERT INTO service_transaction_events (
-                                transaction_id, sequence, status, occurred_at,
-                                external_reference, message
-                            )
-                            VALUES (%s, %s, %s, %s, %s, %s)
-                            """,
-                            (
-                                latest_event.transaction_id, len(transaction.events),
-                                latest_event.status, latest_event.occurred_at,
-                                latest_event.external_reference, latest_event.message,
-                            ),
-                        )
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                        """,
+                        (
+                            latest_event.transaction_id, len(transaction.events),
+                            latest_event.status, latest_event.occurred_at,
+                            latest_event.external_reference, latest_event.message,
+                        ),
+                    )
                 return True
 
     def create_attempt(self, attempt: ExecutionAttempt) -> ExecutionAttempt:
