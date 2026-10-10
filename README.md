@@ -2133,7 +2133,7 @@ This check performs reconciliation GET requests only; it does not dispatch actio
 
 # 45. Farm evidence alignment milestone
 
-The first deterministic evidence-alignment service is implemented in `src/ofi/services/evidence_alignment.py`, with regression tests in `tests/test_evidence_alignment.py` and its contract documented in `docs/evidence-alignment.md`.
+The deterministic evidence-alignment service is implemented in `src/ofi/services/evidence_alignment.py`, with tests in `tests/test_evidence_alignment.py`. The request-scoped API is exposed at `POST /farms/{farm_id}/evidence-frame` and covered by `tests/test_evidence_frame_api.py`; the contract is documented in `docs/evidence-alignment.md`.
 
 | Evidence-pipeline capability | Status | Boundary |
 |---|---|---|
@@ -2142,7 +2142,7 @@ The first deterministic evidence-alignment service is implemented in `src/ofi/se
 | Duplicate-ID protection | Implemented in scoped service | Duplicate observation IDs are all excluded from the frame |
 | Provenance visibility | Implemented in scoped service | Missing provenance is reported; strict exclusion is configurable |
 | Preserve uncertainty inputs | Implemented in scoped service | Quality and confidence remain separate and are not treated as calibrated probabilities |
-| Persistent alignment history / API wiring | Not implemented | Requires a separate repository/API design |
+| Request-scoped evidence-frame API | Implemented | `POST /farms/{farm_id}/evidence-frame`; caller supplies explicit freshness policy; no persistence or automatic reasoning filter |
 | Cross-provider contradiction analysis | Not implemented | Must define comparable metrics, units, time windows and domain tolerances before implementation |
 | Agronomic validation | Not measured | Requires authoritative sources, reviewed policies and field validation |
 

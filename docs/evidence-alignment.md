@@ -54,6 +54,25 @@ frame = align_observations(
 
 The windows above are illustrative only; they are not endorsed defaults for a real deployment. Production use requires reviewed, source-specific policy and tests.
 
+## HTTP API
+
+The endpoint `POST /farms/{farm_id}/evidence-frame` exposes a one-time eligibility report for the current farm snapshot. The caller must provide a positive freshness window for each observation kind it wants to consider; OFI does not silently invent default windows.
+
+Example request:
+
+```json
+{
+  "max_age_seconds_by_kind": {
+    "weather": 86400,
+    "soil": 7776000,
+    "satellite": 1209600
+  },
+  "require_provenance": true
+}
+```
+
+These values are examples only, not endorsed defaults. The response includes the snapshot time, crop-cycle ID, eligible observation IDs, per-observation freshness and eligibility, issue codes, and exclusion counts. Unknown farm snapshots return 404; invalid policies return 422. The endpoint does not mutate observations or the farm twin.
+
 ## Current boundary
 
-This first implementation is deterministic and in-memory. It does not yet persist alignment assessments, compare evidence across providers, infer scientific contradictions, provide source-specific policy versioning, or expose an API endpoint. Those should be separate changes with explicit domain contracts and tests.
+The alignment report is deterministic for the captured snapshot time and supplied policy, but remains in-memory and request-scoped. It does not persist alignment assessments, compare evidence across providers, infer scientific contradictions, provide source-specific policy versioning, or automatically filter the orchestrator's existing reasoning input. A caller must explicitly consume the eligible IDs; automatic reasoning integration is a separate change with a reviewed domain policy.
