@@ -236,6 +236,29 @@ class InMemoryTransactionRepository(TransactionRepository):
         external_reference: str | None = None,
         message: str = "",
     ) -> CallbackResult:
+        # Serialize receipt claim and lifecycle mutation as one in-memory unit.
+        with self._retry_lock:
+            return self._apply_callback_unlocked(
+                provider_id=provider_id,
+                event_id=event_id,
+                transaction_id=transaction_id,
+                attempt_id=attempt_id,
+                status=status,
+                external_reference=external_reference,
+                message=message,
+            )
+
+    def _apply_callback_unlocked(
+        self,
+        *,
+        provider_id: str,
+        event_id: str,
+        transaction_id: str,
+        attempt_id: str,
+        status: TransactionStatus,
+        external_reference: str | None = None,
+        message: str = "",
+    ) -> CallbackResult:
         event_key = (provider_id, event_id)
         original = self._callback_events.get(event_key)
         if original is not None:
@@ -305,6 +328,15 @@ class InMemoryTransactionRepository(TransactionRepository):
         return True
 
     def apply_reconciliation_evidence(
+        self, evidence: ReconciliationEvidence, *, payload_sha256: str
+    ) -> bool:
+        # Receipt identity, state update, and audit append must be serialized.
+        with self._retry_lock:
+            return self._apply_reconciliation_evidence_unlocked(
+                evidence, payload_sha256=payload_sha256
+            )
+
+    def _apply_reconciliation_evidence_unlocked(
         self, evidence: ReconciliationEvidence, *, payload_sha256: str
     ) -> bool:
         if len(payload_sha256) != 64 or any(ch not in "0123456789abcdef" for ch in payload_sha256):
