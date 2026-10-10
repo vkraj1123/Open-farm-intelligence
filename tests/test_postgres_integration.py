@@ -396,6 +396,56 @@ def test_real_postgres_execution_attempts_and_unknown_state(database):
 
 
 
+def test_real_postgres_guarded_retry_is_idempotent_under_concurrency(database):
+    factory = lambda: psycopg.connect(_dsn())
+    repo = PostgresTransactionRepository(factory)
+    repo.create(ServiceTransaction(
+        transaction_id="txn-retry-integration",
+        idempotency_key="retry-integration-key",
+        request_fingerprint="retry-integration-fp",
+        action_id="action-retry-integration",
+        provider_id="provider-retry-integration",
+        status="submitted",
+    ))
+    now = datetime.now(timezone.utc)
+    repo.create_attempt(ExecutionAttempt(
+        attempt_id="attempt-retry-integration-1",
+        transaction_id="txn-retry-integration",
+        attempt_number=1,
+        provider_id="provider-retry-integration",
+        status="unknown",
+        created_at=now,
+        updated_at=now,
+    ))
+    evidence = ReconciliationEvidence(
+        provider_id="provider-retry-integration",
+        transaction_id="txn-retry-integration",
+        attempt_id="attempt-retry-integration-1",
+        event_id="retry-reconcile-event",
+        status="not_executed",
+        checked_at=now,
+        message="Provider confirmed non-execution.",
+    )
+    repo.apply_reconciliation_evidence(evidence, payload_sha256="e" * 64)
+
+    def prepare(_):
+        return PostgresTransactionRepository(factory).create_retry_attempt(
+            transaction_id="txn-retry-integration",
+            prior_attempt_id="attempt-retry-integration-1",
+            retry_request_key="retry-request-integration",
+            attempt_id="attempt-retry-integration-2",
+        )
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        results = list(executor.map(prepare, range(4)))
+
+    assert {item.attempt_id for item in results} == {"attempt-retry-integration-2"}
+    attempts = repo.list_attempts("txn-retry-integration")
+    assert [item.attempt_number for item in attempts] == [1, 2]
+    assert attempts[1].status == "ready"
+    assert attempts[1].retry_of_attempt_id == "attempt-retry-integration-1"
+
+
 def test_real_postgres_reconciliation_receipt_recovery_is_atomic(database):
     factory = lambda: psycopg.connect(_dsn())
     repo = PostgresTransactionRepository(factory)
