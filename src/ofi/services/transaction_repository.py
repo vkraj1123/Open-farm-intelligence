@@ -254,14 +254,19 @@ class InMemoryTransactionRepository(TransactionRepository):
             raise KeyError(attempt_id) from exc
         if attempt.transaction_id != transaction_id or attempt.provider_id != provider_id:
             raise TransactionConflictError("callback attempt does not belong to this provider transaction")
+        prior_attempt_status = attempt.status
         transaction = self.transition(
             transaction_id,
             status,
             external_reference=external_reference,
             message=message,
         )
-        self.transition_attempt(
+        updated_attempt = self.transition_attempt(
             attempt_id, status, external_reference=external_reference
+        )
+        self._append_attempt_event(
+            updated_attempt, from_status=prior_attempt_status,
+            event_type="provider_callback_applied", detail=message,
         )
         self._callback_events[event_key] = (transaction_id, attempt_id)
         return CallbackResult(transaction, True)
@@ -330,6 +335,7 @@ class InMemoryTransactionRepository(TransactionRepository):
             raise TransactionConflictError(
                 "reconciliation attempt does not belong to this provider transaction"
             )
+        prior_attempt_status = attempt.status
 
         if evidence.status == "executed":
             if attempt.status in {"rejected", "failed"} or transaction.status in {"rejected", "failed", "cancelled"}:
@@ -357,6 +363,11 @@ class InMemoryTransactionRepository(TransactionRepository):
             attempt.external_reference = evidence.external_reference
         self._attempts[evidence.attempt_id] = deepcopy(attempt)
         self._transactions[evidence.transaction_id] = deepcopy(transaction)
+        self._append_attempt_event(
+            attempt, from_status=prior_attempt_status,
+            event_type="reconciliation_evidence_applied",
+            detail=f"{evidence.status}: {evidence.message}",
+        )
         self._reconciliation_events[event_key] = (*fingerprint, True)
         return True
 
@@ -785,6 +796,20 @@ class PostgresTransactionRepository(TransactionRepository):
                 )
                 if cur.rowcount != 1:
                     raise TransactionConflictError("callback attempt changed during update")
+                cur.execute(
+                    """
+                    INSERT INTO service_execution_attempt_events (
+                        transaction_id, attempt_id, from_status, to_status,
+                        event_type, occurred_at, external_reference, detail
+                    )
+                    VALUES (%s, %s, %s, %s, 'provider_callback_applied',
+                            now(), %s, %s)
+                    """,
+                    (
+                        transaction_id, attempt_id, attempt.status, status,
+                        external_reference, message,
+                    ),
+                )
                 return CallbackResult(working, True)
 
     def record_reconciliation_evidence(
@@ -942,6 +967,22 @@ class PostgresTransactionRepository(TransactionRepository):
                     (
                         attempt.status, attempt.updated_at, attempt.external_reference,
                         attempt.last_error, attempt.attempt_id,
+                    ),
+                )
+                cur.execute(
+                    """
+                    INSERT INTO service_execution_attempt_events (
+                        transaction_id, attempt_id, from_status, to_status,
+                        event_type, occurred_at, external_reference, detail
+                    )
+                    VALUES (%s, %s, %s, %s, 'reconciliation_evidence_applied',
+                            now(), %s, %s)
+                    """,
+                    (
+                        evidence.transaction_id, evidence.attempt_id,
+                        prior_attempt_status, attempt.status,
+                        evidence.external_reference,
+                        f"{evidence.status}: {evidence.message}",
                     ),
                 )
                 cur.execute(
