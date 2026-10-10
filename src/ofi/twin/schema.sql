@@ -223,7 +223,7 @@ CREATE INDEX IF NOT EXISTS service_execution_attempt_events_transaction_sequence
     ON service_execution_attempt_events (transaction_id, event_id);
 
 CREATE OR REPLACE FUNCTION record_service_execution_attempt_event()
-RETURNS TRIGGER AS $
+RETURNS TRIGGER AS $$
 DECLARE
     prior_status TEXT;
     audit_type TEXT;
@@ -261,7 +261,7 @@ BEGIN
     );
     RETURN NEW;
 END;
-$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql;
 
 DROP TRIGGER IF EXISTS service_execution_attempt_audit_trigger
     ON service_execution_attempts;
@@ -271,11 +271,11 @@ FOR EACH ROW EXECUTE FUNCTION record_service_execution_attempt_event();
 
 -- Application code cannot rewrite or delete audit history.
 CREATE OR REPLACE FUNCTION reject_service_execution_attempt_event_mutation()
-RETURNS TRIGGER AS $
+RETURNS TRIGGER AS $$
 BEGIN
     RAISE EXCEPTION 'service execution attempt audit history is append-only';
 END;
-$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql;
 
 DROP TRIGGER IF EXISTS service_execution_attempt_events_immutable_trigger
     ON service_execution_attempt_events;
