@@ -28,22 +28,28 @@ Or supply the URL as a command-line argument when your local workflow requires i
 ofi-schema --database-url 'postgresql://...'
 ```
 
-The command applies the idempotent canonical script at `src/ofi/twin/schema.sql`, including the PostGIS extension and the `ofi_schema_migrations` version marker, in a database transaction. It can be rerun safely for the current schema version. It refuses to apply an older application schema if the database's recorded version is newer. The current schema version is **1**.
+The `ofi-schema` command applies numbered SQL files from `src/ofi/twin/migrations/` in a single database transaction. The current registry contains:
+
+| Version | Migration | Purpose |
+|---:|---|---|
+| 1 | `001_initial_postgis_case_service_and_evidence_schema.sql` | Initial farm/case/service/evidence schema and PostGIS support |
+| 2 | `002_case_record_version_constraint.sql` | Enforce non-negative optimistic versions on case records |
+
+Each migration records its name and SHA-256 checksum in `ofi_schema_migrations`. Applied migrations are immutable: re-running is a no-op when the migration record matches; a checksum or name mismatch fails closed. The runner serializes concurrent migration processes with a PostgreSQL advisory transaction lock and records each version only in the transaction that applies its SQL. It refuses to run if it sees a newer version or a missing predecessor.
+
+The `src/ofi/twin/schema.sql` file remains as a compatibility/bootstrap script representing version 1, so older development and integration setups can create the baseline schema. Use `ofi-schema` for application installs and upgrades; after applying only the baseline script, `/ready` correctly reports an outdated schema until pending migrations are applied. The runner upgrades an existing v1 marker that predates checksums and applies the pending v2 migration.
 
 The database user needs permission to create the PostGIS extension if it is not already installed, and to create/alter the application's tables and indexes. In managed PostgreSQL services, a database administrator may need to enable PostGIS first. Back up production data before applying schema changes, and test migrations against a staging copy.
 
-## Schema-version discipline
+## Adding a schema migration
 
-The migration registry records the schema revision applied by the canonical schema script. For a future incompatible or additive schema revision:
+1. Create the next contiguous, numerically prefixed SQL file, for example `003_add_observation_index.sql`. Do not edit files already applied to shared databases.
+2. Add a `SchemaMigration` entry to `MIGRATIONS` in `src/ofi/twin/migration_registry.py`, with the next version number, stable name and filename. The current version is derived from the last registry entry; readiness uses that registry value.
+3. Make the SQL forward-compatible, safe for existing data, and transactional. For potentially large production tables, assess table locks and use a staged/concurrent migration strategy where appropriate.
+4. Add PostgreSQL integration tests that start from the previous supported version, apply the migration, verify the resulting schema, and confirm a second run is a no-op.
+5. Run standard and PostgreSQL CI. Test on a staging copy and verify backups/recovery before applying to production.
 
-1. Add the forward-compatible SQL changes and preserve existing data.
-2. Increment `CURRENT_SCHEMA_VERSION` in `ofi.services.database_readiness`.
-3. Add a new version row at the end of `src/ofi/twin/schema.sql` with a migration name. Do not rewrite old version rows.
-4. Add PostgreSQL integration coverage for upgrading from the prior supported schema and verifying the new version.
-5. Run standard and PostgreSQL CI; apply in staging before production.
-
-Version 1 is the repository's baseline schema marker; it is not a historical chain of individually replayable SQL files. The full schema script is idempotent bootstrap/upgrade SQL. If the project adopts non-idempotent incremental migrations, those should be separate, ordered migration files rather than edits that rerun data-destructive statements.
-
+The registry validates contiguous numbering and unique migration names/filenames at import time. The runner stores SHA-256 checksums and rejects drift in applied SQL. If an already-released migration is wrong, create a new corrective migration instead of rewriting history.
 ## Operational boundary
 
 A successful readiness check confirms connectivity and expected schema objects only. It does not check connection-pool saturation, backups, point-in-time recovery, provider availability, alert delivery, or agricultural model validity. Production operations still require credentials management, network policy, monitoring, backup/recovery drills and staging verification.

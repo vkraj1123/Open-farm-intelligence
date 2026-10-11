@@ -198,8 +198,13 @@ Open-farm-intelligence/
 │   │   ├── repository.py
 │   │   ├── farm_twin.py
 │   │   ├── postgis.py
-│   │   └── schema.sql
-│   │       # Farm Digital Twin and persistence boundary
+│   │   ├── schema.sql
+│   │   ├── migration_registry.py
+│   │   ├── migrate.py
+│   │   └── migrations/
+│   │       ├── 001_initial_postgis_case_service_and_evidence_schema.sql
+│   │       └── 002_case_record_version_constraint.sql
+│   │       # Farm Digital Twin, ordered SQL migrations and persistence boundary
 │   │
 │   ├── providers/
 │   │   ├── base.py
@@ -2229,22 +2234,23 @@ The API now uses one configuration switch for PostgreSQL-backed case/farm state 
 **Verification:** PR [#51](https://github.com/vkraj1123/Open-farm-intelligence/pull/51) passed standard CI (run #774) and PostgreSQL CI (run #639) before merge. The implementation was merged to `main` as [`5f9ee680dcedc7a885c7c2691233a1876c5ab321`](https://github.com/vkraj1123/Open-farm-intelligence/commit/5f9ee680dcedc7a885c7c2691233a1876c5ab321). PostgreSQL integration tests use the dedicated `OFI_POSTGRES_DSN` test database. These checks verify software persistence, restart retrieval and rollback behavior, not live deployment, operational recovery readiness or agricultural validity.
 
 
-# 50. Versioned schema bootstrap and persistence readiness
+# 50. Ordered schema migrations and persistence readiness
 
-The canonical PostgreSQL/PostGIS schema script now records version 1 in `ofi_schema_migrations`. The `ofi-schema` CLI applies the idempotent schema script transactionally and refuses to proceed when the database's recorded schema is newer than the running application. This is a versioned bootstrap/upgrade script, not yet a chain of independently replayable migration files.
+PR #53 added the version marker and `/ready` endpoint. PR [#55](https://github.com/vkraj1123/Open-farm-intelligence/pull/55) (currently under validation) builds on that baseline with ordered, checksummed SQL migrations. The application schema version is now **2**. Version 1 establishes the initial PostgreSQL/PostGIS farm, case, service and evidence schema. Version 2 adds a non-negative constraint to optimistic case-record versions.
 
-The API's `GET /health` remains a liveness-only endpoint. `GET /ready` evaluates the configured storage mode: memory mode is explicitly reported as non-durable, while PostgreSQL mode requires a successful connection, PostGIS, expected schema relations and the exact supported schema version. Unready PostgreSQL persistence returns HTTP 503. The report does not disclose the database URL or raw driver exception text.
+`ofi-schema` applies pending files in `src/ofi/twin/migrations/` in numeric order, records each migration name and SHA-256 checksum, serializes concurrent migration runs with an advisory transaction lock, and rejects missing predecessors, checksum drift or a database version newer than the application. Existing v1 databases are adopted safely: the runner adds checksum metadata, backfills the known v1 fingerprint for the legacy marker, then applies v2. Applied SQL files are immutable; corrections must be new migrations.
+
+The `src/ofi/twin/schema.sql` remains a compatibility bootstrap script for the version-1 baseline. Use `ofi-schema` for installations and upgrades. `/health` is liveness-only; `/ready` returns HTTP 503 if configured PostgreSQL persistence lacks connectivity, PostGIS, required relations or the current schema version. In-memory mode is explicitly marked non-durable.
 
 | Capability | Status | Boundary |
 |---|---|---|
-| Schema version registry | Implemented | Current application schema version is 1; future revisions must increment the constant and add a new marker row |
-| `ofi-schema` command | Implemented | Uses `OFI_DATABASE_URL` by default and applies `src/ofi/twin/schema.sql`; database permissions and PostGIS are prerequisites |
-| Refuse newer database schema | Implemented | Prevents an older application from blindly reapplying its older baseline script |
-| Runtime readiness probe | Implemented | Checks database connection, PostGIS, required persistence relations and exact schema version |
-| Separate liveness and readiness | Implemented | `/health` does not require DB availability; `/ready` reports persistence readiness |
-| Sanitized failure response | Implemented | HTTP 503 in unready PostgreSQL mode without returning DSN or raw database exception details |
-| Incremental migration history | Not yet implemented | Version 1 is a baseline marker; future non-idempotent changes should become ordered migration files |
-| Operational recovery and production deployment | Not demonstrated | Requires staging verification, backups and recovery drills, monitored readiness probes and deployment-specific secrets |
-| Agricultural field validation | Not completed | Persistence readiness is infrastructure health, not model or agronomic validation |
+| Ordered migration registry | Implemented in this PR | Contiguous version numbers, unique names and filenames; current version derives from the last registry entry |
+| Immutable migration checksums | Implemented in this PR | Detects edits to SQL already marked as applied |
+| Legacy v1 to v2 upgrade | Integration-tested in this PR | Validates pending migration application and repeatability against PostgreSQL CI |
+| Concurrent migration guard | Implemented in this PR | PostgreSQL advisory transaction lock serializes migration attempts |
+| Migration packaging | Implemented in this PR | SQL files are included in package distributions |
+| Readiness and liveness separation | Previously merged in PR #53 | `/health` does not require DB; `/ready` checks persisted schema version |
+| Production migration rehearsal and recovery | Not demonstrated | Requires staging, real backup/restore drills, and operational monitoring |
+| Agricultural field validation | Not completed | Schema integrity is infrastructure quality, not agricultural model validation |
 
-**Verification:** PR [#53](https://github.com/vkraj1123/Open-farm-intelligence/pull/53) passed standard CI (run #778) and PostgreSQL CI (run #643) before merge. The milestone was merged to `main` as [`0dc6c70b9eb4bf6d073fd5f3aa4be1ecdeba5c0a`](https://github.com/vkraj1123/Open-farm-intelligence/commit/0dc6c70b9eb4bf6d073fd5f3aa4be1ecdeba5c0a). Operational steps and future versioning rules are documented in `docs/database-operations.md`. Green CI does not itself demonstrate live database operations, backup/recovery readiness, or agricultural field validity.
+The ordered migration strategy and commands are described in `docs/database-operations.md`. CI results will be added to this tracker once the implementation PR finishes both required checks.

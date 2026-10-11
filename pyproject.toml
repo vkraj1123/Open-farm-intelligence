@@ -29,3 +29,6 @@ testpaths = ["tests"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+ofi = ["twin/schema.sql", "twin/migrations/*.sql"]
