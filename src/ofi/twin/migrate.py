@@ -85,15 +85,20 @@ def apply_schema(database_url: str | None = None) -> int:
                         f"Migration version {migration.version} is recorded as "
                         f"{existing_name!r}, expected {migration.name!r}"
                     )
-                if existing_checksum and existing_checksum != checksum:
+                if existing_checksum is not None and existing_checksum != checksum:
                     raise RuntimeError(
                         f"Checksum mismatch for applied migration "
                         f"{migration.version} ({migration.name}); applied SQL "
                         "must not be edited"
                     )
                 if existing_checksum is None:
-                    # One-time adoption of the legacy v1 marker. The schema was
-                    # previously managed by the idempotent schema.sql bootstrap.
+                    # Only v1 existed before checksum tracking was introduced.
+                    # Do not silently bless checksum-less records for new SQL.
+                    if migration.version != 1:
+                        raise RuntimeError(
+                            f"Applied migration {migration.version} is missing "
+                            "its checksum; inspect the migration ledger before proceeding"
+                        )
                     with connection.cursor() as cursor:
                         cursor.execute(
                             "UPDATE ofi_schema_migrations SET checksum=%s "
