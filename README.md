@@ -2272,3 +2272,24 @@ The rehearsal compares row counts for every required persistence table and full-
 | Production recovery readiness | Not demonstrated | This CI/staging harness does not verify backup retention, off-site copies, point-in-time recovery, RTO/RPO, or a production incident recovery |
 
 Operational commands and safety boundaries are documented in `docs/database-operations.md`. The CI tests use disposable databases on the isolated PostgreSQL service and install client utilities as part of the workflow. **Verification:** standard run [#657](https://github.com/vkraj1123/Open-farm-intelligence/actions/runs/38098149219) and PostgreSQL-backed run [#792](https://github.com/vkraj1123/Open-farm-intelligence/actions/runs/38098149214) passed on the PR head. This verifies a disposable CI backup/restore and migration rehearsal, not a production recovery event.
+
+
+# 52. Encrypted scheduled staging recovery drills
+
+PR [#59](https://github.com/vkraj1123/Open-farm-intelligence/pull/59) added the repeatable encrypted recovery drill and merged to `main` as [`b25b0b27132477db159c286665ce7b71216dbc1d`](https://github.com/vkraj1123/Open-farm-intelligence/commit/b25b0b27132477db159c286665ce7b71216dbc1d). The drill supports a source database at either the immediately prior schema version (to rehearse the next migration) or the current schema version (for recurring restoration verification).
+
+The new `ofi-recovery-drill` command creates a uniquely named, empty restore database from a separate maintenance DSN, calls the recovery harness, and drops the temporary database after the check. The source database is read and dumped but never migrated or written by the rehearsal. The harness checks row counts for all required persistence relations, full-row fingerprints for core data relations, schema version, and `/ready` readiness after any pending migration.
+
+The custom-format `pg_dump` is encrypted with `age` to the configured public recipient before the temporary plaintext dump is deleted. GitHub Actions retains the encrypted `.dump.age` artifact and a JSON report for **30 days**. The report records the encrypted artifact's byte size and SHA-256 checksum. A temporary age keypair in PostgreSQL CI verifies that the retained artifact decrypts back to a valid PostgreSQL custom-format dump; the same integration test confirms the ephemeral restore database is removed.
+
+| Capability | Status | Boundary |
+|---|---|---|
+| Scheduled/manual workflow | Implemented in PR #59 | Runs Mondays at 09:00 Asia/Kolkata or via `workflow_dispatch`; it skips when required Actions secrets are absent |
+| Current-schema restore rehearsal | Integration-tested in PostgreSQL CI | Verifies backup/restore without needing a pending migration; does not prove an actual live staging recovery |
+| Encrypted backup artifact | Implemented and integration-tested | Uses an `age` public recipient; the private decryption identity must be stored separately and securely |
+| Disposable restore database | Covered by integration test | A dedicated maintenance role needs database create/drop privileges; use staging-only infrastructure |
+| Artifact retention | Implemented | GitHub Actions artifact retention is 30 days; this is not an independent off-site backup service |
+| Production recovery readiness | Not demonstrated | Still needs approved off-site/provider-native backups, independent key custody, retention policy, real restore drills, and agreed RPO/RTO targets |
+| Agricultural field validation | Not completed | Recovery infrastructure tests do not validate farm recommendations or agronomic outcomes |
+
+**Verification:** PR CI passed the standard workflow ([run #676](https://github.com/vkraj1123/Open-farm-intelligence/actions/runs/38098779417)) and PostgreSQL-backed workflow ([run #811](https://github.com/vkraj1123/Open-farm-intelligence/actions/runs/38098779415)). Both workflows also passed on `main` after merge: [standard run #677](https://github.com/vkraj1123/Open-farm-intelligence/actions/runs/38098846894) and [PostgreSQL-backed run #812](https://github.com/vkraj1123/Open-farm-intelligence/actions/runs/38098846920). These runs validate repository tests only; the scheduled live workflow will remain skipped until the three required Actions secrets are configured.
