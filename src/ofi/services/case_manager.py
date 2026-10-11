@@ -150,12 +150,16 @@ class CaseManager:
             derived = derived_ndvi_observation(snapshot)
             if derived:
                 record.case.observations.append(derived)
-                self.farm_twin.add_observation(record.case.farm.id, derived)
+                self.farm_twin.add_observation(
+                    record.case.farm.id, derived, tenant_id=farm_tenant_id
+                )
                 self._event(record, "observation_derived", "geospatial_analytics", {"observation_id": derived.id})
-            scientific_observations = self.scientific_models.run(self.farm_twin.snapshot(record.case.farm.id))
+            scientific_observations = self.scientific_models.run(self.farm_twin.snapshot(record.case.farm.id, tenant_id=farm_tenant_id))
             for scientific in scientific_observations:
                 record.case.observations.append(scientific)
-                self.farm_twin.add_observation(record.case.farm.id, scientific)
+                self.farm_twin.add_observation(
+                    record.case.farm.id, scientific, tenant_id=farm_tenant_id
+                )
                 self._event(record, "observation_derived", scientific.source, {"observation_id": scientific.id})
             return self.store.get(record.case.id, tenant_id=farm_tenant_id)
 

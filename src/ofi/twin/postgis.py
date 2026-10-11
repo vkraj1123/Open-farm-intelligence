@@ -90,6 +90,17 @@ class PostGISFarmTwinStore(FarmTwinRepository):
                     raise KeyError(farm_id)
                 return self._farm_from_row(cur, row)
 
+    @staticmethod
+    def _require_farm_scope(cur: Any, farm_id: str, tenant_id: str | None) -> None:
+        """Lock the farm row and validate scope in the same transaction as a child write."""
+        cur.execute(
+            "SELECT tenant_id FROM farms WHERE id=%s FOR KEY SHARE",
+            (farm_id,),
+        )
+        row = cur.fetchone()
+        if row is None or (tenant_id is not None and row[0] != tenant_id):
+            raise KeyError(farm_id)
+
     def register_crop_cycle(
         self,
         farm_id: str,
@@ -97,10 +108,9 @@ class PostGISFarmTwinStore(FarmTwinRepository):
         *,
         tenant_id: str | None = None,
     ) -> None:
-        # Reject a tenant mismatch before touching any farm-child records.
-        self.get(farm_id, tenant_id=tenant_id)
         with connection_scope(self._connection_factory) as conn:
             with conn.cursor() as cur:
+                self._require_farm_scope(cur, farm_id, tenant_id)
                 cur.execute("SELECT 1 FROM crop_cycles WHERE id=%s", (crop_cycle.id,))
                 if cur.fetchone():
                     raise ValueError(f"crop cycle already registered: {crop_cycle.id}")
@@ -113,10 +123,9 @@ class PostGISFarmTwinStore(FarmTwinRepository):
         *,
         tenant_id: str | None = None,
     ) -> None:
-        # Reject a tenant mismatch before touching any farm-child records.
-        self.get(farm_id, tenant_id=tenant_id)
         with connection_scope(self._connection_factory) as conn:
             with conn.cursor() as cur:
+                self._require_farm_scope(cur, farm_id, tenant_id)
                 self._insert_party(cur, farm_id, party)
 
     def add_contract(
@@ -126,10 +135,9 @@ class PostGISFarmTwinStore(FarmTwinRepository):
         *,
         tenant_id: str | None = None,
     ) -> None:
-        # Reject a tenant mismatch before touching any farm-child records.
-        self.get(farm_id, tenant_id=tenant_id)
         with connection_scope(self._connection_factory) as conn:
             with conn.cursor() as cur:
+                self._require_farm_scope(cur, farm_id, tenant_id)
                 self._insert_contract(cur, farm_id, contract)
 
     def add_observation(
@@ -139,8 +147,6 @@ class PostGISFarmTwinStore(FarmTwinRepository):
         *,
         tenant_id: str | None = None,
     ) -> None:
-        # Reject a tenant mismatch before touching any farm-child records.
-        self.get(farm_id, tenant_id=tenant_id)
         location_wkt = None
         if observation.location:
             location_wkt = (
@@ -149,6 +155,7 @@ class PostGISFarmTwinStore(FarmTwinRepository):
             )
         with connection_scope(self._connection_factory) as conn:
             with conn.cursor() as cur:
+                self._require_farm_scope(cur, farm_id, tenant_id)
                 cur.execute(
                     """
                     INSERT INTO observations (
