@@ -42,7 +42,8 @@ def test_legacy_v1_bootstrap_applies_pending_v2_migration():
             "ALTER TABLE case_records DROP CONSTRAINT IF EXISTS "
             "case_records_version_nonnegative"
         )
-        connection.execute("DELETE FROM ofi_schema_migrations WHERE version = 2")
+        connection.execute("DELETE FROM ofi_schema_migrations WHERE version > 1")
+        connection.execute("DROP TABLE IF EXISTS ofi_consent_grants CASCADE")
         # Emulate the pre-checksum migration ledger schema from the last release.
         connection.execute(
             "ALTER TABLE ofi_schema_migrations DROP COLUMN IF EXISTS checksum"
@@ -63,7 +64,7 @@ def test_legacy_v1_bootstrap_applies_pending_v2_migration():
             """
         ).fetchone()[0]
 
-    assert [row[0] for row in versions] == [1, 2]
+    assert [row[0] for row in versions] == [item.version for item in MIGRATIONS]
     assert constraint == 1
 
 
