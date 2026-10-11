@@ -2258,7 +2258,7 @@ The ordered migration strategy and commands are described in `docs/database-oper
 
 # 51. Staging migration and recovery rehearsal
 
-PR #57 (currently under validation) adds `ofi-recovery-check`, a non-destructive source-to-disposable-target rehearsal for the currently registered v1→v2 upgrade. It takes a custom-format `pg_dump` from a source database, restores it into a separately provisioned empty database, applies pending migrations to that restored copy, and checks application readiness. The source database is not migrated or written by the harness.
+PR [#57](https://github.com/vkraj1123/Open-farm-intelligence/pull/57) added `ofi-recovery-check`, a non-destructive source-to-disposable-target rehearsal for the currently registered v1→v2 upgrade. It passed the standard test workflow (run #657) and PostgreSQL-backed workflow (run #792) before merge as [`8af7eca25d2eaa2038dfb1a79c98dc058c527d07`](https://github.com/vkraj1123/Open-farm-intelligence/commit/8af7eca25d2eaa2038dfb1a79c98dc058c527d07). It takes a custom-format `pg_dump` from a source database, restores it into a separately provisioned empty database, applies pending migrations to that restored copy, and checks application readiness. The source database is not migrated or written by the harness.
 
 The rehearsal compares row counts for every required persistence table and full-row fingerprints for core farm/case/service/evidence tables across the source snapshot, restored v1 copy, and upgraded v2 copy. A separate PostgreSQL integration test injects a negative case-record version to force v2 to fail and verifies that the DDL, checksum backfill, and migration marker all roll back; the repair and retry then succeeds.
 
@@ -2271,4 +2271,4 @@ The rehearsal compares row counts for every required persistence table and full-
 | CLI | Implemented in this PR | `ofi-recovery-check` uses `OFI_RECOVERY_SOURCE_DSN` and `OFI_RECOVERY_RESTORE_DSN`; restore target must be empty |
 | Production recovery readiness | Not demonstrated | This CI/staging harness does not verify backup retention, off-site copies, point-in-time recovery, RTO/RPO, or a production incident recovery |
 
-Operational commands and safety boundaries are documented in `docs/database-operations.md`. The CI tests use disposable databases on the isolated PostgreSQL service and install client utilities as part of the workflow.
+Operational commands and safety boundaries are documented in `docs/database-operations.md`. The CI tests use disposable databases on the isolated PostgreSQL service and install client utilities as part of the workflow. **Verification:** standard run [#657](https://github.com/vkraj1123/Open-farm-intelligence/actions/runs/38098149219) and PostgreSQL-backed run [#792](https://github.com/vkraj1123/Open-farm-intelligence/actions/runs/38098149214) passed on the PR head. This verifies a disposable CI backup/restore and migration rehearsal, not a production recovery event.
