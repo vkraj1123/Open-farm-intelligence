@@ -214,14 +214,24 @@ class CaseManager:
             "message": latest.message,
         })
 
-    def record_outcome(self, case_id: str, outcome: CaseOutcome, actor: str = "farmer") -> CaseRecord:
+    def record_outcome(
+        self,
+        case_id: str,
+        outcome: CaseOutcome,
+        actor: str = "farmer",
+        *,
+        tenant_id: str | None = None,
+    ) -> CaseRecord:
         with self.unit_of_work.atomic():
-            record = self.store.get(case_id)
+            record = self.store.get(case_id, tenant_id=tenant_id)
+            farm_tenant_id = tenant_id if tenant_id is not None else record.case.farm.tenant_id
             record.outcome = outcome
             record.case.status = "resolved" if outcome.outcome == "resolved" else "observing"
             for observation in outcome.evidence:
                 record.case.observations.append(observation)
-                self.farm_twin.add_observation(record.case.farm.id, observation)
+                self.farm_twin.add_observation(
+                    record.case.farm.id, observation, tenant_id=farm_tenant_id
+                )
             return self._event(record, "outcome_recorded", actor, {"outcome": outcome.outcome})
 
     def record_action_outcome(self, case_id: str, action, outcome, feedback_service=None):

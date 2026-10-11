@@ -597,7 +597,11 @@ def record_outcome(
 ):
     _case_or_404(case_id, actor)
     try:
-        return case_manager.record_outcome(case_id, outcome)
+        return case_manager.record_outcome(
+            case_id,
+            outcome,
+            tenant_id=actor.tenant_id if actor is not None else None,
+        )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="case not found") from exc
 
