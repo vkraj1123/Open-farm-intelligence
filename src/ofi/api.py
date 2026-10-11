@@ -2,15 +2,23 @@ from datetime import datetime, timedelta, timezone
 import math
 import os
 from uuid import uuid4
-from typing import get_args
+from typing import Literal, get_args
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
 from ofi.domain.models import CaseOutcome, CaseRecord, FarmCase, Observation, ObservationKind
 from ofi.providers.registry import default_mock_registry
 from ofi.services.case_manager import CaseManager
+
+from ofi.services.consent_repository import (
+    ConsentRepository,
+    InMemoryConsentRepository,
+    PostgresConsentRepository,
+)
+from ofi.services.execution_gateway import ActorIdentity, ConsentGrant
+from ofi.api_auth import require_authenticated_actor
 from ofi.services.database_readiness import check_persistence_readiness
 from ofi.services.evidence_alignment import align_observations
 from ofi.services.unit_of_work import PostgresFarmCaseUnitOfWork
@@ -54,6 +62,15 @@ def _build_case_manager(connection_factory=_UNSET_CONNECTION_FACTORY) -> CaseMan
     return CaseManager(unit_of_work=PostgresFarmCaseUnitOfWork(connection_factory))
 
 
+def _build_consent_repository(connection_factory=_UNSET_CONNECTION_FACTORY) -> ConsentRepository:
+    """Use the shared durable database connection, or process-local memory."""
+    if connection_factory is _UNSET_CONNECTION_FACTORY:
+        connection_factory = _build_postgres_connection_factory()
+    if connection_factory is None:
+        return InMemoryConsentRepository()
+    return PostgresConsentRepository(connection_factory)
+
+
 app = FastAPI(
     title="Open Farm Intelligence",
     version="0.2.0",
@@ -64,6 +81,121 @@ app = FastAPI(
 postgres_connection_factory = _build_postgres_connection_factory()
 case_manager = _build_case_manager(postgres_connection_factory)
 provider_registry = default_mock_registry()
+
+consent_repository = _build_consent_repository(postgres_connection_factory)
+
+
+class ConsentGrantRequest(BaseModel):
+    """Explicit affirmative consent to named services, from the verified actor."""
+
+    model_config = {"extra": "forbid"}
+
+    purpose: str = Field(min_length=1, max_length=500)
+    scopes: list[str] = Field(min_length=1, max_length=25)
+    affirmative: Literal[True]
+    expires_at: datetime | None = None
+
+    @field_validator("purpose")
+    @classmethod
+    def purpose_must_not_be_blank(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("purpose must not be blank")
+        return normalized
+
+    @field_validator("scopes")
+    @classmethod
+    def scopes_must_be_unique_nonempty_values(cls, value: list[str]) -> list[str]:
+        normalized = [scope.strip() if isinstance(scope, str) else "" for scope in value]
+        if any(not scope or len(scope) > 120 for scope in normalized):
+            raise ValueError("each service scope must be non-empty and at most 120 characters")
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("service scopes must be unique")
+        return normalized
+
+    @field_validator("expires_at")
+    @classmethod
+    def expiry_must_have_timezone(cls, value: datetime | None) -> datetime | None:
+        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
+            raise ValueError("expires_at must be timezone-aware")
+        return value
+
+
+def _require_consent_subject(actor: ActorIdentity) -> None:
+    if actor.role not in {"farmer", "cultivator", "owner"}:
+        raise HTTPException(
+            status_code=403,
+            detail="only a farmer, cultivator, or owner may manage consent",
+        )
+
+
+def _consent_payload(grant: ConsentGrant) -> dict:
+    return {
+        "consent_id": grant.consent_id,
+        "actor_id": grant.actor_id,
+        "purpose": grant.purpose,
+        "status": grant.status,
+        "scopes": list(grant.scopes),
+        "granted_at": grant.granted_at.isoformat(),
+        "expires_at": grant.expires_at.isoformat() if grant.expires_at else None,
+        "revoked_at": grant.revoked_at.isoformat() if grant.revoked_at else None,
+        "active": grant.active(),
+    }
+
+
+@app.post("/consents", status_code=201)
+def create_consent(
+    request: ConsentGrantRequest,
+    actor: ActorIdentity = Depends(require_authenticated_actor),
+):
+    """Create a scoped grant for the verified actor after affirmative consent."""
+    _require_consent_subject(actor)
+    now = datetime.now(timezone.utc)
+    try:
+        grant = ConsentGrant(
+            actor_id=actor.actor_id,
+            purpose=request.purpose,
+            status="granted",
+            granted_at=now,
+            expires_at=request.expires_at,
+            scopes=tuple(request.scopes),
+        )
+        stored = consent_repository.create(grant)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _consent_payload(stored)
+
+
+@app.get("/consents/{consent_id}")
+def get_consent(
+    consent_id: str,
+    actor: ActorIdentity = Depends(require_authenticated_actor),
+):
+    """Return only a grant owned by the verified actor."""
+    _require_consent_subject(actor)
+    try:
+        grant = consent_repository.get(consent_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="consent grant not found") from exc
+    if grant.actor_id != actor.actor_id:
+        raise HTTPException(status_code=404, detail="consent grant not found")
+    return _consent_payload(grant)
+
+
+@app.delete("/consents/{consent_id}")
+def revoke_consent(
+    consent_id: str,
+    actor: ActorIdentity = Depends(require_authenticated_actor),
+):
+    """Record actor-bound revocation without deleting the consent record."""
+    _require_consent_subject(actor)
+    try:
+        grant = consent_repository.revoke(consent_id, actor_id=actor.actor_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="consent grant not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _consent_payload(grant)
 
 
 class EvidenceFrameRequest(BaseModel):
