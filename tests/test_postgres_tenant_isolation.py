@@ -1,13 +1,13 @@
 """PostgreSQL integration tests for tenant-scoped persistence boundaries."""
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
 
 psycopg = pytest.importorskip("psycopg")
 
-from ofi.domain.models import CropCycle, Farm, FarmCase, GeoPoint, Parcel
+from ofi.domain.models import CropCycle, Farm, FarmCase, GeoPoint, LandParty, Parcel
 from ofi.services.consent_repository import PostgresConsentRepository
 from ofi.services.evidence_comparison import MetricComparisonRule
 from ofi.services.evidence_comparison_ledger import (
@@ -37,6 +37,14 @@ def farm_fixture(*, farm_id, farmer_id, tenant_id, parcel_id=None, crop_id=None)
             location=GeoPoint(latitude=27.0, longitude=72.0),
         ),
         crop_cycle=CropCycle(id=crop_id or f"crop-{uuid4().hex}", crop="bajra"),
+        parties=[
+            LandParty(
+                party_id=f"owner-{farmer_id}",
+                role="owner",
+                valid_from=date(2000, 1, 1),
+                verification="verified",
+            )
+        ],
     )
 
 
@@ -69,7 +77,10 @@ def test_postgres_farm_case_policy_assessment_and_consent_are_tenant_scoped():
         tenant_id=tenant_a,
     )
     farm_store.upsert(farm)
-    assert farm_store.get(farm_id).tenant_id == tenant_a
+    loaded_farm = farm_store.get(farm_id)
+    assert loaded_farm.tenant_id == tenant_a
+    assert loaded_farm.parties[0].party_id == f"owner-{farmer_id}"
+    assert loaded_farm.parties[0].verification == "verified"
 
     # A globally colliding farm ID cannot silently move to another tenant,
     # even when a caller reaches the repository below the HTTP/API boundary.
@@ -82,6 +93,12 @@ def test_postgres_farm_case_policy_assessment_and_consent_are_tenant_scoped():
         farm_store.upsert(takeover)
     assert farm_store.get(farm_id).tenant_id == tenant_a
     assert farm_store.get(farm_id).farmer_id == farmer_id
+    with pytest.raises(psycopg.Error, match="tenant binding is immutable"):
+        with psycopg.connect(DATABASE_URL) as connection:
+            connection.execute(
+                "UPDATE farms SET tenant_id = %s WHERE id = %s",
+                (tenant_b, farm_id),
+            )
 
     cases = PostgresCaseRepository(connections)
     cases.create(FarmCase(id=case_id, farm=farm, query="tenant boundary fixture"))
