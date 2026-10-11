@@ -66,8 +66,15 @@ class FarmTwinStore(FarmTwinRepository):
         self.get(farm_id)
         self._observations[farm_id].append(observation)
 
-    def snapshot(self, farm_id: str, as_of: datetime | None = None) -> FarmSnapshot:
-        self.get(farm_id)
+    def snapshot(
+        self,
+        farm_id: str,
+        as_of: datetime | None = None,
+        *,
+        tenant_id: str | None = None,
+    ) -> FarmSnapshot:
+        # Enforce scope at the storage boundary, not only in the API handler.
+        self.get(farm_id, tenant_id=tenant_id)
         moment = as_of or datetime.now(timezone.utc)
         moment = self._utc(moment)
 

@@ -37,5 +37,12 @@ class FarmTwinRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def snapshot(self, farm_id: str, as_of: datetime | None = None) -> FarmSnapshot:
+    def snapshot(
+        self,
+        farm_id: str,
+        as_of: datetime | None = None,
+        *,
+        tenant_id: str | None = None,
+    ) -> FarmSnapshot:
+        """Return a snapshot, optionally requiring the farm's tenant to match."""
         raise NotImplementedError
