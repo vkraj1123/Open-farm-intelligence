@@ -1,9 +1,11 @@
-from dataclasses import dataclass
+from __future__ import annotations
+
+from dataclasses import dataclass, field, replace as dataclass_replace
 import hashlib
 import hmac
 import json
 from datetime import datetime, timezone
-from typing import Literal, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
 from uuid import uuid4
 
 from ofi.services.action_router import ActionRequest, ActionRoute
@@ -18,6 +20,9 @@ from ofi.services.transaction_repository import (
     TransactionConflictError,
     TransactionRepository,
 )
+
+if TYPE_CHECKING:
+    from ofi.services.consent_repository import ConsentRepository
 
 
 ConsentStatus = Literal["granted", "denied", "expired", "not_required"]
@@ -35,17 +40,88 @@ class ActorIdentity:
 
 @dataclass(frozen=True)
 class ConsentGrant:
+    """An immutable, actor-bound permission for explicitly scoped service actions.
+
+    When scopes are omitted, the purpose is treated as the single legacy scope;
+    new callers should provide scopes explicitly. Revocation is represented by
+    an immutable timestamp, usually loaded from an authoritative repository.
+    """
+
     actor_id: str
     purpose: str
     status: ConsentStatus
     granted_at: datetime
     expires_at: datetime | None = None
+    scopes: tuple[str, ...] = ()
+    consent_id: str = field(default_factory=lambda: f"consent:{uuid4().hex}")
+    revoked_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        actor_id = self.actor_id.strip() if isinstance(self.actor_id, str) else ""
+        purpose = self.purpose.strip() if isinstance(self.purpose, str) else ""
+        consent_id = self.consent_id.strip() if isinstance(self.consent_id, str) else ""
+        if not actor_id or not purpose or not consent_id:
+            raise ValueError("consent ID, actor ID, and purpose must not be blank")
+        object.__setattr__(self, "actor_id", actor_id)
+        object.__setattr__(self, "purpose", purpose)
+        object.__setattr__(self, "consent_id", consent_id)
+
+        granted_at = self._aware_utc(self.granted_at, "granted_at")
+        object.__setattr__(self, "granted_at", granted_at)
+        if self.expires_at is not None:
+            expires_at = self._aware_utc(self.expires_at, "expires_at")
+            if expires_at <= granted_at:
+                raise ValueError("consent expiry must be later than grant time")
+            object.__setattr__(self, "expires_at", expires_at)
+        if self.revoked_at is not None:
+            revoked_at = self._aware_utc(self.revoked_at, "revoked_at")
+            if revoked_at < granted_at:
+                raise ValueError("consent revocation cannot precede grant time")
+            object.__setattr__(self, "revoked_at", revoked_at)
+
+        raw_scopes = tuple(self.scopes) if self.scopes else (purpose,)
+        normalized_scopes = tuple(
+            scope.strip() if isinstance(scope, str) else "" for scope in raw_scopes
+        )
+        if not normalized_scopes or any(not scope for scope in normalized_scopes):
+            raise ValueError("consent scopes must be non-empty strings")
+        if len(normalized_scopes) != len(set(normalized_scopes)):
+            raise ValueError("consent scopes must be unique")
+        object.__setattr__(self, "scopes", normalized_scopes)
+
+    @staticmethod
+    def _aware_utc(value: datetime, field_name: str) -> datetime:
+        if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError(f"{field_name} must be timezone-aware")
+        return value.astimezone(timezone.utc)
 
     def active(self, *, as_of: datetime | None = None) -> bool:
-        moment = (as_of or datetime.now(timezone.utc)).astimezone(timezone.utc)
-        if self.status != "granted":
+        """Check grant, expiry and revocation state at one aware instant."""
+        moment = self._aware_utc(
+            as_of if as_of is not None else datetime.now(timezone.utc),
+            "as_of",
+        )
+        if self.status != "granted" or self.granted_at > moment:
             return False
-        return self.expires_at is None or self.expires_at > moment
+        if self.expires_at is not None and self.expires_at <= moment:
+            return False
+        return self.revoked_at is None or self.revoked_at > moment
+
+    def authorizes(self, service: str) -> bool:
+        """Grant access only to an explicitly listed service scope."""
+        return isinstance(service, str) and service in self.scopes
+
+    def with_revocation(self, revoked_at: datetime | None = None) -> "ConsentGrant":
+        """Return a revoked copy while preserving the original immutable record."""
+        moment = self._aware_utc(
+            revoked_at if revoked_at is not None else datetime.now(timezone.utc),
+            "revoked_at",
+        )
+        if moment < self.granted_at:
+            raise ValueError("consent revocation cannot precede grant time")
+        if self.revoked_at is not None:
+            return self
+        return dataclass_replace(self, revoked_at=moment)
 
 
 @dataclass(frozen=True)
@@ -138,12 +214,48 @@ class ServiceExecutionGateway:
         adapters: list[ServiceAdapter] | None = None,
         *,
         transaction_repository: TransactionRepository | None = None,
+        consent_repository: ConsentRepository | None = None,
     ):
         self._adapters = {}
         self._service_adapters = {}
         for adapter in adapters or []:
             self.register(adapter)
         self._transactions = transaction_repository or InMemoryTransactionRepository()
+        self._consents = consent_repository
+
+    def _authorize_consent(
+        self,
+        *,
+        action: ActionRequest,
+        route: ActionRoute,
+        actor: ActorIdentity,
+        consent: ConsentGrant | None,
+    ) -> ConsentGrant | None:
+        if not actor.authenticated:
+            raise ExecutionError("authenticated actor is required")
+        if route.action_id != action.id or route.service != action.service:
+            raise ExecutionError("route does not match the requested action")
+        if consent is None:
+            if route.capability in {"expert", "verification"}:
+                return None
+            raise ExecutionError("explicit consent is required for this service")
+        if consent.actor_id != actor.actor_id:
+            raise ExecutionError("consent actor does not match authenticated actor")
+
+        authoritative = consent
+        if self._consents is not None:
+            try:
+                authoritative = self._consents.get(consent.consent_id)
+            except KeyError as exc:
+                raise ExecutionError("consent grant is not registered") from exc
+            if authoritative.actor_id != actor.actor_id:
+                raise ExecutionError("consent actor does not match authenticated actor")
+
+        if not authoritative.active():
+            raise ExecutionError("consent is not active")
+        if not authoritative.authorizes(route.service):
+            raise ExecutionError("consent does not authorize the requested service")
+        return authoritative
 
     def register(self, adapter: ServiceAdapter) -> None:
         if adapter.provider_id in self._adapters:
@@ -161,14 +273,9 @@ class ServiceExecutionGateway:
         idempotency_key: str | None = None,
         provider_id: str | None = None,
     ) -> ExecutionReceipt:
-        if not actor.authenticated:
-            raise ExecutionError("authenticated actor is required")
-        if consent is None and route.capability not in {"expert", "verification"}:
-            raise ExecutionError("explicit consent is required for this service")
-        if consent is not None and consent.actor_id != actor.actor_id:
-            raise ExecutionError("consent actor does not match authenticated actor")
-        if consent is not None and not consent.active():
-            raise ExecutionError("consent is not active")
+        consent = self._authorize_consent(
+            action=action, route=route, actor=actor, consent=consent
+        )
 
         adapter = self._adapters.get(provider_id) if provider_id else None
         if adapter is None:
@@ -248,14 +355,12 @@ class ServiceExecutionGateway:
         crashes or transport fails after that point, the attempt is ambiguous
         and must be reconciled rather than dispatched again.
         """
-        if not request.actor.authenticated:
-            raise ExecutionError("authenticated actor is required")
-        if request.consent is None and request.route.capability not in {"expert", "verification"}:
-            raise ExecutionError("explicit consent is required for this service")
-        if request.consent is not None and request.consent.actor_id != request.actor.actor_id:
-            raise ExecutionError("consent actor does not match authenticated actor")
-        if request.consent is not None and not request.consent.active():
-            raise ExecutionError("consent is not active")
+        effective_consent = self._authorize_consent(
+            action=request.action,
+            route=request.route,
+            actor=request.actor,
+            consent=request.consent,
+        )
 
         if request.transaction_id is None or request.transaction_id == "":
             raise ExecutionError("transaction_id is required to dispatch a prepared attempt")
@@ -290,7 +395,7 @@ class ServiceExecutionGateway:
             action=request.action,
             route=request.route,
             actor=request.actor,
-            consent=request.consent,
+            consent=effective_consent,
             idempotency_key=request.idempotency_key,
             provider_id=request.provider_id,
             transaction_id=transaction.transaction_id,
