@@ -1,6 +1,8 @@
 """Real PostgreSQL upgrade, rollback, and dump/restore rehearsal tests."""
 
 import os
+import shutil
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -203,4 +205,75 @@ def test_failed_v2_migration_rolls_back_schema_and_marker():
 
         assert apply_schema(source_dsn) == CURRENT_SCHEMA_VERSION
     finally:
+        drop_database(admin_dsn, source_name)
+
+
+
+def test_current_schema_scheduled_drill_emits_encrypted_backup(tmp_path):
+    age_keygen = shutil.which("age-keygen")
+    age = shutil.which("age")
+    if not age_keygen or not age:
+        pytest.skip("age and age-keygen are installed by the PostgreSQL CI workflow")
+
+    source_name, source_dsn, admin_dsn = create_database(DATABASE_URL, "ofi_recovery_current")
+    restore_name, restore_dsn, _ = create_database(DATABASE_URL, "ofi_recovery_current_target")
+    try:
+        seed_v1_source(source_dsn)
+        assert apply_schema(source_dsn) == CURRENT_SCHEMA_VERSION
+
+        key_path = tmp_path / "recovery-age-key.txt"
+        subprocess.run(
+            [age_keygen, "-o", str(key_path)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        key_text = key_path.read_text(encoding="utf-8")
+        recipient_line = next(
+            line for line in key_text.splitlines() if line.startswith("# public key: ")
+        )
+        recipient = recipient_line.split(": ", 1)[1]
+        encrypted_path = tmp_path / "recovery-backup.dump.age"
+
+        report = run_recovery_check(
+            source_dsn,
+            restore_dsn,
+            encrypted_backup_path=encrypted_path,
+            age_recipient=recipient,
+        )
+
+        assert report["status"] == "passed"
+        assert report["source_modified"] is False
+        assert report["source_schema_version"] == CURRENT_SCHEMA_VERSION
+        assert report["restored_schema_version_before_migration"] == CURRENT_SCHEMA_VERSION
+        assert report["upgraded_schema_version"] == CURRENT_SCHEMA_VERSION
+        assert report["migration_applied"] is False
+        assert report["encrypted_backup"]["encryption"] == "age"
+        assert report["encrypted_backup"]["size_bytes"] == encrypted_path.stat().st_size
+        assert len(report["encrypted_backup"]["sha256"]) == 64
+
+        # Only the age-encrypted file is retained. Verify it decrypts to a valid
+        # PostgreSQL custom-format dump using the temporary private key.
+        decrypted_path = tmp_path / "recovery-backup.dump"
+        subprocess.run(
+            [
+                age,
+                "--decrypt",
+                "--identity",
+                str(key_path),
+                "--output",
+                str(decrypted_path),
+                str(encrypted_path),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        assert decrypted_path.read_bytes().startswith(b"PGDMP")
+        with psycopg.connect(restore_dsn) as restored:
+            assert restored.execute(
+                "SELECT max(version) FROM ofi_schema_migrations"
+            ).fetchone()[0] == CURRENT_SCHEMA_VERSION
+    finally:
+        drop_database(admin_dsn, restore_name)
         drop_database(admin_dsn, source_name)
