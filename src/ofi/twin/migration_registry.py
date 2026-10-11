@@ -50,6 +50,11 @@ MIGRATIONS = (
         name="consent_scopes_and_revocation_ledger",
         filename="003_consent_scopes_and_revocation.sql",
     ),
+    SchemaMigration(
+        version=4,
+        name="tenant_scoped_data_boundaries",
+        filename="004_tenant_scoped_data_boundaries.sql",
+    ),
 )
 
 versions = tuple(item.version for item in MIGRATIONS)
