@@ -2457,3 +2457,25 @@ The API passes the verified tenant claim when adding farmer observations and whe
 | Regression coverage | Passing in CI on implementation commit e1cfab2 | In-memory tests cover all four mutations; PostgreSQL tenant-isolation tests cover mismatched-tenant rejection |
 
 **Verification:** All four GitHub Actions runs passed on implementation commit [e1cfab2](https://github.com/vkraj1123/Open-farm-intelligence/commit/e1cfab2316f79309fd0735b360e2ed393e5ba7ef), including the PostgreSQL-backed tests on both push and pull-request workflows ([standard PR check](https://github.com/vkraj1123/Open-farm-intelligence/actions/runs/38110430618), [PostgreSQL PR check](https://github.com/vkraj1123/Open-farm-intelligence/actions/runs/38110430603), [standard push check](https://github.com/vkraj1123/Open-farm-intelligence/actions/runs/38110429070), [PostgreSQL push check](https://github.com/vkraj1123/Open-farm-intelligence/actions/runs/38110429085)). This documentation-only commit is being rechecked by CI. These tests do not implement organization membership verification in the token issuer or complete the outstanding RBAC and production security review.
+
+# 61. Authoritative tenant membership and administration
+
+Schema migration 005 adds a durable tenant-membership registry with active, suspended and revoked states, plus an append-only administration event log. When tenant-membership enforcement is required (the default), a valid signed tenant claim is not sufficient by itself: the actor must also have a current active membership record for the claimed tenant. Membership lookup failures fail closed rather than falling back to the token claim.
+
+| Endpoint | Purpose | Authorization |
+|---|---|---|
+| POST /tenants/{tenant_id}/memberships | Grant or reactivate a member | Active tenant administrator; only platform system can grant tenant-admin role |
+| GET /tenants/{tenant_id}/memberships | List the tenant's memberships | Tenant administrator or platform system |
+| PATCH /tenants/{tenant_id}/memberships/{member_actor_id} | Change role or suspend/revoke/reactivate membership | Tenant administrators manage regular members; platform system manages administrator roles |
+| GET /tenants/{tenant_id}/membership-events | Read membership administration history | Tenant administrator or platform system |
+
+The repository prevents revoking, suspending or demoting the last active tenant administrator and records each state change in an append-only audit table. A trusted platform-system token is the bootstrap authority for the first tenant administrator. Provision actor IDs only from the deployment's trusted identity provider; this API is not an invitation/email-verification service.
+
+| Capability | Status | Boundary |
+|---|---|---|
+| Durable tenant membership registry | Implemented in branch | PostgreSQL migration 005; in-memory variant is for tests and single-process development only |
+| Current membership check on resource and consent API authentication | Implemented in branch | Missing, suspended or revoked membership is denied; storage/configuration errors fail closed |
+| Tenant membership administration | Implemented in branch | Tenant scoping, role checks, last-admin invariant and audit events |
+| Verification | Added; CI pending | Membership API and PostgreSQL repository regressions run with the full suite |
+
+**Security boundary:** this implements an authoritative OFI membership registry, but does not replace upstream identity proofing, SSO/MFA, tenant invitations/verification, or independent production security review. Keep OFI_TENANT_MEMBERSHIP_ENFORCEMENT at its default required value outside tests. Disabled mode is permitted only when OFI_ENV=test.
