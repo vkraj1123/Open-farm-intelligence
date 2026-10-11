@@ -105,7 +105,7 @@ class InMemoryConsentRepository:
 class PostgresConsentRepository:
     """PostgreSQL-backed consent ledger with immutable grant fields.
 
-    The database must have migration 003 applied. Supply the same style of
+    The database must have migration 004 applied. Supply the same style of
     connection factory used by OFI's other PostgreSQL repositories.
     """
 
