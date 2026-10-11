@@ -121,8 +121,8 @@ class InMemoryTenantMembershipRepository:
             previous = self._memberships.get(key)
             if previous and previous.status == "active" and previous.membership_role == membership_role:
                 return previous
-            if previous and previous.membership_role == "tenant_admin" and previous.status == "active" and membership_role != "tenant_admin":
-                self._ensure_another_admin(probe.tenant_id, probe.actor_id)
+            if previous and previous.membership_role == "tenant_admin" and membership_role != "tenant_admin":
+                raise ValueError("tenant-admin roles must be changed through platform administration")
             if previous:
                 action = "reactivated" if previous.status != "active" else "role_changed"
                 membership = TenantMembership(
@@ -307,8 +307,8 @@ class PostgresTenantMembershipRepository:
                         previous = self._membership(row)
                         if previous.status == "active" and previous.membership_role == membership_role:
                             return previous
-                        if previous.membership_role == "tenant_admin" and previous.status == "active" and membership_role != "tenant_admin":
-                            self._ensure_another_admin(cur, probe.tenant_id, probe.actor_id)
+                        if previous.membership_role == "tenant_admin" and membership_role != "tenant_admin":
+                            raise ValueError("tenant-admin roles must be changed through platform administration")
                         cur.execute(
                             """UPDATE ofi_tenant_memberships
                                SET membership_role=%s, status='active', updated_at=%s, updated_by=%s

@@ -524,7 +524,12 @@ def _resource_actor(
     """Require verified identity by default; the opt-out is for isolated tests only."""
     mode = os.getenv("OFI_RESOURCE_AUTH_ENABLED", "true").strip().lower()
     if mode in {"0", "false", "no", "off"}:
-        return None
+        if os.getenv("OFI_ENV", "").strip().lower() == "test":
+            return None
+        raise HTTPException(
+            status_code=503,
+            detail="resource authentication cannot be disabled outside test mode",
+        )
     if mode not in {"1", "true", "yes", "on"}:
         raise HTTPException(
             status_code=503,
@@ -658,6 +663,18 @@ def grant_tenant_membership(
     platform_admin = _require_tenant_membership_admin(actor, tenant_id)
     if request.membership_role == "tenant_admin" and not platform_admin:
         raise HTTPException(status_code=403, detail="only platform system may grant tenant-admin role")
+    if not platform_admin:
+        try:
+            existing = tenant_membership_repository.get(tenant_id.strip(), request.actor_id)
+        except KeyError:
+            existing = None
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail="tenant membership lookup is unavailable") from exc
+        if existing is not None and existing.membership_role == "tenant_admin":
+            raise HTTPException(
+                status_code=403,
+                detail="only platform system may change tenant-administrator roles",
+            )
     try:
         membership = tenant_membership_repository.grant(
             tenant_id.strip(), request.actor_id, request.membership_role,

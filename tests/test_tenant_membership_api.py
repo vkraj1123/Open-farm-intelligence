@@ -128,6 +128,20 @@ def test_platform_bootstrap_tenant_admin_and_audited_member_lifecycle(membership
     ]
 
 
+def test_tenant_admin_cannot_demote_another_tenant_admin_via_grant(membership_client):
+    client = membership_client
+    repository = api.tenant_membership_repository
+    repository.grant("tenant-a", "alice", "tenant_admin", granted_by="platform-root")
+    repository.grant("tenant-a", "carol", "tenant_admin", granted_by="platform-root")
+    response = client.post(
+        "/tenants/tenant-a/memberships",
+        headers=headers("alice", tenant_id="tenant-a"),
+        json={"actor_id": "carol", "membership_role": "member"},
+    )
+    assert response.status_code == 403
+    assert repository.get_active("tenant-a", "carol").membership_role == "tenant_admin"
+
+
 def test_last_active_tenant_admin_cannot_be_demoted_or_revoked(membership_client):
     client = membership_client
     repository = api.tenant_membership_repository
@@ -155,4 +169,12 @@ def test_membership_enforcement_cannot_be_disabled_outside_test_mode(membership_
     response = membership_client.get(
         "/cases/not-present", headers=headers("any-actor", tenant_id="tenant-a")
     )
+    assert response.status_code == 503
+
+
+
+def test_resource_authentication_cannot_be_disabled_outside_test_mode(membership_client, monkeypatch):
+    monkeypatch.setenv("OFI_ENV", "production")
+    monkeypatch.setenv("OFI_RESOURCE_AUTH_ENABLED", "false")
+    response = membership_client.get("/cases/not-present")
     assert response.status_code == 503
