@@ -2293,3 +2293,20 @@ The custom-format `pg_dump` is encrypted with `age` to the configured public rec
 | Agricultural field validation | Not completed | Recovery infrastructure tests do not validate farm recommendations or agronomic outcomes |
 
 **Verification:** PR CI passed the standard workflow ([run #676](https://github.com/vkraj1123/Open-farm-intelligence/actions/runs/38098779417)) and PostgreSQL-backed workflow ([run #811](https://github.com/vkraj1123/Open-farm-intelligence/actions/runs/38098779415)). Both workflows also passed on `main` after merge: [standard run #677](https://github.com/vkraj1123/Open-farm-intelligence/actions/runs/38098846894) and [PostgreSQL-backed run #812](https://github.com/vkraj1123/Open-farm-intelligence/actions/runs/38098846920). These runs validate repository tests only; the scheduled live workflow will remain skipped until the three required Actions secrets are configured.
+
+
+# 53. Signed recovery health alert delivery
+
+PR [#61](https://github.com/vkraj1123/Open-farm-intelligence/pull/61) introduced an optional HTTPS webhook for the dispatch-recovery runner and merged to `main` as [`b3caa9aa0630f8dbdaa5f7bcb41f97b9ecbefc51`](https://github.com/vkraj1123/Open-farm-intelligence/commit/b3caa9aa0630f8dbdaa5f7bcb41f97b9ecbefc51). The runner continues to emit structured JSON logs. When an optional alert receiver is configured, it sends warning/critical health events to that receiver; healthy events remain log-only.
+
+The webhook sends a minimized allow-listed payload and signs the exact request body with HMAC-SHA256. A SHA-256 event ID supports receiver-side deduplication. The sender requires HTTPS, rejects URL credentials/query strings/fragments, does not follow redirects, uses a bounded timeout, treats non-2xx statuses as failures, and does not retry ambiguous network errors. Payloads omit provider IDs, transaction IDs, attempt IDs, raw provider response bodies, and exception text. Configured delivery failures produce a sanitized runner failure (exit code 2); successful delivery emits a JSON receipt.
+
+| Capability | Status | Boundary |
+|---|---|---|
+| Optional signed alert delivery | Implemented in PR #61 | Deployment-owned receiver must verify HMAC and operate deduplication |
+| Secret and endpoint validation | Implemented and unit-tested | Uses `OFI_RECOVERY_ALERT_ENDPOINT`, `OFI_RECOVERY_ALERT_SECRET`, optional `OFI_RECOVERY_ALERT_TIMEOUT_SECONDS`; no vendor-specific integration is bundled |
+| Privacy-safe alert payload | Covered by tests | Only allow-listed aggregate counters/alert codes are sent; per-attempt troubleshooting remains in access-controlled audit records |
+| Failure handling | Covered by tests | Non-2xx/transport errors fail closed with sanitized logs; ambiguous delivery is not retried automatically |
+| End-to-end delivery | Not demonstrated | A real receiver, secret rotation, on-call routing, and synthetic delivery test remain deployment responsibilities |
+
+**Verification:** PR #61 passed standard CI ([run #691](https://github.com/vkraj1123/Open-farm-intelligence/actions/runs/38099439423)) and PostgreSQL-backed CI ([run #826](https://github.com/vkraj1123/Open-farm-intelligence/actions/runs/38099439426)). These checks verify software behavior and signed request construction, not delivery to a real operational alert receiver.
