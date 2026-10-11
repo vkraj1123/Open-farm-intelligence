@@ -534,10 +534,10 @@ def create_case(
         _require_farm_access(actor, case.farm)
         # Case creation must not act as an implicit farm transfer or profile update.
         try:
-            existing_farm = case_manager.farm_twin.get(
-                case.farm.id,
-                tenant_id=actor.tenant_id if actor is not None else None,
-            )
+            # This guarded collision check intentionally sees whether the ID
+            # already exists, so a cross-tenant collision can return the same
+            # 404 as an inaccessible resource instead of leaking a 409.
+            existing_farm = case_manager.farm_twin.get(case.farm.id)
         except KeyError:
             existing_farm = None
         if existing_farm is not None:
