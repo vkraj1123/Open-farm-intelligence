@@ -105,27 +105,27 @@ def seed_v1_source(dsn):
     }
 
 
-def seed_v2_source(dsn):
-    """Seed representative rows in schema v2, immediately before migration 003."""
+def seed_v3_source(dsn):
+    """Seed representative rows in schema v3, immediately before migration 004."""
     ids = seed_v1_source(dsn)
-    migration = MIGRATIONS[1]
-    with psycopg.connect(dsn) as connection:
-        connection.execute(migration.sql)
-        connection.execute(
-            """
-            INSERT INTO ofi_schema_migrations (version, name, checksum)
-            VALUES (%s, %s, %s)
-            """,
-            (migration.version, migration.name, migration.checksum),
-        )
+    for migration in MIGRATIONS[1:3]:
+        with psycopg.connect(dsn) as connection:
+            connection.execute(migration.sql)
+            connection.execute(
+                """
+                INSERT INTO ofi_schema_migrations (version, name, checksum)
+                VALUES (%s, %s, %s)
+                """,
+                (migration.version, migration.name, migration.checksum),
+            )
     return ids
 
 
-def test_backup_restore_and_v2_to_v3_upgrade_preserve_source_data():
+def test_backup_restore_and_v3_to_v4_upgrade_preserve_source_data():
     source_name, source_dsn, admin_dsn = create_database(DATABASE_URL, "ofi_recovery_source")
     restore_name, restore_dsn, _ = create_database(DATABASE_URL, "ofi_recovery_target")
     try:
-        record_ids = seed_v2_source(source_dsn)
+        record_ids = seed_v3_source(source_dsn)
         report = run_recovery_check(source_dsn, restore_dsn)
 
         assert report["status"] == "passed"
@@ -149,13 +149,13 @@ def test_backup_restore_and_v2_to_v3_upgrade_preserve_source_data():
             ):
                 identifier = record_ids[key]
                 source_row = source.execute(
-                    sql.SQL("SELECT to_jsonb(t) FROM {} AS t WHERE id = %s").format(
+                    sql.SQL("SELECT to_jsonb(t) - 'tenant_id' FROM {} AS t WHERE id = %s").format(
                         sql.Identifier(table)
                     ),
                     (identifier,),
                 ).fetchone()
                 restored_row = restored.execute(
-                    sql.SQL("SELECT to_jsonb(t) FROM {} AS t WHERE id = %s").format(
+                    sql.SQL("SELECT to_jsonb(t) - 'tenant_id' FROM {} AS t WHERE id = %s").format(
                         sql.Identifier(table)
                     ),
                     (identifier,),
