@@ -213,4 +213,6 @@ def test_runner_requires_alert_endpoint_and_secret_as_a_pair():
 
     assert code == 2
     assert stdout.getvalue() == ""
-    assert "must be configured together" in json.loads(stderr.getvalue())["message"] if "message" in json.loads(stderr.getvalue()) else True
+    error = json.loads(stderr.getvalue())
+    assert error["error_type"] == "ValueError"
+    assert "must be configured together" not in stderr.getvalue()
