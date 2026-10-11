@@ -67,8 +67,12 @@ CREATE INDEX IF NOT EXISTS ofi_consent_grants_tenant_actor_created
 -- foreign keys before replacing the existing policy keys.
 ALTER TABLE evidence_comparison_assessments
     DROP CONSTRAINT IF EXISTS evidence_comparison_assessments_policy_id_policy_version_fkey;
+ALTER TABLE evidence_comparison_assessments
+    DROP CONSTRAINT IF EXISTS evidence_comparison_assessments_tenant_policy_fkey;
 ALTER TABLE evidence_comparison_policy_versions
     DROP CONSTRAINT IF EXISTS evidence_comparison_policy_versions_policy_id_fkey;
+ALTER TABLE evidence_comparison_policy_versions
+    DROP CONSTRAINT IF EXISTS evidence_comparison_policy_versions_tenant_policy_fkey;
 
 ALTER TABLE evidence_comparison_policy_heads ADD COLUMN IF NOT EXISTS tenant_id TEXT;
 UPDATE evidence_comparison_policy_heads
