@@ -1419,12 +1419,14 @@ The core closed-loop architecture is implemented and tested, but the project is 
 - [ ] Encryption in transit configuration
 - [ ] Audit log
 - [ ] Role-based access control
-- [ ] Tenant isolation testing
+- [x] Cross-tenant resource/persistence regression tests (initial boundary)
+- [ ] Tenant membership/administration model
+- [ ] Audited legacy-tenant mapping and cutover
 - [ ] Data retention policy
 - [ ] Privacy/data-sharing policy
 - [ ] Security audit
 
-**Status: 🟡 Scoped consent, expiry, durable revocation, authenticated consent lifecycle, and actor/farm resource checks are implemented. Farmer-facing consent UX, organization-level tenant IDs/membership, full RBAC, purpose enforcement across all downstream data uses, encryption, audit, and broader security review remain**
+**Status: 🟡 Scoped consent, durable revocation, authenticated consent lifecycle, tenant-scoped core persistence, and cross-tenant regression tests are implemented. Tenant membership administration and legacy-data cutover, farmer-facing consent UX, full RBAC, downstream purpose enforcement, encryption, audit, and broader security review remain**
 
 ---
 
@@ -2328,7 +2330,8 @@ The execution gateway now checks that the authenticated actor matches the grant 
 | Immutable grant terms | Enforced in PostgreSQL | Only the first revocation timestamp can change; consent records cannot be deleted |
 | Execution enforcement | Implemented and regression-tested | Applies at submission and prepared-attempt dispatch; cannot cancel an action already sent or in flight |
 | Authenticated consent API | Implemented; farmer-facing UX remains open | `POST /consents`, `GET /consents/{consent_id}`, and `DELETE /consents/{consent_id}` require a verified bearer JWT; the signed `sub` is the actor, and creation requires `affirmative: true` plus unique explicit scopes. The other case/farm/evidence routes are not yet protected by this auth layer |
-| Multi-tenant isolation/RBAC | Not completed | Tenant-level access control, purpose limitation across all downstream data use, key/role design, and broader security review remain |
+| Tenant-scoped persistence and access checks | Implemented by PR #69 | Core farm, case, consent, evidence-policy and assessment records are scoped by signed tenant ID and cross-tenant access is regression-tested |
+| Tenant membership/RBAC and purpose limitation | Not completed | Trusted issuer must enforce membership before signing the tenant claim; no organization membership registry, membership-administration API, comprehensive roles, or downstream purpose gate exists yet |
 | Production deployment | Not demonstrated | Use a shared durable repository; the in-memory repository is only a test/single-process development reference |
 
 **Verification:** PR #63 passed standard CI ([run #714](https://github.com/vkraj1123/Open-farm-intelligence/actions/runs/38100581281)) and PostgreSQL-backed CI ([run #849](https://github.com/vkraj1123/Open-farm-intelligence/actions/runs/38100581299)). The PostgreSQL suite covers migration v3, consent-ledger immutability/revocation, and the recovery harness upgrading a v2 source to v3. These tests verify code and database behavior; they do not demonstrate that a real farmer-facing consent capture flow or multi-tenant security review exists.
@@ -2370,9 +2373,36 @@ Case creation no longer acts as an implicit farm transfer or farm-profile update
 | Cross-actor read/update denial | Implemented and regression-tested | Unknown and inaccessible farm/case IDs share 404 behavior |
 | Farm takeover through case creation | Blocked and tested | Existing farmer identity/profile is not replaced by submitted case data |
 | Global comparison-policy writes | Restricted and tested | Requires `agent`, `service_provider`, or `system` identity |
-| Organization/tenant isolation | Not completed | There is no explicit tenant ID or organization-membership model yet; this milestone enforces current farm actor/party ownership only |
+| Tenant-scoped core data | Implemented by PR #69 | Signed tenant_id scopes farm/case routes, consent grants, evidence policies, and assessments; PostgreSQL stores and filters the tenant boundary |
+| Organization membership and legacy cutover | Not completed | Token issuer must verify membership; v4 legacy rows enter legacy:default and require an approved administrative mapping before multi-tenant cutover |
 | Full RBAC, audit and purpose enforcement | Not completed | These controls still need a deliberate policy model and review |
 
 Runtime resource authorization is enabled by default when `OFI_RESOURCE_AUTH_ENABLED` is unset. **Do not set it to `false` on a reachable deployment**; that opt-out exists only for isolated unit tests or a trusted local sandbox. JWT configuration is the same as in section #55: `OFI_AUTH_HMAC_SECRET`, `OFI_AUTH_ISSUER`, and `OFI_AUTH_AUDIENCE` are required. OFI validates the tokens but does not issue them.
 
 **Verification:** PR #67 passed the [standard workflow](https://github.com/vkraj1123/Open-farm-intelligence/actions/runs/38103511050) and [PostgreSQL-backed workflow](https://github.com/vkraj1123/Open-farm-intelligence/actions/runs/38103511047). Tests cover anonymous rejection, cross-actor reads/writes, verified and unverified party cases, primary-farmer binding, farm takeover attempts, and policy-manager roles. These checks do not demonstrate independent organization tenancy, production identity-provider integration, or a completed security audit.
+
+
+
+# 57. Tenant-scoped data and migration v4
+
+PR [#69](https://github.com/vkraj1123/Open-farm-intelligence/pull/69) introduced the first explicit tenant boundary across core farm decision data and was merged to `main` as [`291b2c3211c92d17eadfae9227c87a25e79a57e0`](https://github.com/vkraj1123/Open-farm-intelligence/commit/291b2c3211c92d17eadfae9227c87a25e79a57e0). Schema migration v4 adds a tenant binding to farms, case records, consent grants, evidence-comparison policy heads/versions, and historical assessments. Existing migrations remain immutable; upgrades run through `ofi-schema`.
+
+Protected resource and consent routes now require the verified HS256 bearer token to carry a non-empty signed `tenant_id` claim, alongside the existing subject and role claims. A request body cannot select or override its tenant. The trusted issuer must check that the actor is entitled to the tenant before issuing that claim; OFI validates the signature/claims but does not issue tokens or maintain an organization-membership registry.
+
+Tenant-scoped policy IDs are independent: the same policy name may start at version 1 in two different tenants. PostgreSQL lookups for cases, consent grants, policy versions and assessment history include the tenant filter. Farm IDs remain globally unique; PostgreSQL refuses to rebind a farm or its parcel/crop/observation/contract IDs to another tenant/farm. Tenant columns on farms, cases, policy heads and consent grants are immutable to ordinary application updates.
+
+| Capability | Status | Boundary |
+|---|---|---|
+| Tenant ID from verified JWT | Implemented and tested | Resource/consent routes reject missing tenant claims; tenant identity is never taken from request JSON |
+| Farm and case access | Implemented and tested | Tenant match is checked alongside primary-farmer or active verified owner/cultivator relationship |
+| Consent repository | Implemented and tested | Grant retrieval and revocation are tenant-filtered in addition to actor-bound |
+| Evidence policies and assessments | Implemented and tested | Policy version namespace is (tenant ID, policy ID, version); assessment lookup includes tenant ID |
+| PostgreSQL tenant binding | Implemented and tested | Migration v4 adds non-empty tenant columns, indexes and immutable-binding triggers |
+| Upgrade compatibility | CI-tested | Existing records are backfilled into `legacy:default`; recovery harness now verifies v3→v4 upgrade without misreading tenant metadata as lost source data |
+| Tenant membership and administration | Not completed | OFI has not implemented a tenant membership registry, invitation/assignment lifecycle, or an issuer integration that proves membership |
+| Legacy-data cutover | Not completed | Do not issue `legacy:default` to ordinary users. Inventory and map existing records to approved real tenants through a controlled, audited migration before enabling tenant-facing production traffic |
+| Full security governance | Not completed | Full RBAC, downstream purpose enforcement, audit, retention, encryption/TLS deployment policy and independent security review remain |
+
+**Migration note:** `src/ofi/twin/schema.sql` remains a v1 compatibility/bootstrap schema. A PostgreSQL deployment must run `ofi-schema` to apply migrations through v4; `/ready` reports a schema-version mismatch when only the bootstrap script has been applied. Review tenant membership, existing record ownership, backup and restoration procedures before a production cutover.
+
+**Verification:** PR #69 passed [standard CI](https://github.com/vkraj1123/Open-farm-intelligence/actions/runs/38105373898) and [PostgreSQL-backed CI](https://github.com/vkraj1123/Open-farm-intelligence/actions/runs/38105373969). Coverage includes missing tenant claims, same-actor cross-tenant denial, client-supplied tenant mismatch, independent policy namespaces, consent isolation, PostgreSQL farm takeover rejection, immutable tenant assignment, repository tenant filters and a v3→v4 restore/upgrade rehearsal. These checks do not demonstrate production tenant membership or a complete security audit.
