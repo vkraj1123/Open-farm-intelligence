@@ -196,7 +196,7 @@ Passing this checklist is a deployment-specific decision. The existence of the r
 
 ## 7. PostgreSQL integration verification
 
-The PostgreSQL CI job sets OFI_POSTGRES_DSN and runs tests/test_postgres_recovery_factory_integration.py. That test applies src/ofi/twin/schema.sql to the dedicated CI database, builds the concrete deployment factory, performs transaction/attempt persistence through the PostgreSQL repository, and runs a bounded worker cycle. The configured HTTPS endpoint is a placeholder and is not contacted when there are no recovery candidates.
+The PostgreSQL CI job sets OFI_POSTGRES_DSN and runs tests/test_postgres_recovery_factory_integration.py. That test applies the ordered schema migrations through the current version with `ofi-schema`, builds the concrete deployment factory, performs transaction/attempt persistence through the PostgreSQL repository, and runs a bounded worker cycle. The checked-in `schema.sql` file is only the v1 compatibility/bootstrap schema; it is not sufficient for a current-schema deployment. The configured HTTPS endpoint is a placeholder and is not contacted when there are no recovery candidates.
 
 A passing CI integration test proves that the checked-in schema and repository/factory wiring work together in the CI PostgreSQL environment. It does **not** prove connectivity to a deployment's staging database, correctness of a real provider's signed reconciliation responses, provider-side idempotency, scheduler behavior, or end-to-end alert delivery. Those require separate staging credentials and operational verification.
 
