@@ -122,6 +122,11 @@ class ConsentGrantRequest(BaseModel):
 
 
 def _require_consent_subject(actor: ActorIdentity) -> None:
+    if not actor.tenant_id:
+        raise HTTPException(
+            status_code=401,
+            detail="a tenant-scoped bearer token is required",
+        )
     if actor.role not in {"farmer", "cultivator", "owner"}:
         raise HTTPException(
             status_code=403,
@@ -132,6 +137,7 @@ def _require_consent_subject(actor: ActorIdentity) -> None:
 def _consent_payload(grant: ConsentGrant) -> dict:
     return {
         "consent_id": grant.consent_id,
+        "tenant_id": grant.tenant_id,
         "actor_id": grant.actor_id,
         "purpose": grant.purpose,
         "status": grant.status,
@@ -154,6 +160,7 @@ def create_consent(
     try:
         grant = ConsentGrant(
             actor_id=actor.actor_id,
+            tenant_id=actor.tenant_id,
             purpose=request.purpose,
             status="granted",
             granted_at=now,
@@ -174,10 +181,10 @@ def get_consent(
     """Return only a grant owned by the verified actor."""
     _require_consent_subject(actor)
     try:
-        grant = consent_repository.get(consent_id)
+        grant = consent_repository.get(consent_id, tenant_id=actor.tenant_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="consent grant not found") from exc
-    if grant.actor_id != actor.actor_id:
+    if grant.actor_id != actor.actor_id or grant.tenant_id != actor.tenant_id:
         raise HTTPException(status_code=404, detail="consent grant not found")
     return _consent_payload(grant)
 
@@ -190,7 +197,11 @@ def revoke_consent(
     """Record actor-bound revocation without deleting the consent record."""
     _require_consent_subject(actor)
     try:
-        grant = consent_repository.revoke(consent_id, actor_id=actor.actor_id)
+        grant = consent_repository.revoke(
+            consent_id,
+            actor_id=actor.actor_id,
+            tenant_id=actor.tenant_id,
+        )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="consent grant not found") from exc
     except ValueError as exc:
@@ -419,14 +430,34 @@ def _resource_actor(
             status_code=503,
             detail="resource authentication configuration is invalid",
         )
-    return require_authenticated_actor(authorization)
+    actor = require_authenticated_actor(authorization)
+    if not actor.tenant_id:
+        raise HTTPException(
+            status_code=401,
+            detail="a tenant-scoped bearer token is required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return actor
+
+
+def _current_tenant_id(actor: ActorIdentity | None) -> str:
+    if actor is None:
+        return "legacy:default"
+    if not actor.tenant_id:
+        raise HTTPException(status_code=401, detail="a tenant-scoped bearer token is required")
+    return actor.tenant_id
 
 
 def _actor_can_access_farm(actor: ActorIdentity, farm) -> bool:
-    """Allow the primary farmer or a current, explicitly verified owner/cultivator."""
-    if not actor.authenticated or actor.role not in {"farmer", "owner", "cultivator"}:
+    """Allow tenant members with a primary-farmer or verified-party relationship."""
+    if (
+        not actor.authenticated
+        or not actor.tenant_id
+        or (farm.tenant_id or "legacy:default") != actor.tenant_id
+        or actor.role not in {"farmer", "owner", "cultivator"}
+    ):
         return False
-    if actor.actor_id == farm.farmer_id:
+    if actor.role == "farmer" and actor.actor_id == farm.farmer_id:
         return True
 
     today = datetime.now(timezone.utc).date()
@@ -457,16 +488,21 @@ def _farm_or_404(farm_id: str, actor: ActorIdentity | None):
 
 def _case_or_404(case_id: str, actor: ActorIdentity | None):
     try:
-        record = case_manager.store.get(case_id)
+        record = case_manager.store.get(
+            case_id,
+            tenant_id=actor.tenant_id if actor is not None else None,
+        )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="case not found") from exc
 
     if actor is not None:
         try:
             farm = case_manager.farm_twin.get(record.case.farm.id)
-        except KeyError:
-            farm = record.case.farm
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="case not found") from exc
         _require_farm_access(actor, farm)
+        if record.case.farm.tenant_id != farm.tenant_id:
+            raise HTTPException(status_code=404, detail="case not found")
     return record
 
 
@@ -483,8 +519,12 @@ def create_case(
     case: FarmCase,
     actor: ActorIdentity | None = Depends(_resource_actor),
 ):
+    tenant_id = _current_tenant_id(actor)
+    if case.farm.tenant_id is not None and case.farm.tenant_id != tenant_id:
+        raise HTTPException(status_code=404, detail="farm not found")
+    farm_data = case.farm.model_copy(update={"tenant_id": tenant_id})
+    case = case.model_copy(update={"farm": farm_data})
     if actor is not None:
-        _require_farm_access(actor, case.farm)
         # Case creation must not act as an implicit farm transfer or profile update.
         try:
             existing_farm = case_manager.farm_twin.get(case.farm.id)
@@ -762,6 +802,7 @@ def create_evidence_comparison_policy(
             description=request.description,
             max_age_seconds_by_kind=request.max_age_seconds_by_kind,
             require_provenance=request.require_provenance,
+            tenant_id=_current_tenant_id(actor),
             comparison_rules=[
                 MetricComparisonRule(
                     rule_id=item.rule_id,
@@ -792,7 +833,11 @@ def get_evidence_comparison_policy(
     if version is not None and version < 1:
         raise HTTPException(status_code=422, detail="version must be positive")
     try:
-        return _policy_payload(evidence_comparison_ledger.get_policy(policy_id, version))
+        return _policy_payload(
+            evidence_comparison_ledger.get_policy(
+                policy_id, version, tenant_id=_current_tenant_id(actor)
+            )
+        )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="comparison policy version not found") from exc
 
@@ -806,8 +851,9 @@ def create_evidence_comparison_assessment(
     """Run and persist an assessment with its exact policy and observation snapshot."""
     _farm_or_404(farm_id, actor)
     try:
+        tenant_id = _current_tenant_id(actor)
         policy = evidence_comparison_ledger.get_policy(
-            request.policy_id, request.policy_version
+            request.policy_id, request.policy_version, tenant_id=tenant_id
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="comparison policy version not found") from exc
@@ -831,6 +877,7 @@ def create_evidence_comparison_assessment(
     )
     assessment = EvidenceComparisonAssessment(
         assessment_id=f"evidence-assessment-{uuid4().hex}",
+        tenant_id=tenant_id,
         policy_id=policy.policy_id,
         policy_version=policy.version,
         farm_id=report.farm_id,
@@ -857,7 +904,9 @@ def get_evidence_comparison_assessment(
 ):
     """Retrieve an immutable historical comparison assessment."""
     try:
-        assessment = evidence_comparison_ledger.get_assessment(assessment_id)
+        assessment = evidence_comparison_ledger.get_assessment(
+            assessment_id, tenant_id=_current_tenant_id(actor)
+        )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="evidence comparison assessment not found") from exc
     _farm_or_404(assessment.farm_id, actor)
