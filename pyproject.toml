@@ -18,6 +18,7 @@ dependencies = [
 [project.scripts]
 ofi-recovery = "ofi.services.recovery_runner:main"
 ofi-schema = "ofi.twin.migrate:main"
+ofi-recovery-check = "ofi.twin.recovery_check:main"
 
 [project.optional-dependencies]
 postgres = ["psycopg[binary]>=3.2,<4"]

@@ -54,3 +54,27 @@ The registry validates contiguous numbering and unique migration names/filenames
 ## Operational boundary
 
 A successful readiness check confirms connectivity and expected schema objects only. It does not check connection-pool saturation, backups, point-in-time recovery, provider availability, alert delivery, or agricultural model validity. Production operations still require credentials management, network policy, monitoring, backup/recovery drills and staging verification.
+## Staging migration and recovery rehearsal
+
+Install the PostgreSQL client utilities (`pg_dump`, `pg_restore`) in addition to the Python PostgreSQL extra. The CI workflow installs these tools and runs a real dump/restore rehearsal using disposable databases.
+
+For a manual rehearsal, define two database URLs through your secret manager:
+
+- `OFI_RECOVERY_SOURCE_DSN`: a **staging-only** database at the schema version immediately before the migration being rehearsed. The harness reads and dumps this database but does not change it.
+- `OFI_RECOVERY_RESTORE_DSN`: a separately provisioned, **empty disposable database**. The harness restores a temporary custom-format dump into this database, applies pending migrations to the restored copy, checks readiness, and leaves the upgraded copy available for inspection.
+
+Run:
+
+```bash
+ofi-recovery-check
+```
+
+The harness fails closed if the source is not at the expected prior migration version, the target is not empty, or both DSNs resolve to the same database identity. It verifies table row counts across all required persistence tables and full-row content fingerprints for core farm/case/service/evidence tables at three points: source snapshot, restored pre-migration copy, and upgraded restore. It also verifies the source schema version did not change. The temporary dump is deleted when the command exits; the restored target database remains at the current version.
+
+The rehearsal performs a database read + backup and populates the target; it does not drop/overwrite target objects and does not mutate the source. Still, use staging data and credentials only. Row fingerprinting scans the configured fingerprint relations and can be expensive for large datasets, so begin with a representative staging clone and plan the rehearsal in an approved maintenance window.
+
+### Rollback proof covered by CI
+
+The PostgreSQL integration suite inserts a deliberately invalid negative case version into a disposable version-1 database and attempts the version-2 constraint migration. The expected constraint failure must roll back the DDL, the legacy checksum backfill, and the version-2 marker in one transaction. The test removes the invalid fixture and confirms the migration then succeeds. It also backs up/restores a populated v1 database, upgrades the restored copy, verifies case/event/farm/crop/observation contents are preserved, and checks the upgraded copy passes the readiness contract.
+
+This is a reproducible staging/CI rehearsal, not evidence that a production backup has been retained, that point-in-time recovery has been tested, or that an actual production incident has been recovered from. Production readiness still requires an approved backup-retention policy, encrypted off-site storage, restore drills on representative data, credentials/network review, and a documented recovery-time/recovery-point objective.
