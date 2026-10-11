@@ -48,14 +48,26 @@ class CaseManager:
             record = self.store.create(case)
             self.farm_twin.upsert(case.farm)
             for observation in case.observations:
-                self.farm_twin.add_observation(case.farm.id, observation)
+                self.farm_twin.add_observation(
+                    case.farm.id, observation, tenant_id=case.farm.tenant_id
+                )
             return self._event(record, "reported", "system", {"query": case.query})
 
-    def add_observation(self, case_id: str, observation: Observation, actor: str = "system") -> CaseRecord:
+    def add_observation(
+        self,
+        case_id: str,
+        observation: Observation,
+        actor: str = "system",
+        *,
+        tenant_id: str | None = None,
+    ) -> CaseRecord:
         with self.unit_of_work.atomic():
-            record = self.store.get(case_id)
+            record = self.store.get(case_id, tenant_id=tenant_id)
+            farm_tenant_id = tenant_id if tenant_id is not None else record.case.farm.tenant_id
             record.case.observations.append(observation)
-            self.farm_twin.add_observation(record.case.farm.id, observation)
+            self.farm_twin.add_observation(
+                record.case.farm.id, observation, tenant_id=farm_tenant_id
+            )
             if record.case.status == "reported":
                 record.case.status = "triaged"
             return self._event(record, "observation_added", actor, {"observation_id": observation.id})
@@ -111,29 +123,45 @@ class CaseManager:
         )
         return self.store.get(case_id, tenant_id=tenant_id), frame
 
-    def collect_evidence(self, case_id: str, provider_registry, actor: str = "provider_registry") -> CaseRecord:
+    def collect_evidence(
+        self,
+        case_id: str,
+        provider_registry,
+        actor: str = "provider_registry",
+        *,
+        tenant_id: str | None = None,
+    ) -> CaseRecord:
         with self.unit_of_work.atomic():
-            record = self.store.get(case_id)
-            snapshot = self.farm_twin.snapshot(record.case.farm.id)
+            record = self.store.get(case_id, tenant_id=tenant_id)
+            farm_tenant_id = tenant_id if tenant_id is not None else record.case.farm.tenant_id
+            snapshot = self.farm_twin.snapshot(
+                record.case.farm.id, tenant_id=farm_tenant_id
+            )
             observations = provider_registry.collect(snapshot)
             if observations and record.case.status == "reported":
                 record.case.status = "triaged"
             for observation in observations:
                 record.case.observations.append(observation)
-                self.farm_twin.add_observation(record.case.farm.id, observation)
+                self.farm_twin.add_observation(
+                    record.case.farm.id, observation, tenant_id=farm_tenant_id
+                )
                 self._event(record, "observation_added", actor, {"observation_id": observation.id, "source": observation.source})
-            snapshot = self.farm_twin.snapshot(record.case.farm.id)
+            snapshot = self.farm_twin.snapshot(record.case.farm.id, tenant_id=farm_tenant_id)
             derived = derived_ndvi_observation(snapshot)
             if derived:
                 record.case.observations.append(derived)
-                self.farm_twin.add_observation(record.case.farm.id, derived)
+                self.farm_twin.add_observation(
+                    record.case.farm.id, derived, tenant_id=farm_tenant_id
+                )
                 self._event(record, "observation_derived", "geospatial_analytics", {"observation_id": derived.id})
-            scientific_observations = self.scientific_models.run(self.farm_twin.snapshot(record.case.farm.id))
+            scientific_observations = self.scientific_models.run(self.farm_twin.snapshot(record.case.farm.id, tenant_id=farm_tenant_id))
             for scientific in scientific_observations:
                 record.case.observations.append(scientific)
-                self.farm_twin.add_observation(record.case.farm.id, scientific)
+                self.farm_twin.add_observation(
+                    record.case.farm.id, scientific, tenant_id=farm_tenant_id
+                )
                 self._event(record, "observation_derived", scientific.source, {"observation_id": scientific.id})
-            return self.store.get(record.case.id)
+            return self.store.get(record.case.id, tenant_id=farm_tenant_id)
 
     def plan_actions(self, case_id: str, action_planner=None):
         """Create auditable action requests from the latest reasoning."""
@@ -186,14 +214,24 @@ class CaseManager:
             "message": latest.message,
         })
 
-    def record_outcome(self, case_id: str, outcome: CaseOutcome, actor: str = "farmer") -> CaseRecord:
+    def record_outcome(
+        self,
+        case_id: str,
+        outcome: CaseOutcome,
+        actor: str = "farmer",
+        *,
+        tenant_id: str | None = None,
+    ) -> CaseRecord:
         with self.unit_of_work.atomic():
-            record = self.store.get(case_id)
+            record = self.store.get(case_id, tenant_id=tenant_id)
+            farm_tenant_id = tenant_id if tenant_id is not None else record.case.farm.tenant_id
             record.outcome = outcome
             record.case.status = "resolved" if outcome.outcome == "resolved" else "observing"
             for observation in outcome.evidence:
                 record.case.observations.append(observation)
-                self.farm_twin.add_observation(record.case.farm.id, observation)
+                self.farm_twin.add_observation(
+                    record.case.farm.id, observation, tenant_id=farm_tenant_id
+                )
             return self._event(record, "outcome_recorded", actor, {"outcome": outcome.outcome})
 
     def record_action_outcome(self, case_id: str, action, outcome, feedback_service=None):

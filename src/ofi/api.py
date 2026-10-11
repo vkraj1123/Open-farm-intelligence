@@ -568,7 +568,10 @@ def add_observation(
     _case_or_404(case_id, actor)
     try:
         return case_manager.add_observation(
-            case_id, observation, actor=actor.actor_id if actor else "api"
+            case_id,
+            observation,
+            actor=actor.actor_id if actor else "api",
+            tenant_id=actor.tenant_id if actor is not None else None,
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="case not found") from exc
@@ -594,7 +597,11 @@ def record_outcome(
 ):
     _case_or_404(case_id, actor)
     try:
-        return case_manager.record_outcome(case_id, outcome)
+        return case_manager.record_outcome(
+            case_id,
+            outcome,
+            tenant_id=actor.tenant_id if actor is not None else None,
+        )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="case not found") from exc
 
@@ -626,7 +633,11 @@ def collect_evidence(
         raise HTTPException(status_code=404, detail="farm snapshot not available") from exc
     observations = provider_registry.collect(snapshot)
     for observation in observations:
-        case_manager.farm_twin.add_observation(farm_id, observation)
+        case_manager.farm_twin.add_observation(
+            farm_id,
+            observation,
+            tenant_id=actor.tenant_id if actor is not None else None,
+        )
     return {"farm_id": farm_id, "observations": observations}
 
 

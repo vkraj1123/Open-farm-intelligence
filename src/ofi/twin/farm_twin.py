@@ -47,23 +47,51 @@ class FarmTwinStore(FarmTwinRepository):
                 raise KeyError(farm_id)
         return farm
 
-    def register_crop_cycle(self, farm_id: str, crop_cycle: CropCycle) -> None:
-        self.get(farm_id)
+    def register_crop_cycle(
+        self,
+        farm_id: str,
+        crop_cycle: CropCycle,
+        *,
+        tenant_id: str | None = None,
+    ) -> None:
+        # Reject a tenant mismatch before touching any farm-child records.
+        self.get(farm_id, tenant_id=tenant_id)
         cycles = self._crop_cycles[farm_id]
         if any(item.id == crop_cycle.id for item in cycles):
             raise ValueError(f"crop cycle already registered: {crop_cycle.id}")
         cycles.append(crop_cycle)
 
-    def add_land_party(self, farm_id: str, party: LandParty) -> None:
-        self.get(farm_id)
+    def add_land_party(
+        self,
+        farm_id: str,
+        party: LandParty,
+        *,
+        tenant_id: str | None = None,
+    ) -> None:
+        # Reject a tenant mismatch before touching any farm-child records.
+        self.get(farm_id, tenant_id=tenant_id)
         self._parties[farm_id].append(party)
 
-    def add_contract(self, farm_id: str, contract: ProductionContract) -> None:
-        self.get(farm_id)
+    def add_contract(
+        self,
+        farm_id: str,
+        contract: ProductionContract,
+        *,
+        tenant_id: str | None = None,
+    ) -> None:
+        # Reject a tenant mismatch before touching any farm-child records.
+        self.get(farm_id, tenant_id=tenant_id)
         self._contracts[farm_id].append(contract)
 
-    def add_observation(self, farm_id: str, observation: Observation) -> None:
-        self.get(farm_id)
+    def add_observation(
+        self,
+        farm_id: str,
+        observation: Observation,
+        *,
+        tenant_id: str | None = None,
+    ) -> None:
+        # Reject a tenant mismatch before touching any farm-child records.
+        self.get(farm_id, tenant_id=tenant_id)
         self._observations[farm_id].append(observation)
 
     def snapshot(

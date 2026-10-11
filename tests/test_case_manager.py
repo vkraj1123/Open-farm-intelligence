@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from ofi.domain.models import CaseOutcome, CropCycle, Farm, FarmCase, GeoPoint, Observation, Parcel
 from ofi.providers.base import EvidenceProvider
 from ofi.providers.registry import default_mock_registry
@@ -160,3 +162,30 @@ def test_collect_evidence_rolls_back_case_and_twin_on_late_failure():
     assert after_case.case.model_dump(mode="json") == before_case.case.model_dump(mode="json")
     assert after_case.version == before_case.version
     assert after_twin.recent_observations == before_twin.recent_observations
+
+
+
+def test_record_outcome_rejects_a_different_tenant_before_mutating_evidence():
+    m = CaseManager()
+    unscoped = case()
+    scoped_farm = unscoped.farm.model_copy(update={"tenant_id": "tenant-a"})
+    m.create(unscoped.model_copy(update={"farm": scoped_farm}))
+    evidence = Observation(
+        id="cross-tenant-outcome-evidence",
+        kind="farmer_report",
+        timestamp=datetime.now(timezone.utc),
+        value={"symptom": "test"},
+        source="farmer",
+    )
+
+    with pytest.raises(KeyError):
+        m.record_outcome(
+            "c1",
+            CaseOutcome(outcome="resolved", evidence=[evidence]),
+            tenant_id="tenant-b",
+        )
+
+    stored = m.store.get("c1", tenant_id="tenant-a")
+    assert stored.outcome is None
+    assert stored.case.observations == []
+    assert m.farm_twin.snapshot("f1", tenant_id="tenant-a").recent_observations == []

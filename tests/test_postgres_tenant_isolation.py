@@ -7,7 +7,7 @@ import pytest
 
 psycopg = pytest.importorskip("psycopg")
 
-from ofi.domain.models import CropCycle, Farm, FarmCase, GeoPoint, LandParty, Parcel
+from ofi.domain.models import CropCycle, Farm, FarmCase, GeoPoint, LandParty, Observation, Parcel, ProductionContract
 from ofi.services.consent_repository import PostgresConsentRepository
 from ofi.services.evidence_comparison import MetricComparisonRule
 from ofi.services.evidence_comparison_ledger import (
@@ -98,6 +98,38 @@ def test_postgres_farm_case_policy_assessment_and_consent_are_tenant_scoped():
     assert farm_store.snapshot(farm_id, tenant_id=tenant_a).farm_id == farm_id
     with pytest.raises(KeyError):
         farm_store.snapshot(farm_id, tenant_id=tenant_b)
+
+    blocked_crop = CropCycle(id=f"blocked-crop-{suffix}", crop="wheat")
+    blocked_party = LandParty(
+        party_id=f"blocked-party-{suffix}",
+        role="manager",
+        valid_from=date(2020, 1, 1),
+    )
+    blocked_contract = ProductionContract(
+        contract_id=f"blocked-contract-{suffix}",
+        owner_id=f"owner-{farmer_id}",
+        cultivator_id=f"owner-{farmer_id}",
+        valid_from=date(2020, 1, 1),
+        valid_to=date(2030, 1, 1),
+        arrangement="tenant-isolation-test",
+    )
+    blocked_observation = Observation(
+        id=f"blocked-observation-{suffix}",
+        kind="weather",
+        timestamp=datetime.now(timezone.utc),
+        value={"temperature_c": 25},
+        source="tenant-isolation-test",
+        crop_cycle_id=farm.crop_cycle.id,
+    )
+    with pytest.raises(KeyError):
+        farm_store.register_crop_cycle(farm_id, blocked_crop, tenant_id=tenant_b)
+    with pytest.raises(KeyError):
+        farm_store.add_land_party(farm_id, blocked_party, tenant_id=tenant_b)
+    with pytest.raises(KeyError):
+        farm_store.add_contract(farm_id, blocked_contract, tenant_id=tenant_b)
+    with pytest.raises(KeyError):
+        farm_store.add_observation(farm_id, blocked_observation, tenant_id=tenant_b)
+
     with pytest.raises(psycopg.Error, match="tenant binding is immutable"):
         with psycopg.connect(DATABASE_URL) as connection:
             connection.execute(

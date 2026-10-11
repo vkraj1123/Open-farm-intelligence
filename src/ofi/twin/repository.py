@@ -21,19 +21,47 @@ class FarmTwinRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def register_crop_cycle(self, farm_id: str, crop_cycle: CropCycle) -> None:
+    def register_crop_cycle(
+        self,
+        farm_id: str,
+        crop_cycle: CropCycle,
+        *,
+        tenant_id: str | None = None,
+    ) -> None:
+        """Mutate farm data, optionally requiring the farm to match this tenant."""
         raise NotImplementedError
 
     @abstractmethod
-    def add_land_party(self, farm_id: str, party: LandParty) -> None:
+    def add_land_party(
+        self,
+        farm_id: str,
+        party: LandParty,
+        *,
+        tenant_id: str | None = None,
+    ) -> None:
+        """Mutate farm data, optionally requiring the farm to match this tenant."""
         raise NotImplementedError
 
     @abstractmethod
-    def add_contract(self, farm_id: str, contract: ProductionContract) -> None:
+    def add_contract(
+        self,
+        farm_id: str,
+        contract: ProductionContract,
+        *,
+        tenant_id: str | None = None,
+    ) -> None:
+        """Mutate farm data, optionally requiring the farm to match this tenant."""
         raise NotImplementedError
 
     @abstractmethod
-    def add_observation(self, farm_id: str, observation: Observation) -> None:
+    def add_observation(
+        self,
+        farm_id: str,
+        observation: Observation,
+        *,
+        tenant_id: str | None = None,
+    ) -> None:
+        """Mutate farm data, optionally requiring the farm to match this tenant."""
         raise NotImplementedError
 
     @abstractmethod

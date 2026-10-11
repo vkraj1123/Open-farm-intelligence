@@ -2443,3 +2443,17 @@ Authenticated API handlers now pass the verified token tenant to snapshot operat
 | Regression coverage | Passing in CI on implementation commit 74fd2e9 | Unit test plus PostgreSQL tenant-isolation test exercise matching and mismatched tenants |
 
 **Verification:** All four GitHub Actions test runs passed on implementation commit [74fd2e9](https://github.com/vkraj1123/Open-farm-intelligence/commit/74fd2e9c714bad5a0f39e2112f18208dc4ea520c), including the PostgreSQL-backed regression run. The code changes covered by that commit passed; a subsequent documentation-only update is being rechecked by CI. These tests do not establish production token-issuer membership checks, live service-provider authorization, or a completed independent security audit. Keep the tenant-membership and legacy-data cutover limitations in section #57 in force.
+
+# 60. Tenant-scoped farm-twin mutations
+
+The farm-twin repository contract now allows crop-cycle registration, land-party insertion, production-contract insertion and observation insertion to carry an explicit keyword-only tenant scope. Both the in-memory and PostgreSQL implementations check the target farm with that tenant scope before mutating child records. Existing trusted internal callers remain compatible when omitting the optional scope.
+
+The API passes the verified tenant claim when adding farmer observations and when collecting provider evidence. CaseManager mutation and evidence-collection paths also propagate tenant scope from the authenticated request or the stored case context, instead of relying only on an earlier API check.
+
+| Capability | Status | Boundary |
+|---|---|---|
+| Scoped crop-cycle, land-party, contract and observation writes | Implemented in branch | Tenant mismatch returns the same not-found style KeyError before child data is changed |
+| API observation writes | Implemented in branch | Signed tenant claim is propagated into CaseManager/farm-twin mutation calls |
+| Regression coverage | Passing in CI on implementation commit e1cfab2 | In-memory tests cover all four mutations; PostgreSQL tenant-isolation tests cover mismatched-tenant rejection |
+
+**Verification:** All four GitHub Actions runs passed on implementation commit [e1cfab2](https://github.com/vkraj1123/Open-farm-intelligence/commit/e1cfab2316f79309fd0735b360e2ed393e5ba7ef), including the PostgreSQL-backed tests on both push and pull-request workflows ([standard PR check](https://github.com/vkraj1123/Open-farm-intelligence/actions/runs/38110430618), [PostgreSQL PR check](https://github.com/vkraj1123/Open-farm-intelligence/actions/runs/38110430603), [standard push check](https://github.com/vkraj1123/Open-farm-intelligence/actions/runs/38110429070), [PostgreSQL push check](https://github.com/vkraj1123/Open-farm-intelligence/actions/runs/38110429085)). This documentation-only commit is being rechecked by CI. These tests do not implement organization membership verification in the token issuer or complete the outstanding RBAC and production security review.

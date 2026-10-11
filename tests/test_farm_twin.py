@@ -2,7 +2,7 @@ from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
-from ofi.domain.models import CropCycle, Farm, GeoPoint, LandParty, Parcel, ProductionContract
+from ofi.domain.models import CropCycle, Farm, GeoPoint, LandParty, Observation, Parcel, ProductionContract
 from ofi.twin.farm_twin import FarmTwinStore
 
 
@@ -81,3 +81,55 @@ def test_snapshot_rejects_a_different_tenant():
 
     with pytest.raises(KeyError):
         twin.snapshot("farm-1", as_of, tenant_id="tenant-b")
+
+
+
+def test_farm_child_mutations_enforce_tenant_scope():
+    twin = FarmTwinStore()
+    farm = make_farm().model_copy(update={"tenant_id": "tenant-a"})
+    twin.upsert(farm)
+    observation = Observation(
+        id="observation-scoped",
+        kind="weather",
+        timestamp=datetime(2026, 7, 15, tzinfo=timezone.utc),
+        value={"temperature_c": 30},
+        source="tenant-scope-test",
+    )
+    crop_cycle = CropCycle(id="crop-scoped", crop="wheat")
+    party = LandParty(
+        party_id="party-scoped",
+        role="manager",
+        valid_from=date(2020, 1, 1),
+    )
+    contract = ProductionContract(
+        contract_id="contract-scoped",
+        owner_id="owner-1",
+        cultivator_id="cultivator-1",
+        valid_from=date(2026, 7, 1),
+        valid_to=date(2026, 10, 15),
+        arrangement="test",
+    )
+
+    with pytest.raises(KeyError):
+        twin.register_crop_cycle("farm-1", crop_cycle, tenant_id="tenant-b")
+    with pytest.raises(KeyError):
+        twin.add_land_party("farm-1", party, tenant_id="tenant-b")
+    with pytest.raises(KeyError):
+        twin.add_contract("farm-1", contract, tenant_id="tenant-b")
+    with pytest.raises(KeyError):
+        twin.add_observation("farm-1", observation, tenant_id="tenant-b")
+
+    assert len(twin._crop_cycles["farm-1"]) == 1
+    assert len(twin._parties["farm-1"]) == 2
+    assert len(twin._contracts["farm-1"]) == 1
+    assert twin._observations["farm-1"] == []
+
+    twin.register_crop_cycle("farm-1", crop_cycle, tenant_id="tenant-a")
+    twin.add_land_party("farm-1", party, tenant_id="tenant-a")
+    twin.add_contract("farm-1", contract, tenant_id="tenant-a")
+    twin.add_observation("farm-1", observation, tenant_id="tenant-a")
+
+    assert len(twin._crop_cycles["farm-1"]) == 2
+    assert len(twin._parties["farm-1"]) == 3
+    assert len(twin._contracts["farm-1"]) == 2
+    assert twin._observations["farm-1"] == [observation]

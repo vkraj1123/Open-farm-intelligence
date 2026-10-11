@@ -94,7 +94,7 @@ def test_case_and_farm_writes_roll_back_together_on_twin_failure(
     case = make_case(include_observation=True)
     manager = make_manager(connection_factory)
 
-    def fail_observation_write(farm_id, observation):
+    def fail_observation_write(farm_id, observation, *, tenant_id=None):
         raise RuntimeError("injected farm-twin failure")
 
     monkeypatch.setattr(manager.farm_twin, "add_observation", fail_observation_write)
