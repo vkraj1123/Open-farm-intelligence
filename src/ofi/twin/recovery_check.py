@@ -45,6 +45,7 @@ FINGERPRINT_RELATIONS = (
     "evidence_comparison_policy_heads",
     "evidence_comparison_policy_versions",
     "evidence_comparison_assessments",
+    "ofi_consent_grants",
 )
 
 _PG_ENV = {
@@ -105,7 +106,9 @@ def _read_schema_version(dsn: str) -> int:
     return int(row[0])
 
 
-def _table_counts(connection: Any) -> dict[str, int]:
+def _table_counts(
+    connection: Any, *, allow_missing_relations: bool = False
+) -> dict[str, int]:
     counts: dict[str, int] = {}
     with connection.cursor() as cursor:
         cursor.execute(
@@ -118,9 +121,14 @@ def _table_counts(connection: Any) -> dict[str, int]:
         )
         existing = {row[0] for row in cursor.fetchall()}
         missing = sorted(set(REQUIRED_RELATIONS) - existing)
-        if missing:
+        if missing and not allow_missing_relations:
             raise RuntimeError(f"Database is missing required persistence tables: {missing}")
         for table in REQUIRED_RELATIONS:
+            # A table introduced by the next migration is logically empty in a
+            # prior-version source snapshot, so its normalized count is zero.
+            if table not in existing:
+                counts[table] = 0
+                continue
             cursor.execute(
                 sql.SQL("SELECT count(*) FROM {}").format(sql.Identifier(table))
             )
@@ -128,11 +136,27 @@ def _table_counts(connection: Any) -> dict[str, int]:
     return counts
 
 
-def _data_fingerprints(connection: Any) -> dict[str, str]:
+def _data_fingerprints(
+    connection: Any, *, allow_missing_relations: bool = False
+) -> dict[str, str]:
     """Fingerprint every row in important data tables in deterministic order."""
     fingerprints: dict[str, str] = {}
     with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT table_name FROM information_schema.tables
+            WHERE table_schema = current_schema() AND table_type = 'BASE TABLE'
+            """
+        )
+        existing = {row[0] for row in cursor.fetchall()}
         for table in FINGERPRINT_RELATIONS:
+            if table not in existing:
+                if allow_missing_relations:
+                    # Matches PostgreSQL md5('') for a table introduced by a
+                    # migration that has not yet run on this source database.
+                    fingerprints[table] = hashlib.md5(b"").hexdigest()
+                    continue
+                raise RuntimeError(f"Database is missing fingerprint table: {table}")
             cursor.execute(
                 sql.SQL(
                     """
@@ -151,11 +175,17 @@ def _data_fingerprints(connection: Any) -> dict[str, str]:
     return fingerprints
 
 
-def _snapshot(dsn: str) -> dict[str, Any]:
+def _snapshot(
+    dsn: str, *, allow_missing_relations: bool = False
+) -> dict[str, Any]:
     with psycopg.connect(dsn) as connection:
         return {
-            "row_counts": _table_counts(connection),
-            "data_fingerprints": _data_fingerprints(connection),
+            "row_counts": _table_counts(
+                connection, allow_missing_relations=allow_missing_relations
+            ),
+            "data_fingerprints": _data_fingerprints(
+                connection, allow_missing_relations=allow_missing_relations
+            ),
         }
 
 
@@ -316,7 +346,9 @@ def run_recovery_check(
         )
 
     _ensure_empty_restore_target(restore_dsn)
-    source_snapshot = _snapshot(source_dsn)
+    source_snapshot = _snapshot(
+        source_dsn, allow_missing_relations=source_version < CURRENT_SCHEMA_VERSION
+    )
     encrypted_backup_report: dict[str, Any] | None = None
 
     with tempfile.TemporaryDirectory(prefix="ofi-recovery-check-") as temporary_directory:
@@ -354,7 +386,9 @@ def run_recovery_check(
         )
 
     restored_version = _read_schema_version(restore_dsn)
-    restored_snapshot = _snapshot(restore_dsn)
+    restored_snapshot = _snapshot(
+        restore_dsn, allow_missing_relations=restored_version < CURRENT_SCHEMA_VERSION
+    )
     if restored_version != source_version:
         raise RuntimeError(
             f"Restored database schema version is {restored_version}; "
