@@ -58,6 +58,7 @@ def run_recovery_drill(
             )
 
     report["restore_database_disposed"] = True
+    report["restore_database_name"] = target_name
     return report
 
 
