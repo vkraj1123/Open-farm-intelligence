@@ -105,10 +105,10 @@ def seed_v1_source(dsn):
     }
 
 
-def seed_v3_source(dsn):
-    """Seed representative rows in schema v3, immediately before migration 004."""
+def seed_v4_source(dsn):
+    """Seed representative rows in schema v4, immediately before migration 005."""
     ids = seed_v1_source(dsn)
-    for migration in MIGRATIONS[1:3]:
+    for migration in MIGRATIONS[1:4]:
         with psycopg.connect(dsn) as connection:
             connection.execute(migration.sql)
             connection.execute(
@@ -121,11 +121,11 @@ def seed_v3_source(dsn):
     return ids
 
 
-def test_backup_restore_and_v3_to_v4_upgrade_preserve_source_data():
+def test_backup_restore_and_v4_to_v5_upgrade_preserve_source_data():
     source_name, source_dsn, admin_dsn = create_database(DATABASE_URL, "ofi_recovery_source")
     restore_name, restore_dsn, _ = create_database(DATABASE_URL, "ofi_recovery_target")
     try:
-        record_ids = seed_v3_source(source_dsn)
+        record_ids = seed_v4_source(source_dsn)
         report = run_recovery_check(source_dsn, restore_dsn)
 
         assert report["status"] == "passed"

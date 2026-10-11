@@ -6,4 +6,6 @@ enable JWT enforcement and exercise the real request boundary.
 """
 import os
 
+os.environ["OFI_ENV"] = "test"
 os.environ["OFI_RESOURCE_AUTH_ENABLED"] = "false"
+os.environ["OFI_TENANT_MEMBERSHIP_ENFORCEMENT"] = "disabled"
