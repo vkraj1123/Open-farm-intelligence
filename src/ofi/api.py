@@ -4,7 +4,7 @@ import os
 from uuid import uuid4
 from typing import Literal, get_args
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
@@ -407,8 +407,94 @@ def ready():
     return JSONResponse(status_code=status_code, content=report)
 
 
+def _resource_actor(
+    authorization: str | None = Header(default=None, alias="Authorization"),
+) -> ActorIdentity | None:
+    """Require verified identity by default; the opt-out is for isolated tests only."""
+    mode = os.getenv("OFI_RESOURCE_AUTH_ENABLED", "true").strip().lower()
+    if mode in {"0", "false", "no", "off"}:
+        return None
+    if mode not in {"1", "true", "yes", "on"}:
+        raise HTTPException(
+            status_code=503,
+            detail="resource authentication configuration is invalid",
+        )
+    return require_authenticated_actor(authorization)
+
+
+def _actor_can_access_farm(actor: ActorIdentity, farm) -> bool:
+    """Allow the primary farmer or a current, explicitly verified owner/cultivator."""
+    if not actor.authenticated or actor.role not in {"farmer", "owner", "cultivator"}:
+        return False
+    if actor.actor_id == farm.farmer_id:
+        return True
+
+    today = datetime.now(timezone.utc).date()
+    return any(
+        party.party_id == actor.actor_id
+        and party.role == actor.role
+        and party.verification == "verified"
+        and party.valid_from <= today
+        and (party.valid_to is None or party.valid_to >= today)
+        for party in farm.parties
+    )
+
+
+def _require_farm_access(actor: ActorIdentity | None, farm) -> None:
+    if actor is not None and not _actor_can_access_farm(actor, farm):
+        # Keep resource existence private across actor boundaries.
+        raise HTTPException(status_code=404, detail="farm not found")
+
+
+def _farm_or_404(farm_id: str, actor: ActorIdentity | None):
+    try:
+        farm = case_manager.farm_twin.get(farm_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="farm not found") from exc
+    _require_farm_access(actor, farm)
+    return farm
+
+
+def _case_or_404(case_id: str, actor: ActorIdentity | None):
+    try:
+        record = case_manager.store.get(case_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="case not found") from exc
+
+    if actor is not None:
+        try:
+            farm = case_manager.farm_twin.get(record.case.farm.id)
+        except KeyError:
+            farm = record.case.farm
+        _require_farm_access(actor, farm)
+    return record
+
+
+def _require_policy_manager(actor: ActorIdentity | None) -> None:
+    if actor is not None and actor.role not in {"agent", "service_provider", "system"}:
+        raise HTTPException(
+            status_code=403,
+            detail="this role cannot manage global evidence-comparison policies",
+        )
+
+
 @app.post("/cases", response_model=CaseRecord)
-def create_case(case: FarmCase):
+def create_case(
+    case: FarmCase,
+    actor: ActorIdentity | None = Depends(_resource_actor),
+):
+    if actor is not None:
+        _require_farm_access(actor, case.farm)
+        # Case creation must not act as an implicit farm transfer or profile update.
+        try:
+            existing_farm = case_manager.farm_twin.get(case.farm.id)
+        except KeyError:
+            existing_farm = None
+        if existing_farm is not None:
+            _require_farm_access(actor, existing_farm)
+            if case.farm.farmer_id != existing_farm.farmer_id:
+                raise HTTPException(status_code=409, detail="farm owner cannot be changed through case creation")
+            case = case.model_copy(update={"farm": existing_farm})
     try:
         return case_manager.create(case)
     except ValueError as exc:
@@ -416,23 +502,34 @@ def create_case(case: FarmCase):
 
 
 @app.get("/cases/{case_id}", response_model=CaseRecord)
-def get_case(case_id: str):
-    try:
-        return case_manager.store.get(case_id)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail="case not found") from exc
+def get_case(
+    case_id: str,
+    actor: ActorIdentity | None = Depends(_resource_actor),
+):
+    return _case_or_404(case_id, actor)
 
 
 @app.post("/cases/{case_id}/observations", response_model=CaseRecord)
-def add_observation(case_id: str, observation: Observation):
+def add_observation(
+    case_id: str,
+    observation: Observation,
+    actor: ActorIdentity | None = Depends(_resource_actor),
+):
+    _case_or_404(case_id, actor)
     try:
-        return case_manager.add_observation(case_id, observation, actor="api")
+        return case_manager.add_observation(
+            case_id, observation, actor=actor.actor_id if actor else "api"
+        )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="case not found") from exc
 
 
 @app.post("/cases/{case_id}/reason", response_model=CaseRecord)
-def reason(case_id: str):
+def reason(
+    case_id: str,
+    actor: ActorIdentity | None = Depends(_resource_actor),
+):
+    _case_or_404(case_id, actor)
     try:
         return case_manager.reason(case_id)
     except KeyError as exc:
@@ -440,7 +537,12 @@ def reason(case_id: str):
 
 
 @app.post("/cases/{case_id}/outcome", response_model=CaseRecord)
-def record_outcome(case_id: str, outcome: CaseOutcome):
+def record_outcome(
+    case_id: str,
+    outcome: CaseOutcome,
+    actor: ActorIdentity | None = Depends(_resource_actor),
+):
+    _case_or_404(case_id, actor)
     try:
         return case_manager.record_outcome(case_id, outcome)
     except KeyError as exc:
@@ -448,7 +550,11 @@ def record_outcome(case_id: str, outcome: CaseOutcome):
 
 
 @app.post("/cases/{case_id}/escalate", response_model=CaseRecord)
-def escalate(case_id: str):
+def escalate(
+    case_id: str,
+    actor: ActorIdentity | None = Depends(_resource_actor),
+):
+    _case_or_404(case_id, actor)
     try:
         return case_manager.escalate(case_id)
     except KeyError as exc:
@@ -456,7 +562,11 @@ def escalate(case_id: str):
 
 
 @app.post("/farms/{farm_id}/collect-evidence")
-def collect_evidence(farm_id: str):
+def collect_evidence(
+    farm_id: str,
+    actor: ActorIdentity | None = Depends(_resource_actor),
+):
+    _farm_or_404(farm_id, actor)
     try:
         snapshot = case_manager.farm_twin.snapshot(farm_id)
     except (KeyError, ValueError) as exc:
@@ -468,8 +578,13 @@ def collect_evidence(farm_id: str):
 
 
 @app.post("/farms/{farm_id}/evidence-frame")
-def get_evidence_frame(farm_id: str, request: EvidenceFrameRequest):
+def get_evidence_frame(
+    farm_id: str,
+    request: EvidenceFrameRequest,
+    actor: ActorIdentity | None = Depends(_resource_actor),
+):
     """Return a deterministic evidence eligibility report for the current farm snapshot."""
+    _farm_or_404(farm_id, actor)
     try:
         snapshot = case_manager.farm_twin.snapshot(farm_id)
     except (KeyError, ValueError) as exc:
@@ -507,8 +622,13 @@ def get_evidence_frame(farm_id: str, request: EvidenceFrameRequest):
     }
 
 @app.post("/cases/{case_id}/reason-with-evidence-policy")
-def reason_with_evidence_policy(case_id: str, request: EvidenceFrameRequest):
+def reason_with_evidence_policy(
+    case_id: str,
+    request: EvidenceFrameRequest,
+    actor: ActorIdentity | None = Depends(_resource_actor),
+):
     """Reason over eligible evidence only, using an explicit caller-owned policy."""
+    _case_or_404(case_id, actor)
     try:
         record, frame = case_manager.reason_with_evidence_policy(
             case_id,
@@ -550,8 +670,13 @@ def reason_with_evidence_policy(case_id: str, request: EvidenceFrameRequest):
 
 
 @app.post("/farms/{farm_id}/evidence-comparisons")
-def compare_farm_evidence(farm_id: str, request: EvidenceComparisonRequest):
+def compare_farm_evidence(
+    farm_id: str,
+    request: EvidenceComparisonRequest,
+    actor: ActorIdentity | None = Depends(_resource_actor),
+):
     """Assess pairwise comparability using explicit caller-owned rules."""
+    _farm_or_404(farm_id, actor)
     try:
         snapshot = case_manager.farm_twin.snapshot(farm_id)
     except (KeyError, ValueError) as exc:
@@ -625,8 +750,12 @@ def compare_farm_evidence(farm_id: str, request: EvidenceComparisonRequest):
 
 
 @app.post("/evidence-comparison-policies")
-def create_evidence_comparison_policy(request: EvidenceComparisonPolicyRequest):
+def create_evidence_comparison_policy(
+    request: EvidenceComparisonPolicyRequest,
+    actor: ActorIdentity | None = Depends(_resource_actor),
+):
     """Create an immutable policy version; same policy_id publishes the next version."""
+    _require_policy_manager(actor)
     try:
         policy = evidence_comparison_ledger.create_policy_version(
             request.policy_id,
@@ -654,7 +783,11 @@ def create_evidence_comparison_policy(request: EvidenceComparisonPolicyRequest):
 
 
 @app.get("/evidence-comparison-policies/{policy_id}")
-def get_evidence_comparison_policy(policy_id: str, version: int | None = None):
+def get_evidence_comparison_policy(
+    policy_id: str,
+    version: int | None = None,
+    actor: ActorIdentity | None = Depends(_resource_actor),
+):
     """Get a specific immutable policy version, or the current latest version."""
     if version is not None and version < 1:
         raise HTTPException(status_code=422, detail="version must be positive")
@@ -666,9 +799,12 @@ def get_evidence_comparison_policy(policy_id: str, version: int | None = None):
 
 @app.post("/farms/{farm_id}/evidence-comparison-assessments")
 def create_evidence_comparison_assessment(
-    farm_id: str, request: EvidenceComparisonAssessmentRequest
+    farm_id: str,
+    request: EvidenceComparisonAssessmentRequest,
+    actor: ActorIdentity | None = Depends(_resource_actor),
 ):
     """Run and persist an assessment with its exact policy and observation snapshot."""
+    _farm_or_404(farm_id, actor)
     try:
         policy = evidence_comparison_ledger.get_policy(
             request.policy_id, request.policy_version
@@ -715,10 +851,14 @@ def create_evidence_comparison_assessment(
 
 
 @app.get("/evidence-comparison-assessments/{assessment_id}")
-def get_evidence_comparison_assessment(assessment_id: str):
+def get_evidence_comparison_assessment(
+    assessment_id: str,
+    actor: ActorIdentity | None = Depends(_resource_actor),
+):
     """Retrieve an immutable historical comparison assessment."""
     try:
         assessment = evidence_comparison_ledger.get_assessment(assessment_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="evidence comparison assessment not found") from exc
+    _farm_or_404(assessment.farm_id, actor)
     return _assessment_payload(assessment)
