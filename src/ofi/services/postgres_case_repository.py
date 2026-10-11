@@ -27,8 +27,8 @@ class PostgresCaseRepository(CaseRepository):
                     cur.execute(
                         """
                         INSERT INTO case_records
-                          (id,status,created_at,updated_at,version,case_data,latest_reasoning,outcome)
-                        VALUES (%s,%s,%s,%s,0,%s::jsonb,NULL,NULL)
+                          (id,status,created_at,updated_at,version,case_data,latest_reasoning,outcome,tenant_id)
+                        VALUES (%s,%s,%s,%s,0,%s::jsonb,NULL,NULL,%s)
                         """,
                         (
                             case.id,
@@ -36,22 +36,34 @@ class PostgresCaseRepository(CaseRepository):
                             case.created_at,
                             case.updated_at,
                             self._case_json(case),
+                            case.farm.tenant_id or "legacy:default",
                         ),
                     )
         return record
 
-    def get(self, case_id: str) -> CaseRecord:
+    def get(self, case_id: str, tenant_id: str | None = None) -> CaseRecord:
         with connection_scope(self._connection_factory) as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT id,status,created_at,updated_at,version,case_data,
-                           latest_reasoning,outcome
-                    FROM case_records
-                    WHERE id=%s
-                    """,
-                    (case_id,),
-                )
+                if tenant_id is None:
+                    cur.execute(
+                        """
+                        SELECT id,status,created_at,updated_at,version,case_data,
+                               latest_reasoning,outcome,tenant_id
+                        FROM case_records
+                        WHERE id=%s
+                        """,
+                        (case_id,),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        SELECT id,status,created_at,updated_at,version,case_data,
+                               latest_reasoning,outcome,tenant_id
+                        FROM case_records
+                        WHERE id=%s AND tenant_id=%s
+                        """,
+                        (case_id, tenant_id),
+                    )
                 row = cur.fetchone()
                 if row is None:
                     raise KeyError(case_id)
@@ -118,10 +130,13 @@ class PostgresCaseRepository(CaseRepository):
                             """
                             SELECT id
                             FROM case_records
-                            WHERE id=%s
+                            WHERE id=%s AND tenant_id=%s
                             FOR UPDATE
                             """,
-                            (working.case.id,),
+                            (
+                                working.case.id,
+                                working.case.farm.tenant_id or "legacy:default",
+                            ),
                         )
                         if cur.fetchone() is None:
                             raise KeyError(working.case.id)
@@ -198,7 +213,7 @@ class PostgresCaseRepository(CaseRepository):
                     case_data=%s::jsonb,
                     latest_reasoning=%s::jsonb,
                     outcome=%s::jsonb
-                WHERE id=%s AND version=%s
+                WHERE id=%s AND version=%s AND tenant_id=%s
                 """,
                 (
                     record.case.status,
@@ -211,6 +226,7 @@ class PostgresCaseRepository(CaseRepository):
                     if record.outcome else None,
                     record.case.id,
                     record.version,
+                    record.case.farm.tenant_id or "legacy:default",
                 ),
             )
             if cur.rowcount != 1:
@@ -219,7 +235,12 @@ class PostgresCaseRepository(CaseRepository):
 
     @staticmethod
     def _record_from_row(row: tuple[Any, ...]) -> CaseRecord:
-        _, _, _, _, version, case_data, reasoning_data, outcome_data = row
+        _, _, _, _, version, case_data, reasoning_data, outcome_data, tenant_id = row
+        # The relational tenant column is authoritative if a legacy JSON
+        # snapshot predates explicit tenant identity or contains stale metadata.
+        case_data = dict(case_data)
+        case_data["farm"] = dict(case_data.get("farm") or {})
+        case_data["farm"]["tenant_id"] = tenant_id
         case = FarmCase.model_validate(case_data)
         return CaseRecord(
             case=case,
