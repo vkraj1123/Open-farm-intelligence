@@ -1414,6 +1414,7 @@ The core closed-loop architecture is implemented and tested, but the project is 
 - [x] Consent expiry and timezone-aware validity
 - [x] Actor-bound revocation with durable PostgreSQL state
 - [x] Authenticated consent lifecycle API (create, retrieve, revoke)
+- [x] JWT-backed resource ownership checks for case/farm/evidence/assessment routes
 - [ ] Encryption at rest
 - [ ] Encryption in transit configuration
 - [ ] Audit log
@@ -1423,7 +1424,7 @@ The core closed-loop architecture is implemented and tested, but the project is 
 - [ ] Privacy/data-sharing policy
 - [ ] Security audit
 
-**Status: 🟡 Scoped consent, expiry, durable revocation, and an authenticated consent API are implemented. Farmer-facing consent UX, tenant isolation, purpose enforcement across all downstream data uses, RBAC, authentication for the wider API, and broader security review remain**
+**Status: 🟡 Scoped consent, expiry, durable revocation, authenticated consent lifecycle, and actor/farm resource checks are implemented. Farmer-facing consent UX, organization-level tenant IDs/membership, full RBAC, purpose enforcement across all downstream data uses, encryption, audit, and broader security review remain**
 
 ---
 
@@ -2346,7 +2347,32 @@ The new `src/ofi/api_auth.py` verifier accepts compact HS256 JWTs only. It check
 | Owner-only retrieval | Implemented and tested | `GET /consents/{consent_id}`; another actor receives the same 404 response as an unknown grant |
 | Actor-bound revocation | Implemented and tested | `DELETE /consents/{consent_id}` records revocation without deleting the grant |
 | Persistence | Configuration-dependent | PostgreSQL ledger when `OFI_DATABASE_URL` is set; otherwise process-local memory, which is not durable across restarts or processes |
-| Authentication for other routes | Not implemented | Existing case, farm, evidence and assessment routes remain outside this JWT dependency; do not expose the wider API to untrusted networks |
+| Resource authentication for other routes | Implemented by PR #67 | Case, farm, evidence and assessment routes require verified JWT authentication by default, except public `/health` and `/ready`; resource-level authorization is described in section #56 |
 | Tenant isolation, full RBAC and purpose limitation | Not completed | Requires resource-level enforcement and broader review; this API increment does not claim those controls |
 
 **Verification:** PR #65 passed the standard workflow ([run #726](https://github.com/vkraj1123/Open-farm-intelligence/actions/runs/38101451663)) and PostgreSQL-backed workflow ([run #861](https://github.com/vkraj1123/Open-farm-intelligence/actions/runs/38101451611)). The tests exercise token validation, configuration fail-closed behavior, affirmative scoped grants, cross-actor denial, and revocation. They do not demonstrate a real farmer-facing interface, production token issuer, deployment key rotation, or tenant-wide access control.
+
+
+
+# 56. Verified farm and case resource ownership
+
+PR [#67](https://github.com/vkraj1123/Open-farm-intelligence/pull/67) added actor-bound access checks to case, farm, evidence and assessment endpoints. It was merged to `main` as [`4cd105e82569ce97de6414a77dd9dc113987ed90`](https://github.com/vkraj1123/Open-farm-intelligence/commit/4cd105e82569ce97de6414a77dd9dc113987ed90).
+
+Resource routes now require the existing HS256 bearer-token verifier by default. The actor comes from the signed JWT `sub` and role claims. A farmer may access a farm whose `farmer_id` matches that actor; a different actor must be an active, explicitly verified land party whose role matches the token's `owner` or `cultivator` role. Unverified or expired party records do not confer access. Inaccessible farm/case identifiers return 404 to avoid disclosing whether the resource exists.
+
+Case creation no longer acts as an implicit farm transfer or farm-profile update. When the farm already exists, the current actor must be authorized, the submitted primary farmer ID must match the stored value, and OFI uses the authoritative stored farm snapshot. Writes to global evidence-comparison policies are restricted to signed `agent`, `service_provider`, or `system` roles. Reading policies requires authentication; health and readiness endpoints remain intentionally public.
+
+| Capability | Status | Boundary |
+|---|---|---|
+| Authenticated case/farm/evidence/assessment routes | Implemented and tested | JWT verification is required unless the explicit opt-out is set; `/health` and `/ready` remain public |
+| Primary farmer ownership | Implemented and tested | Signed actor ID must match `farm.farmer_id` |
+| Owner/cultivator party access | Implemented and tested | Requires matching role, current validity dates, and `verification: "verified"` |
+| Cross-actor read/update denial | Implemented and regression-tested | Unknown and inaccessible farm/case IDs share 404 behavior |
+| Farm takeover through case creation | Blocked and tested | Existing farmer identity/profile is not replaced by submitted case data |
+| Global comparison-policy writes | Restricted and tested | Requires `agent`, `service_provider`, or `system` identity |
+| Organization/tenant isolation | Not completed | There is no explicit tenant ID or organization-membership model yet; this milestone enforces current farm actor/party ownership only |
+| Full RBAC, audit and purpose enforcement | Not completed | These controls still need a deliberate policy model and review |
+
+Runtime resource authorization is enabled by default when `OFI_RESOURCE_AUTH_ENABLED` is unset. **Do not set it to `false` on a reachable deployment**; that opt-out exists only for isolated unit tests or a trusted local sandbox. JWT configuration is the same as in section #55: `OFI_AUTH_HMAC_SECRET`, `OFI_AUTH_ISSUER`, and `OFI_AUTH_AUDIENCE` are required. OFI validates the tokens but does not issue them.
+
+**Verification:** PR #67 passed the [standard workflow](https://github.com/vkraj1123/Open-farm-intelligence/actions/runs/38103511050) and [PostgreSQL-backed workflow](https://github.com/vkraj1123/Open-farm-intelligence/actions/runs/38103511047). Tests cover anonymous rejection, cross-actor reads/writes, verified and unverified party cases, primary-farmer binding, farm takeover attempts, and policy-manager roles. These checks do not demonstrate independent organization tenancy, production identity-provider integration, or a completed security audit.
