@@ -38,7 +38,7 @@ The runner requires these deployment variables; it deliberately provides no univ
 |---|---|
 | `OFI_RECOVERY_FACTORY` | Trusted `module:callable` factory returning a configured recovery worker |
 | `OFI_RECOVERY_STALE_AFTER_SECONDS` | Positive stale-claim age threshold in seconds |
-| `OFI_RECOVERY_LIMIT` | Positive maximum candidate count per run |
+| `OFI_RECOVERY_LIMIT` | Positive maximum candidate count per run |\n| `OFI_RECOVERY_ALERT_ENDPOINT` / `OFI_RECOVERY_ALERT_SECRET` | Optional pair for signed HTTPS alert delivery; both must be configured together |\n| `OFI_RECOVERY_ALERT_TIMEOUT_SECONDS` | Optional finite positive HTTP timeout; defaults to 5 seconds when alert delivery is enabled |
 | `OFI_RECOVERY_WARNING_ERRORS` / `OFI_RECOVERY_CRITICAL_ERRORS` | Per-run reconciliation error thresholds |
 | `OFI_RECOVERY_WARNING_UNKNOWN` / `OFI_RECOVERY_CRITICAL_UNKNOWN` | Per-run unresolved-unknown thresholds |
 | `OFI_RECOVERY_WARNING_PENDING` / `OFI_RECOVERY_CRITICAL_PENDING` | Per-run pending-reconciliation thresholds |
@@ -224,3 +224,28 @@ Before applying it:
 6. Validate with a staging namespace and synthetic/non-mutating reconciliation cases, then verify logs and alert delivery.
 
 The manifest is a template, not a deployable release: its image and endpoint are intentionally placeholders. Kubernetes `concurrencyPolicy: Forbid` prevents overlapping Jobs created by this CronJob, but it is not a distributed lock against manual invocations or other schedulers. Do not run multiple independent schedulers for the same recovery workload without an additional coordination design. A Job completion does not prove provider correctness or alert delivery.
+
+
+## 10. Signed HTTPS alert webhook
+
+The recovery runner can send the sanitized per-run health event directly to a deployment-owned alert receiver when a cycle ends in `warning` or `critical`. If no alert endpoint is configured, behavior remains log-only and the deployment's log pipeline can continue routing events as described above. A healthy cycle never sends a webhook alert.
+
+Set these variables through the deployment's secret/configuration manager:
+
+| Variable | Requirement |
+|---|---|
+| `OFI_RECOVERY_ALERT_ENDPOINT` | Absolute HTTPS URL for a deployment-controlled receiver; URL credentials, query strings and fragments are rejected |
+| `OFI_RECOVERY_ALERT_SECRET` | At least 32 UTF-8 bytes of high-entropy shared secret; keep it in secret management |
+| `OFI_RECOVERY_ALERT_TIMEOUT_SECONDS` | Optional finite positive timeout in seconds; defaults to 5 |
+
+The runner validates the endpoint and secret pair before constructing the worker. The client sends one JSON POST with:
+
+- `X-OFI-Signature: sha256=<hex>`: HMAC-SHA256 over the exact UTF-8 request body;
+- `X-OFI-Event-ID: <hex>`: SHA-256 of the exact body, stable for receiver-side deduplication;
+- a low-cardinality payload containing only the event name, UTC timestamp, status, metrics and alert code/severity/observed/threshold values.
+
+The client forwards no provider IDs, transaction IDs, attempt IDs, raw provider responses or exception strings. Unknown fields are discarded before signing. Only a 2xx response counts as accepted. Redirects are not followed, preventing signed payloads from being forwarded to another destination. Transport failures and non-2xx responses cause the `ofi-recovery` command to return exit code 2 with a sanitized stderr event. A successfully delivered warning/critical event produces a second JSON line named `ofi.recovery.alert_delivery` containing the event digest and HTTP status, not the destination or secret.
+
+The client sends once and does not retry ambiguous network errors: the receiver might have accepted the request before a connection failed. The receiver should authenticate the signature using constant-time comparison and deduplicate by `X-OFI-Event-ID`. A timeout or delivery error is an alert-delivery problem, not proof that the recovery worker did not run. Configure scheduler behavior accordingly and monitor runner exit codes.
+
+This implements a generic receiver contract, not an integration with PagerDuty, Slack, email, or another vendor. A deployment must implement and test the receiver, secret rotation, alert ownership and delivery monitoring before relying on it for production incidents.
