@@ -216,3 +216,51 @@ def test_runner_requires_alert_endpoint_and_secret_as_a_pair():
     error = json.loads(stderr.getvalue())
     assert error["error_type"] == "ValueError"
     assert "must be configured together" not in stderr.getvalue()
+
+
+
+def test_runner_returns_failure_when_alert_delivery_fails(monkeypatch):
+    worker = FakeWorker(
+        DispatchRecoveryReport(
+            candidates=1,
+            items=(
+                DispatchRecoveryItem(
+                    attempt_id="private-attempt",
+                    provider_id="private-provider",
+                    status="unknown",
+                ),
+            ),
+        )
+    )
+    module = types.ModuleType("ofi_test_alert_failure_factory")
+    module.build_worker = lambda: worker
+    monkeypatch.setitem(sys.modules, "ofi_test_alert_failure_factory", module)
+
+    class FailingWebhook:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def send(self, _event):
+            raise recovery_runner.RecoveryAlertDeliveryError(
+                "receiver private endpoint and secret"
+            )
+
+    monkeypatch.setattr(recovery_runner, "RecoveryAlertWebhook", FailingWebhook)
+    env = base_env("ofi_test_alert_failure_factory:build_worker")
+    env.update(
+        {
+            "OFI_RECOVERY_ALERT_ENDPOINT": "https://alerts.example.test/ofi",
+            "OFI_RECOVERY_ALERT_SECRET": "s" * 40,
+        }
+    )
+    stdout, stderr = io.StringIO(), io.StringIO()
+
+    code = run_from_environment(environ=env, stdout=stdout, stderr=stderr)
+
+    assert code == 2
+    assert json.loads(stdout.getvalue())["status"] == "warning"
+    error = json.loads(stderr.getvalue())
+    assert error["event"] == "ofi.recovery.runner"
+    assert error["error_type"] == "RecoveryAlertDeliveryError"
+    assert "receiver private endpoint" not in stderr.getvalue()
+    assert "s" * 40 not in stderr.getvalue()
