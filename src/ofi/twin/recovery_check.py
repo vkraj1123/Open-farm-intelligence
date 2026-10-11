@@ -207,13 +207,13 @@ def _run_postgres_tool(tool: str, arguments: list[str], dsn: str) -> None:
             if secret:
                 detail = detail.replace(secret, "[redacted]")
         detail = re.sub(
-            r"(?i)\\b(password|sslpassword)=\\S+",
-            r"\\1=[redacted]",
+            r"(?i)\b(password|sslpassword)=\S+,
+            r"\1=[redacted],
             detail,
         )
         detail = re.sub(
-            r"(?i)(postgres(?:ql)?://)[^\\s]+",
-            r"\\1[redacted]",
+            r"(?i)(postgres(?:ql)?://)[^\s]+,
+            r"\1[redacted],
             detail,
         )
         detail = detail[:800] or "no diagnostic text was returned"
