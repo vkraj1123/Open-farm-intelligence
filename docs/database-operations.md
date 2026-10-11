@@ -55,14 +55,20 @@ The registry validates contiguous numbering and unique migration names/filenames
 
 ## Consent grants, scopes and revocation
 
-The HTTP consent lifecycle is described in [Authenticated consent API](consent-api.md). Its new routes use a verified bearer JWT and derive the grant owner from the signed `sub` claim; they never accept a request-body actor ID as identity. This authentication protection currently applies to the consent lifecycle routes only. The existing case/farm/evidence endpoints are not yet protected by this authentication boundary, so do not expose the wider API to untrusted networks.
+The HTTP consent lifecycle is described in [Authenticated consent API](consent-api.md). Consent routes and the existing case/farm/evidence/assessment routes now use the verified bearer-token boundary by default; public exceptions are `/health` and `/ready`. The signed JWT `sub` supplies the actor identity. Farm/case routes authorize the primary farmer or an active, verified owner/cultivator party whose role matches the token. Unauthorized resource IDs are hidden behind 404 responses. Global evidence-comparison policy writes require a trusted `agent`, `service_provider`, or `system` role.
 
 Migration v3 creates `ofi_consent_grants`, the authoritative PostgreSQL consent ledger. A grant records an opaque consent ID, actor ID, purpose, exact service scopes, grant time, optional expiry and optional revocation time. The database rejects changes to the original grant terms and deletion of consent records; only the first revocation timestamp can be set. Readiness includes this table, so a database that has a current migration marker but lacks the ledger does not pass `/ready`.
 
 `ConsentGrant` validates timezone-aware timestamps and distinct, non-empty scopes. The execution gateway checks the authenticated actor, exact action/route identity, active time window, revocation state and requested service scope. With `PostgresConsentRepository` injected, the gateway resolves the consent ID against the authoritative database record on each submission and prepared-attempt dispatch; a stale caller-held object cannot override a persisted revocation or widen stored scopes. `InMemoryConsentRepository` is useful for local tests only: its revocation state is process-local and is not a production substitute for a shared durable ledger.
 
-The repository supports internal grant creation, lookup and actor-bound revocation. **This milestone does not add a public consent-issuance API or a farmer-facing consent interface.** A trusted application boundary must authenticate the actor, capture a clear affirmative action for the stated purpose/scopes, then call the repository to persist the grant. Never accept an arbitrary client-supplied actor ID as proof of identity. Revocation blocks subsequent authorization checks; it cannot undo an external action that has already been sent or cancel an in-flight provider request.
+The HTTP API now provides `POST /consents`, `GET /consents/{consent_id}`, and `DELETE /consents/{consent_id}`. Grant creation requires `affirmative: true`, purpose, scopes, and a verified JWT; the actor is derived from the signed token rather than the body. This is a backend API, not a farmer-facing consent interface. OFI validates tokens but does not issue them, so deployments must integrate a trusted issuer and protect/rotate `OFI_AUTH_HMAC_SECRET`. Revocation blocks subsequent authorization checks; it cannot undo an external action already sent or cancel an in-flight provider request.
 
+
+## Resource authentication deployment
+
+The API requires `OFI_AUTH_HMAC_SECRET` (at least 32 UTF-8 bytes), `OFI_AUTH_ISSUER`, and `OFI_AUTH_AUDIENCE` for authenticated routes. The trusted issuer must mint compact HS256 JWTs with the expected issuer/audience and the `sub`, `role`, `iat`, and `exp` claims; tokens are limited to 24 hours. OFI does not issue tokens. When authentication configuration is missing, authenticated routes fail closed with HTTP 503.
+
+`OFI_RESOURCE_AUTH_ENABLED` defaults to `true`. Setting it to `false` bypasses resource-route identity checks and is only intended for isolated tests or a trusted local sandbox. **Never disable it on any reachable deployment.** This increment implements farm-level actor/party ownership, not organization-level tenant IDs or membership. Full RBAC, audit logging, purpose limitation, rate limiting, TLS configuration, key rotation, and an external security review remain deployment/product work.
 
 ## Operational boundary
 
