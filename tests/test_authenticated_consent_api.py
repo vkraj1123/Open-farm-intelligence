@@ -29,11 +29,13 @@ def make_token(
     expires_in=3600,
     issued_at=None,
     algorithm="HS256",
+    tenant_id="tenant-test",
 ):
     now = time.time()
     claims = {
         "sub": actor_id,
         "role": role,
+        "tenant_id": tenant_id,
         "iss": issuer,
         "aud": audience,
         "iat": now if issued_at is None else issued_at,
