@@ -324,6 +324,46 @@ class PostGISFarmTwinStore(FarmTwinRepository):
         cycle_row=cur.fetchone()
         if cycle_row is None:
             raise ValueError(f"farm has no crop cycle: {row[0]}")
+        cur.execute(
+            """
+            SELECT party_id, role, valid_from, valid_to, verification
+            FROM land_parties
+            WHERE farm_id = %s
+            ORDER BY valid_from, party_id, role
+            """,
+            (row[0],),
+        )
+        parties = [
+            LandParty(
+                party_id=party_id,
+                role=role,
+                valid_from=valid_from,
+                valid_to=valid_to,
+                verification=verification,
+            )
+            for party_id, role, valid_from, valid_to, verification in cur.fetchall()
+        ]
+        cur.execute(
+            """
+            SELECT contract_id, owner_id, cultivator_id, valid_from, valid_to, arrangement
+            FROM production_contracts
+            WHERE farm_id = %s
+            ORDER BY valid_from, contract_id
+            """,
+            (row[0],),
+        )
+        contracts = [
+            ProductionContract(
+                contract_id=contract_id,
+                owner_id=owner_id,
+                cultivator_id=cultivator_id,
+                valid_from=valid_from,
+                valid_to=valid_to,
+                arrangement=arrangement,
+            )
+            for contract_id, owner_id, cultivator_id, valid_from, valid_to, arrangement
+            in cur.fetchall()
+        ]
         return Farm(
             id=row[0],farmer_id=row[1],tenant_id=row[8],
             parcel=Parcel(
@@ -332,4 +372,6 @@ class PostGISFarmTwinStore(FarmTwinRepository):
                 boundary=boundary,administrative_area=row[7] or {},
             ),
             crop_cycle=PostGISFarmTwinStore._cycle(cycle_row),
+            parties=parties,
+            contracts=contracts,
         )
