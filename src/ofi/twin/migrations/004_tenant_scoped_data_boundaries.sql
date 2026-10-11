@@ -12,6 +12,10 @@ DROP TRIGGER IF EXISTS evidence_comparison_policy_versions_immutable_trigger
     ON evidence_comparison_policy_versions;
 DROP TRIGGER IF EXISTS evidence_comparison_assessments_immutable_trigger
     ON evidence_comparison_assessments;
+DROP TRIGGER IF EXISTS farms_tenant_immutable_trigger ON farms;
+DROP TRIGGER IF EXISTS case_records_tenant_immutable_trigger ON case_records;
+DROP TRIGGER IF EXISTS evidence_comparison_policy_heads_tenant_immutable_trigger
+    ON evidence_comparison_policy_heads;
 
 -- Farm tenant identity is the parent boundary for parcels, crops, observations,
 -- land parties and production contracts (all reference globally unique farm IDs).
