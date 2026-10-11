@@ -201,6 +201,7 @@ Open-farm-intelligence/
 │   │   ├── schema.sql
 │   │   ├── migration_registry.py
 │   │   ├── migrate.py
+│   │   ├── recovery_check.py
 │   │   └── migrations/
 │   │       ├── 001_initial_postgis_case_service_and_evidence_schema.sql
 │   │       └── 002_case_record_version_constraint.sql
@@ -2254,3 +2255,20 @@ The `src/ofi/twin/schema.sql` remains a compatibility bootstrap script for the v
 | Agricultural field validation | Not completed | Schema integrity is infrastructure quality, not agricultural model validation |
 
 The ordered migration strategy and commands are described in `docs/database-operations.md`. **Verification:** PR [#55](https://github.com/vkraj1123/Open-farm-intelligence/pull/55) passed standard CI (run #784) and PostgreSQL CI (run #649) before merge. These checks validate migration behavior in CI, not live staging operations, production backup/recovery readiness, or agricultural field validity.
+
+# 51. Staging migration and recovery rehearsal
+
+PR #57 (currently under validation) adds `ofi-recovery-check`, a non-destructive source-to-disposable-target rehearsal for the currently registered v1→v2 upgrade. It takes a custom-format `pg_dump` from a source database, restores it into a separately provisioned empty database, applies pending migrations to that restored copy, and checks application readiness. The source database is not migrated or written by the harness.
+
+The rehearsal compares row counts for every required persistence table and full-row fingerprints for core farm/case/service/evidence tables across the source snapshot, restored v1 copy, and upgraded v2 copy. A separate PostgreSQL integration test injects a negative case-record version to force v2 to fail and verifies that the DDL, checksum backfill, and migration marker all roll back; the repair and retry then succeeds.
+
+| Capability | Status | Boundary |
+|---|---|---|
+| Disposable-target backup and restore | Implemented in this PR | Requires `pg_dump`, `pg_restore`, a prior-version source DB, and a distinct empty restore DB |
+| Source non-mutation | Covered by integration test | Checks source schema stays on its original version after rehearsal |
+| Data preservation | Covered by integration test | Row counts across required tables; content fingerprints across core tables; fixture checks on case/event/farm/crop/observation data |
+| Migration failure rollback | Covered by PostgreSQL integration test | Intentionally invalid pre-existing data causes v2 constraint creation to fail; verifies transactional rollback then successful retry |
+| CLI | Implemented in this PR | `ofi-recovery-check` uses `OFI_RECOVERY_SOURCE_DSN` and `OFI_RECOVERY_RESTORE_DSN`; restore target must be empty |
+| Production recovery readiness | Not demonstrated | This CI/staging harness does not verify backup retention, off-site copies, point-in-time recovery, RTO/RPO, or a production incident recovery |
+
+Operational commands and safety boundaries are documented in `docs/database-operations.md`. The CI tests use disposable databases on the isolated PostgreSQL service and install client utilities as part of the workflow.
