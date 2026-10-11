@@ -79,9 +79,9 @@ def verify_bearer_token(token: str) -> ActorIdentity:
         parts = token.split(".")
         if len(parts) != 3:
             raise ValueError("malformed JWT")
-        header_bytes, payload_bytes, signature = (
-            _decode_segment(part) for part in parts
-        )
+        header_bytes = _decode_segment(parts[0])
+        payload_bytes = _decode_segment(parts[1])
+        signature = _decode_segment(parts[2])
         header = json.loads(header_bytes)
         claims = json.loads(payload_bytes)
         if not isinstance(header, dict) or not isinstance(claims, dict):
@@ -96,8 +96,7 @@ def verify_bearer_token(token: str) -> ActorIdentity:
             f"{parts[0]}.{parts[1]}".encode("ascii"),
             hashlib.sha256,
         ).digest()
-        supplied_signature = _decode_segment(signature)
-        if not hmac.compare_digest(expected_signature, supplied_signature):
+        if not hmac.compare_digest(expected_signature, signature):
             raise ValueError("invalid JWT signature")
 
         if claims.get("iss") != expected_issuer:
