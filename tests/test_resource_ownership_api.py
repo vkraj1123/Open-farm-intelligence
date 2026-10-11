@@ -320,17 +320,11 @@ def test_cross_tenant_consent_lookup_is_hidden(resource_client, monkeypatch):
     # purpose of this regression explicit.
     import ofi.api as api
     from ofi.services.consent_repository import InMemoryConsentRepository
-    from fastapi.testclient import TestClient
-    from tests.test_authenticated_consent_api import make_token as consent_token
-
     store = InMemoryConsentRepository()
     monkeypatch.setattr(api, "consent_repository", store)
     client = resource_client
     actor_id = f"farmer-{uuid4().hex}"
     tenant_a = auth(actor_id, tenant_id="tenant-a")
-    # The client token helper above uses the resource test issuer, so create a
-    # grant directly with the verified subject/tenant match through the API's
-    # public consent route would require switching to the consent test issuer.
     from ofi.services.execution_gateway import ConsentGrant
     grant = ConsentGrant(
         actor_id=actor_id,
