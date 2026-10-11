@@ -56,11 +56,11 @@ The registry validates contiguous numbering and unique migration names/filenames
 A successful readiness check confirms connectivity and expected schema objects only. It does not check connection-pool saturation, backups, point-in-time recovery, provider availability, alert delivery, or agricultural model validity. Production operations still require credentials management, network policy, monitoring, backup/recovery drills and staging verification.
 ## Staging migration and recovery rehearsal
 
-Install the PostgreSQL client utilities (`pg_dump`, `pg_restore`) in addition to the Python PostgreSQL extra. The CI workflow installs these tools and runs a real dump/restore rehearsal using disposable databases.
+Install PostgreSQL client utilities (`pg_dump`, `pg_restore`) in addition to the Python PostgreSQL extra. For encrypted backup output, install the `age` encryption utility too. The CI workflow installs these tools and runs a real dump/restore rehearsal using disposable databases.
 
 For a manual rehearsal, define two database URLs through your secret manager:
 
-- `OFI_RECOVERY_SOURCE_DSN`: a **staging-only** database at the schema version immediately before the migration being rehearsed. The harness reads and dumps this database but does not change it.
+- `OFI_RECOVERY_SOURCE_DSN`: a **staging-only** database at either the immediately prior schema version (to rehearse the next migration) or the current schema version (for a recurring restore drill). The harness reads and dumps this database but does not change it.
 - `OFI_RECOVERY_RESTORE_DSN`: a separately provisioned, **empty disposable database**. The harness restores a temporary custom-format dump into this database, applies pending migrations to the restored copy, checks readiness, and leaves the upgraded copy available for inspection.
 
 Run:
@@ -78,3 +78,15 @@ The rehearsal performs a database read + backup and populates the target; it doe
 The PostgreSQL integration suite inserts a deliberately invalid negative case version into a disposable version-1 database and attempts the version-2 constraint migration. The expected constraint failure must roll back the DDL, the legacy checksum backfill, and the version-2 marker in one transaction. The test removes the invalid fixture and confirms the migration then succeeds. It also backs up/restores a populated v1 database, upgrades the restored copy, verifies case/event/farm/crop/observation contents are preserved, and checks the upgraded copy passes the readiness contract.
 
 This is a reproducible staging/CI rehearsal, not evidence that a production backup has been retained, that point-in-time recovery has been tested, or that an actual production incident has been recovered from. Production readiness still requires an approved backup-retention policy, encrypted off-site storage, restore drills on representative data, credentials/network review, and a documented recovery-time/recovery-point objective.
+
+### Scheduled encrypted recovery drill
+
+The `.github/workflows/recovery-drill.yml` workflow can run manually from GitHub Actions or automatically every Monday at 09:00 India time. It skips safely when its required Actions secrets are not configured. To enable it, configure these under **Repository Settings → Secrets and variables → Actions**:
+
+- `OFI_RECOVERY_SOURCE_DSN`: staging database connection string. Use a role with read access sufficient for `pg_dump` and the readiness/fingerprint queries; prefer TLS and least privilege.
+- `OFI_RECOVERY_RESTORE_ADMIN_DSN`: connection string to a maintenance database (commonly `postgres`) for a role allowed to create and drop databases. The workflow creates a uniquely named empty database for each run and drops it after the check, even when the check fails.
+- `OFI_BACKUP_AGE_RECIPIENT`: an `age1...` public recipient generated with `age-keygen`. Keep the corresponding private identity outside the repository and outside workflow artifacts, in an independently controlled secure location.
+
+The workflow performs a source-to-disposable-target restore and readiness check, encrypts the custom-format dump with `age`, and uploads an artifact containing the **encrypted** dump and JSON report. The temporary plaintext dump is deleted when the command exits. Artifacts are retained by GitHub Actions for 30 days and include a SHA-256 checksum and byte size in the report. Keep the private decryption identity separately; do not store it in the repository or the same artifact store.
+
+An encrypted GitHub Actions artifact is a short-term retained copy, not an independent off-site backup service. A real production backup strategy still needs owner-approved retention, access control, independently stored decryption keys, off-site or provider-native backup storage, restore drills with production-like data, and agreed RPO/RTO targets. Scheduled checks do not mean a production recovery has been proven. The restore-admin role should be confined to a dedicated staging environment and must never be granted authority to drop production databases.

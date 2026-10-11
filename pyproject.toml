@@ -19,6 +19,7 @@ dependencies = [
 ofi-recovery = "ofi.services.recovery_runner:main"
 ofi-schema = "ofi.twin.migrate:main"
 ofi-recovery-check = "ofi.twin.recovery_check:main"
+ofi-recovery-drill = "ofi.twin.recovery_drill:main"
 
 [project.optional-dependencies]
 postgres = ["psycopg[binary]>=3.2,<4"]

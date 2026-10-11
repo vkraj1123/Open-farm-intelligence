@@ -1,0 +1,84 @@
+name: Staging recovery drill
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "30 3 * * 1" # Mondays at 09:00 Asia/Kolkata
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ofi-staging-recovery-drill
+  cancel-in-progress: false
+
+jobs:
+  recovery-drill:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check whether recovery secrets are configured
+        id: config
+        shell: bash
+        env:
+          SOURCE_DSN: ${{ secrets.OFI_RECOVERY_SOURCE_DSN }}
+          RESTORE_ADMIN_DSN: ${{ secrets.OFI_RECOVERY_RESTORE_ADMIN_DSN }}
+          AGE_RECIPIENT: ${{ secrets.OFI_BACKUP_AGE_RECIPIENT }}
+        run: |
+          if [[ -n "$SOURCE_DSN" && -n "$RESTORE_ADMIN_DSN" && -n "$AGE_RECIPIENT" ]]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Recovery drill skipped: configure OFI_RECOVERY_SOURCE_DSN, OFI_RECOVERY_RESTORE_ADMIN_DSN, and OFI_BACKUP_AGE_RECIPIENT in repository or environment Actions secrets."
+          fi
+
+      - name: Check out repository
+        if: steps.config.outputs.configured == 'true'
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        if: steps.config.outputs.configured == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install PostgreSQL and age utilities
+        if: steps.config.outputs.configured == 'true'
+        run: sudo apt-get update && sudo apt-get install --yes postgresql-client age
+
+      - name: Install OFI
+        if: steps.config.outputs.configured == 'true'
+        run: python -m pip install --upgrade pip && pip install -e ".[postgres]"
+
+      - name: Run staging recovery drill
+        if: steps.config.outputs.configured == 'true'
+        shell: bash
+        env:
+          OFI_RECOVERY_SOURCE_DSN: ${{ secrets.OFI_RECOVERY_SOURCE_DSN }}
+          OFI_RECOVERY_RESTORE_ADMIN_DSN: ${{ secrets.OFI_RECOVERY_RESTORE_ADMIN_DSN }}
+          OFI_BACKUP_AGE_RECIPIENT: ${{ secrets.OFI_BACKUP_AGE_RECIPIENT }}
+        run: |
+          mkdir -p recovery-output
+          set +e
+          ofi-recovery-drill \
+            --encrypted-backup-path recovery-output/ofi-staging-backup.dump.age \
+            > recovery-output/recovery-report.json \
+            2> recovery-output/recovery-error.json
+          result=$?
+          set -e
+          if [[ "$result" -ne 0 ]]; then
+            echo "::error::Staging recovery drill failed; inspect the sanitized recovery-error.json artifact."
+            exit "$result"
+          fi
+
+      - name: Retain encrypted backup and recovery report
+        if: always() && steps.config.outputs.configured == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ofi-staging-recovery-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            recovery-output/ofi-staging-backup.dump.age
+            recovery-output/recovery-report.json
+            recovery-output/recovery-error.json
+          if-no-files-found: warn
+          retention-days: 30
+          compression-level: 0
