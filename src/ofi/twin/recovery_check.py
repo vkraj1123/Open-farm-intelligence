@@ -8,6 +8,7 @@ and compares table counts and data fingerprints before and after the upgrade.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -222,13 +223,77 @@ def _run_postgres_tool(tool: str, arguments: list[str], dsn: str) -> None:
         )
 
 
-def run_recovery_check(source_dsn: str, restore_dsn: str) -> dict[str, Any]:
+
+def _encrypt_backup_with_age(
+    source_path: Path,
+    encrypted_path: Path,
+    recipient: str,
+) -> dict[str, Any]:
+    """Encrypt a custom-format dump to an age recipient without retaining plaintext."""
+    if encrypted_path.exists():
+        raise ValueError("Encrypted backup destination already exists; choose a new path")
+    executable = shutil.which("age")
+    if executable is None:
+        raise RuntimeError("Required encryption utility 'age' was not found; install age")
+    encrypted_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        result = subprocess.run(
+            [
+                executable,
+                "--recipient",
+                recipient,
+                "--output",
+                str(encrypted_path),
+                str(source_path),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as exc:
+        raise RuntimeError("Could not execute backup encryption utility 'age'") from exc
+    if result.returncode:
+        try:
+            encrypted_path.unlink(missing_ok=True)
+        finally:
+            detail = result.stderr.strip()[:300] or "no diagnostic text was returned"
+        raise RuntimeError(f"age backup encryption failed: {detail}")
+    if not encrypted_path.is_file() or encrypted_path.stat().st_size == 0:
+        encrypted_path.unlink(missing_ok=True)
+        raise RuntimeError("age did not produce a non-empty encrypted backup")
+    digest = hashlib.sha256()
+    with encrypted_path.open("rb") as backup:
+        for chunk in iter(lambda: backup.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return {
+        "encryption": "age",
+        "path": str(encrypted_path),
+        "size_bytes": encrypted_path.stat().st_size,
+        "sha256": digest.hexdigest(),
+    }
+
+
+def run_recovery_check(
+    source_dsn: str,
+    restore_dsn: str,
+    *,
+    encrypted_backup_path: str | Path | None = None,
+    age_recipient: str | None = None,
+) -> dict[str, Any]:
     """Verify a source v(N-1) database can be backed up, restored and upgraded.
 
     The source database is read-only throughout this operation. The destination
     must be a separately provisioned, empty, disposable database; it is populated
-    by pg_restore and then upgraded to the current application schema version.
+    by pg_restore and then checked/upgraded to the current schema version. The
+    source may be at the immediately prior version (migration rehearsal) or the
+    current version (scheduled restore drill). When requested, the custom-format
+    dump is encrypted to an age public recipient before the temporary plaintext
+    dump is deleted.
     """
+    if (encrypted_backup_path is None) != (age_recipient is None):
+        raise ValueError(
+            "Encrypted backup output and age recipient must be supplied together"
+        )
     source_identity = _database_identity(source_dsn)
     restore_identity = _database_identity(restore_dsn)
     if source_identity == restore_identity:
@@ -242,14 +307,17 @@ def run_recovery_check(source_dsn: str, restore_dsn: str) -> dict[str, Any]:
         raise RuntimeError("Recovery rehearsal requires at least two registered migrations")
 
     source_version = _read_schema_version(source_dsn)
-    if source_version != expected_source_version:
+    allowed_source_versions = {expected_source_version, CURRENT_SCHEMA_VERSION}
+    if source_version not in allowed_source_versions:
+        versions = ", ".join(str(version) for version in sorted(allowed_source_versions))
         raise RuntimeError(
-            f"Source schema version is {source_version}; this rehearsal requires "
-            f"version {expected_source_version} so the next migration can be tested"
+            f"Source schema version is {source_version}; this rehearsal accepts "
+            f"the prior migration version or current version ({versions})"
         )
 
     _ensure_empty_restore_target(restore_dsn)
     source_snapshot = _snapshot(source_dsn)
+    encrypted_backup_report: dict[str, Any] | None = None
 
     with tempfile.TemporaryDirectory(prefix="ofi-recovery-check-") as temporary_directory:
         backup_path = Path(temporary_directory) / "ofi-staging-backup.dump"
@@ -267,6 +335,11 @@ def run_recovery_check(source_dsn: str, restore_dsn: str) -> dict[str, Any]:
         if not backup_path.is_file() or backup_path.stat().st_size == 0:
             raise RuntimeError("pg_dump did not produce a non-empty backup artifact")
 
+        if encrypted_backup_path is not None and age_recipient is not None:
+            encrypted_backup_report = _encrypt_backup_with_age(
+                backup_path, Path(encrypted_backup_path), age_recipient
+            )
+
         _run_postgres_tool(
             "pg_restore",
             [
@@ -282,10 +355,10 @@ def run_recovery_check(source_dsn: str, restore_dsn: str) -> dict[str, Any]:
 
     restored_version = _read_schema_version(restore_dsn)
     restored_snapshot = _snapshot(restore_dsn)
-    if restored_version != expected_source_version:
+    if restored_version != source_version:
         raise RuntimeError(
             f"Restored database schema version is {restored_version}; "
-            f"expected {expected_source_version}"
+            f"expected source version {source_version}"
         )
     if restored_snapshot != source_snapshot:
         raise RuntimeError(
@@ -323,6 +396,8 @@ def run_recovery_check(source_dsn: str, restore_dsn: str) -> dict[str, Any]:
         "restored_schema_version_before_migration": restored_version,
         "upgraded_schema_version": upgraded_version,
         "current_schema_version": CURRENT_SCHEMA_VERSION,
+        "migration_applied": upgraded_version > restored_version,
+        "encrypted_backup": encrypted_backup_report,
         "readiness": readiness["status"],
         "row_counts": source_snapshot["row_counts"],
         "fingerprinted_relations": sorted(source_snapshot["data_fingerprints"]),
@@ -332,8 +407,9 @@ def run_recovery_check(source_dsn: str, restore_dsn: str) -> dict[str, Any]:
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Back up a v(N-1) PostgreSQL staging database, restore it into a "
-            "separate empty test database, and verify the upgrade preserves data."
+            "Back up a PostgreSQL staging database at the previous or current "
+            "schema version, restore it into a separate empty test database, "
+            "and verify data preservation and readiness."
         )
     )
     parser.add_argument(
@@ -346,6 +422,17 @@ def main() -> int:
         default=os.getenv("OFI_RECOVERY_RESTORE_DSN"),
         help="Empty disposable restore DB DSN (defaults to OFI_RECOVERY_RESTORE_DSN)",
     )
+    parser.add_argument(
+        "--encrypted-backup-path",
+        type=Path,
+        default=os.getenv("OFI_RECOVERY_ENCRYPTED_BACKUP_PATH"),
+        help="Optional path for an age-encrypted backup copy",
+    )
+    parser.add_argument(
+        "--age-recipient",
+        default=os.getenv("OFI_BACKUP_AGE_RECIPIENT"),
+        help="age public recipient (defaults to OFI_BACKUP_AGE_RECIPIENT)",
+    )
     args = parser.parse_args()
     if not args.source_dsn or not args.restore_dsn:
         print(
@@ -354,7 +441,12 @@ def main() -> int:
         )
         return 2
     try:
-        report = run_recovery_check(args.source_dsn, args.restore_dsn)
+        report = run_recovery_check(
+            args.source_dsn,
+            args.restore_dsn,
+            encrypted_backup_path=args.encrypted_backup_path,
+            age_recipient=args.age_recipient,
+        )
     except Exception as exc:
         # Our own validation errors are useful and contain no connection string.
         # Driver exceptions can expose endpoint details, so redact their messages.
