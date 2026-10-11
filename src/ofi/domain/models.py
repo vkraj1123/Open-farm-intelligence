@@ -52,6 +52,16 @@ class Farm(BaseModel):
     # legacy direct-domain callers before they pass through a tenant boundary.
     tenant_id: str | None = None
     parcel: Parcel
+
+    @field_validator("tenant_id")
+    @classmethod
+    def tenant_id_must_be_nonempty_when_set(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized or len(normalized) > 512:
+            raise ValueError("tenant_id must be non-empty and at most 512 characters")
+        return normalized
     crop_cycle: CropCycle
     parties: list[LandParty] = Field(default_factory=list)
     contracts: list[ProductionContract] = Field(default_factory=list)
