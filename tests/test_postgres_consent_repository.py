@@ -68,13 +68,14 @@ def test_postgres_consent_terms_are_immutable_and_revocation_is_owner_bound():
     assert repeated.revoked_at == revoked_at
     assert not store.get(grant.consent_id).active()
 
-    with psycopg.connect(DATABASE_URL) as connection:
-        with pytest.raises(psycopg.errors.RaiseException, match="terms are immutable"):
+    with pytest.raises(psycopg.errors.RaiseException, match="terms are immutable"):
+        with psycopg.connect(DATABASE_URL) as connection:
             connection.execute(
                 "UPDATE ofi_consent_grants SET purpose='rewritten' WHERE consent_id=%s",
                 (grant.consent_id,),
             )
-        with pytest.raises(psycopg.errors.RaiseException, match="cannot be deleted"):
+    with pytest.raises(psycopg.errors.RaiseException, match="cannot be deleted"):
+        with psycopg.connect(DATABASE_URL) as connection:
             connection.execute(
                 "DELETE FROM ofi_consent_grants WHERE consent_id=%s",
                 (grant.consent_id,),
