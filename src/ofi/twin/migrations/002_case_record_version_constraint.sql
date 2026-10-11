@@ -13,5 +13,5 @@ BEGIN
             ADD CONSTRAINT case_records_version_nonnegative
             CHECK (version >= 0);
     END IF;
-END
+END;
 $ofi_migration$;
