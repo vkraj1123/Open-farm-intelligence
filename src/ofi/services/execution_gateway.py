@@ -57,16 +57,21 @@ class ConsentGrant:
     scopes: tuple[str, ...] = ()
     consent_id: str = field(default_factory=lambda: f"consent:{uuid4().hex}")
     revoked_at: datetime | None = None
+    tenant_id: str = "legacy:default"
 
     def __post_init__(self) -> None:
         actor_id = self.actor_id.strip() if isinstance(self.actor_id, str) else ""
         purpose = self.purpose.strip() if isinstance(self.purpose, str) else ""
         consent_id = self.consent_id.strip() if isinstance(self.consent_id, str) else ""
+        tenant_id = self.tenant_id.strip() if isinstance(self.tenant_id, str) else ""
         if not actor_id or not purpose or not consent_id:
             raise ValueError("consent ID, actor ID, and purpose must not be blank")
+        if not tenant_id:
+            raise ValueError("tenant ID must not be blank")
         object.__setattr__(self, "actor_id", actor_id)
         object.__setattr__(self, "purpose", purpose)
         object.__setattr__(self, "consent_id", consent_id)
+        object.__setattr__(self, "tenant_id", tenant_id)
         if self.status not in {"granted", "denied", "expired", "not_required"}:
             raise ValueError("consent status is not supported")
 
@@ -245,15 +250,22 @@ class ServiceExecutionGateway:
             raise ExecutionError("explicit consent is required for this service")
         if consent.actor_id != actor.actor_id:
             raise ExecutionError("consent actor does not match authenticated actor")
+        tenant_id = actor.tenant_id or "legacy:default"
+        if consent.tenant_id != tenant_id:
+            raise ExecutionError("consent tenant does not match authenticated tenant")
 
         authoritative = consent
         if self._consents is not None:
             try:
-                authoritative = self._consents.get(consent.consent_id)
+                authoritative = self._consents.get(
+                    consent.consent_id, tenant_id=tenant_id
+                )
             except KeyError as exc:
                 raise ExecutionError("consent grant is not registered") from exc
             if authoritative.actor_id != actor.actor_id:
                 raise ExecutionError("consent actor does not match authenticated actor")
+            if authoritative.tenant_id != tenant_id:
+                raise ExecutionError("consent tenant does not match authenticated tenant")
 
         if not authoritative.active():
             raise ExecutionError("consent is not active")
