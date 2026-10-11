@@ -50,6 +50,7 @@ The database user needs permission to create the PostGIS extension if it is not 
 5. Run standard and PostgreSQL CI. Test on a staging copy and verify backups/recovery before applying to production.
 
 The registry validates contiguous numbering and unique migration names/filenames at import time. The runner stores SHA-256 checksums and rejects drift in applied SQL. If an already-released migration is wrong, create a new corrective migration instead of rewriting history.
+
 ## Operational boundary
 
 A successful readiness check confirms connectivity and expected schema objects only. It does not check connection-pool saturation, backups, point-in-time recovery, provider availability, alert delivery, or agricultural model validity. Production operations still require credentials management, network policy, monitoring, backup/recovery drills and staging verification.

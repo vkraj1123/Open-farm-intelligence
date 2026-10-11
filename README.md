@@ -2236,7 +2236,7 @@ The API now uses one configuration switch for PostgreSQL-backed case/farm state 
 
 # 50. Ordered schema migrations and persistence readiness
 
-PR #53 added the version marker and `/ready` endpoint. PR [#55](https://github.com/vkraj1123/Open-farm-intelligence/pull/55) (currently under validation) builds on that baseline with ordered, checksummed SQL migrations. The application schema version is now **2**. Version 1 establishes the initial PostgreSQL/PostGIS farm, case, service and evidence schema. Version 2 adds a non-negative constraint to optimistic case-record versions.
+PR #53 added the version marker and `/ready` endpoint. PR [#55](https://github.com/vkraj1123/Open-farm-intelligence/pull/55) added ordered, checksummed SQL migrations and merged after standard CI run #784 and PostgreSQL CI run #649 passed. The application schema version is now **2**. Version 1 establishes the initial PostgreSQL/PostGIS farm, case, service and evidence schema. Version 2 adds a non-negative constraint to optimistic case-record versions. The migration implementation was merged to `main` as [`4d4f27685275344c8bd0a055caefee80fd7c10db`](https://github.com/vkraj1123/Open-farm-intelligence/commit/4d4f27685275344c8bd0a055caefee80fd7c10db).
 
 `ofi-schema` applies pending files in `src/ofi/twin/migrations/` in numeric order, records each migration name and SHA-256 checksum, serializes concurrent migration runs with an advisory transaction lock, and rejects missing predecessors, checksum drift or a database version newer than the application. Existing v1 databases are adopted safely: the runner adds checksum metadata, backfills the known v1 fingerprint for the legacy marker, then applies v2. Applied SQL files are immutable; corrections must be new migrations.
 
@@ -2253,4 +2253,4 @@ The `src/ofi/twin/schema.sql` remains a compatibility bootstrap script for the v
 | Production migration rehearsal and recovery | Not demonstrated | Requires staging, real backup/restore drills, and operational monitoring |
 | Agricultural field validation | Not completed | Schema integrity is infrastructure quality, not agricultural model validation |
 
-The ordered migration strategy and commands are described in `docs/database-operations.md`. CI results will be added to this tracker once the implementation PR finishes both required checks.
+The ordered migration strategy and commands are described in `docs/database-operations.md`. **Verification:** PR [#55](https://github.com/vkraj1123/Open-farm-intelligence/pull/55) passed standard CI (run #784) and PostgreSQL CI (run #649) before merge. These checks validate migration behavior in CI, not live staging operations, production backup/recovery readiness, or agricultural field validity.
