@@ -2408,3 +2408,21 @@ Tenant-scoped policy IDs are independent: the same policy name may start at vers
 **Migration note:** `src/ofi/twin/schema.sql` remains a v1 compatibility/bootstrap schema. A PostgreSQL deployment must run `ofi-schema` to apply migrations through v4; `/ready` reports a schema-version mismatch when only the bootstrap script has been applied. Review tenant membership, existing record ownership, backup and restoration procedures before a production cutover.
 
 **Verification:** PR #69 passed [standard CI](https://github.com/vkraj1123/Open-farm-intelligence/actions/runs/38105373898) and [PostgreSQL-backed CI](https://github.com/vkraj1123/Open-farm-intelligence/actions/runs/38105373969). Coverage includes missing tenant claims, same-actor cross-tenant denial, client-supplied tenant mismatch, independent policy namespaces, consent isolation, PostgreSQL farm takeover rejection, immutable tenant assignment, repository tenant filters and a v3→v4 restore/upgrade rehearsal. These checks do not demonstrate production tenant membership or a complete security audit.
+
+
+
+# 58. Tenant-filtered farm repository reads
+
+PR [#71](https://github.com/vkraj1123/Open-farm-intelligence/pull/71) adds a repository-level enforcement layer after the explicit tenant boundary in PR #69. The farm-twin repository contract now accepts an optional tenant scope. Both the in-memory implementation and PostgreSQL `PostGISFarmTwinStore` compare the requested tenant during lookup; PostgreSQL applies the `tenant_id` predicate in SQL instead of loading a farm from another tenant and relying only on a later API check.
+
+Farm/case API reads pass the tenant ID from the verified JWT into the repository. The case-creation collision check remains deliberately non-disclosing: a farm ID that already belongs to another tenant returns 404, matching the response for an inaccessible or missing resource rather than exposing a cross-tenant collision through a 409 response. The Farm domain model field/validator ordering has also been cleaned up.
+
+| Capability | Status | Boundary |
+|---|---|---|
+| Tenant-aware farm repository contract | Implemented and tested | Existing trusted internal callers may omit the optional tenant parameter; protected API reads pass the signed tenant explicitly |
+| PostgreSQL tenant filtering | Implemented and tested | Tenant is part of the database `WHERE` predicate at farm lookup |
+| In-memory behavior parity | Implemented and tested | An explicit mismatched tenant produces the same not-found behavior |
+| Cross-tenant ID collision privacy | Implemented and regression-tested | Cross-tenant farm ID collision during case creation returns 404 rather than exposing a 409 |
+| Broader tenant administration/RBAC | Not completed | Signed tenant claims still depend on trusted-issuer membership checks; membership lifecycle, full RBAC, audit and downstream purpose enforcement remain open |
+
+**Verification:** PR #71 passed [standard CI](https://github.com/vkraj1123/Open-farm-intelligence/actions/runs/38106617569) and [PostgreSQL-backed CI](https://github.com/vkraj1123/Open-farm-intelligence/actions/runs/38106617589). This verifies repository/API behavior in test environments; production identity-provider integration, tenant membership lifecycle and an independent security review remain deployment/product work.
