@@ -5,6 +5,14 @@
 -- external membership is granted during upgrade. Operators must map legacy
 -- records to real tenants through an audited administrative process.
 
+-- Temporarily remove append-only triggers while adding the migration-owned
+-- tenant columns. The triggers are recreated at the end of this migration.
+DROP TRIGGER IF EXISTS ofi_consent_grant_immutable_trigger ON ofi_consent_grants;
+DROP TRIGGER IF EXISTS evidence_comparison_policy_versions_immutable_trigger
+    ON evidence_comparison_policy_versions;
+DROP TRIGGER IF EXISTS evidence_comparison_assessments_immutable_trigger
+    ON evidence_comparison_assessments;
+
 -- Farm tenant identity is the parent boundary for parcels, crops, observations,
 -- land parties and production contracts (all reference globally unique farm IDs).
 ALTER TABLE farms ADD COLUMN IF NOT EXISTS tenant_id TEXT;
@@ -163,6 +171,23 @@ FOR EACH ROW EXECUTE FUNCTION guard_ofi_tenant_binding_mutation();
 
 -- The v3 consent immutability trigger must also treat tenant identity as an
 -- immutable term of the original grant.
+DROP TRIGGER IF EXISTS ofi_consent_grant_immutable_trigger ON ofi_consent_grants;
+CREATE TRIGGER ofi_consent_grant_immutable_trigger
+BEFORE UPDATE OR DELETE ON ofi_consent_grants
+FOR EACH ROW EXECUTE FUNCTION guard_ofi_consent_grant_mutation();
+
+DROP TRIGGER IF EXISTS evidence_comparison_policy_versions_immutable_trigger
+    ON evidence_comparison_policy_versions;
+CREATE TRIGGER evidence_comparison_policy_versions_immutable_trigger
+BEFORE UPDATE OR DELETE ON evidence_comparison_policy_versions
+FOR EACH ROW EXECUTE FUNCTION reject_evidence_comparison_record_mutation();
+
+DROP TRIGGER IF EXISTS evidence_comparison_assessments_immutable_trigger
+    ON evidence_comparison_assessments;
+CREATE TRIGGER evidence_comparison_assessments_immutable_trigger
+BEFORE UPDATE OR DELETE ON evidence_comparison_assessments
+FOR EACH ROW EXECUTE FUNCTION reject_evidence_comparison_record_mutation();
+
 CREATE OR REPLACE FUNCTION guard_ofi_consent_grant_mutation()
 RETURNS TRIGGER AS $$
 BEGIN
