@@ -191,6 +191,11 @@ class PostgresConsentRepository:
         moment = revoked_at or datetime.now(timezone.utc)
         if moment.tzinfo is None or moment.utcoffset() is None:
             raise ValueError("revoked_at must be timezone-aware")
+        current = self.get(consent_id)
+        if current.actor_id != actor_id:
+            raise KeyError("consent grant not found")
+        # Validate the temporal rule before relying on PostgreSQL constraints.
+        current.with_revocation(moment)
         with self._connection_factory() as connection:
             row = connection.execute(
                 """
