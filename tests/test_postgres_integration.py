@@ -2,8 +2,6 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 from threading import Lock
 from datetime import date, datetime, timedelta, timezone
-from pathlib import Path
-
 import pytest
 
 psycopg = pytest.importorskip("psycopg")
@@ -25,6 +23,7 @@ from ofi.services.service_transaction import ExecutionAttempt, ServiceTransactio
 from ofi.services.transaction_repository import PostgresTransactionRepository, TransactionConflictError
 from ofi.services.unit_of_work import PostgresFarmCaseUnitOfWork
 from ofi.twin.postgis import PostGISFarmTwinStore
+from ofi.twin.migrate import apply_schema
 
 
 pytestmark = pytest.mark.skipif(
@@ -39,11 +38,7 @@ def _dsn() -> str:
 
 @pytest.fixture()
 def database():
-    with psycopg.connect(_dsn()) as conn:
-        conn.execute(
-            (Path(__file__).parents[1] / "src/ofi/twin/schema.sql").read_text()
-        )
-        conn.commit()
+    assert apply_schema(_dsn()) >= 4
     yield
     with psycopg.connect(_dsn()) as conn:
         conn.execute(
