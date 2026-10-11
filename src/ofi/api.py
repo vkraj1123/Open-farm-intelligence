@@ -214,7 +214,7 @@ def _require_active_tenant_membership(actor: ActorIdentity) -> None:
 
 
 def _authenticated_tenant_actor(
-    actor: ActorIdentity = Depends(_authenticated_tenant_actor),
+    actor: ActorIdentity = Depends(require_authenticated_actor),
 ) -> ActorIdentity:
     """Verified token identity plus current membership for consent boundaries."""
     _require_active_tenant_membership(actor)
