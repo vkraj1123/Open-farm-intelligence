@@ -36,6 +36,8 @@ class ActorIdentity:
     actor_id: str
     role: Literal["farmer", "cultivator", "owner", "agent", "service_provider", "system"]
     authenticated: bool = True
+    # A tenant is supplied only by a verified token issuer, never by request data.
+    tenant_id: str | None = None
 
 
 @dataclass(frozen=True)
