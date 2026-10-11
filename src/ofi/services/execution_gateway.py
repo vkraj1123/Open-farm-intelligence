@@ -65,6 +65,8 @@ class ConsentGrant:
         object.__setattr__(self, "actor_id", actor_id)
         object.__setattr__(self, "purpose", purpose)
         object.__setattr__(self, "consent_id", consent_id)
+        if self.status not in {"granted", "denied", "expired", "not_required"}:
+            raise ValueError("consent status is not supported")
 
         granted_at = self._aware_utc(self.granted_at, "granted_at")
         object.__setattr__(self, "granted_at", granted_at)
