@@ -69,20 +69,22 @@ class PostGISFarmTwinStore(FarmTwinRepository):
                     self._insert_contract(cur, farm.id, contract)
         return farm
 
-    def get(self, farm_id: str) -> Farm:
+    def get(self, farm_id: str, tenant_id: str | None = None) -> Farm:
         with connection_scope(self._connection_factory) as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    """
+                query = """
                     SELECT f.id, f.farmer_id, p.id, p.area_ha,
                            ST_Y(p.location::geometry), ST_X(p.location::geometry),
                            ST_AsGeoJSON(p.boundary::geometry), p.administrative_area,
                            f.tenant_id
                     FROM farms f JOIN parcels p ON p.farm_id = f.id
                     WHERE f.id = %s
-                    """,
-                    (farm_id,),
-                )
+                """
+                params: tuple[str, ...] = (farm_id,)
+                if tenant_id is not None:
+                    query += " AND f.tenant_id = %s"
+                    params = (farm_id, tenant_id)
+                cur.execute(query, params)
                 row = cur.fetchone()
                 if row is None:
                     raise KeyError(farm_id)
