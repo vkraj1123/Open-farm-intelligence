@@ -35,12 +35,13 @@ def make_token(
     claims = {
         "sub": actor_id,
         "role": role,
-        "tenant_id": tenant_id,
         "iss": issuer,
         "aud": audience,
         "iat": now if issued_at is None else issued_at,
         "exp": now + expires_in,
     }
+    if tenant_id is not None:
+        claims["tenant_id"] = tenant_id
     header = {"alg": algorithm, "typ": "JWT"}
     encoded_header = b64url(json.dumps(header, separators=(",", ":")).encode())
     encoded_claims = b64url(json.dumps(claims, separators=(",", ":")).encode())
@@ -171,3 +172,13 @@ def test_missing_auth_configuration_fails_closed(monkeypatch):
             json=valid_request(),
         )
     assert response.status_code == 503
+
+
+
+def test_consent_api_requires_tenant_scoped_bearer_token(consent_client):
+    client, _ = consent_client
+    token = make_token(tenant_id=None)
+    response = client.post(
+        "/consents", headers=headers(token), json=valid_request()
+    )
+    assert response.status_code == 401
