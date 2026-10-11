@@ -197,11 +197,28 @@ def _run_postgres_tool(tool: str, arguments: list[str], dsn: str) -> None:
     except OSError as exc:
         raise RuntimeError(f"Could not execute PostgreSQL utility {tool!r}") from exc
     if result.returncode:
-        # Never echo raw stderr or DSNs: connection utilities may include
-        # operational details and deployment-specific paths.
+        # Retain enough context to diagnose SQL/restore errors without exposing
+        # credentials or full connection strings from an operational environment.
+        import re
+
+        detail = result.stderr.strip()
+        for secret_key in ("password", "sslpassword"):
+            secret = _connection_info(dsn).get(secret_key)
+            if secret:
+                detail = detail.replace(secret, "[redacted]")
+        detail = re.sub(
+            r"(?i)\\b(password|sslpassword)=\\S+",
+            r"\\1=[redacted]",
+            detail,
+        )
+        detail = re.sub(
+            r"(?i)(postgres(?:ql)?://)[^\\s]+",
+            r"\\1[redacted]",
+            detail,
+        )
+        detail = detail[:800] or "no diagnostic text was returned"
         raise RuntimeError(
-            f"{tool} failed with exit code {result.returncode}; "
-            "inspect protected CI/staging logs for database utility diagnostics"
+            f"{tool} failed with exit code {result.returncode}: {detail}"
         )
 
 
