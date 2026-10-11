@@ -33,6 +33,10 @@ def run_recovery_drill(
     admin_info = conninfo_to_dict(restore_admin_dsn)
     if not admin_info.get("dbname"):
         raise ValueError("Restore-admin DSN must explicitly identify a maintenance database")
+    if _database_identity(source_dsn) == _database_identity(restore_admin_dsn):
+        raise ValueError(
+            "Restore-admin DSN must connect to a maintenance database, not the source database"
+        )
 
     target_name = f"ofi_recovery_{uuid4().hex[:20]}"
     target_dsn = make_conninfo(restore_admin_dsn, dbname=target_name)
