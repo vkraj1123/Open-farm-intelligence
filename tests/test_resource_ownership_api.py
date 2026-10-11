@@ -343,3 +343,29 @@ def test_cross_tenant_consent_lookup_is_hidden(resource_client, monkeypatch):
     assert client.get(
         f"/consents/{grant.consent_id}", headers=tenant_a
     ).status_code == 404
+
+
+
+def test_case_creation_cannot_collide_with_another_tenants_farm(resource_client):
+    client = resource_client
+    original_actor = f"farmer-{uuid4().hex}"
+    farm_id = f"farm-{uuid4().hex}"
+    original_case = case_payload(
+        case_id=f"case-{uuid4().hex}",
+        farm_id=farm_id,
+        farmer_id=original_actor,
+    )
+    assert create_case(
+        client, original_case, actor_id=original_actor, tenant_id="tenant-a"
+    ).status_code == 200
+
+    attacker = f"farmer-{uuid4().hex}"
+    attempted = case_payload(
+        case_id=f"case-{uuid4().hex}",
+        farm_id=farm_id,
+        farmer_id=attacker,
+    )
+    response = create_case(
+        client, attempted, actor_id=attacker, tenant_id="tenant-b"
+    )
+    assert response.status_code == 404

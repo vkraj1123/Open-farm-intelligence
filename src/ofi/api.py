@@ -479,7 +479,10 @@ def _require_farm_access(actor: ActorIdentity | None, farm) -> None:
 
 def _farm_or_404(farm_id: str, actor: ActorIdentity | None):
     try:
-        farm = case_manager.farm_twin.get(farm_id)
+        farm = case_manager.farm_twin.get(
+            farm_id,
+            tenant_id=actor.tenant_id if actor is not None else None,
+        )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="farm not found") from exc
     _require_farm_access(actor, farm)
@@ -497,7 +500,10 @@ def _case_or_404(case_id: str, actor: ActorIdentity | None):
 
     if actor is not None:
         try:
-            farm = case_manager.farm_twin.get(record.case.farm.id)
+            farm = case_manager.farm_twin.get(
+                record.case.farm.id,
+                tenant_id=actor.tenant_id,
+            )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="case not found") from exc
         _require_farm_access(actor, farm)
@@ -528,6 +534,9 @@ def create_case(
         _require_farm_access(actor, case.farm)
         # Case creation must not act as an implicit farm transfer or profile update.
         try:
+            # This guarded collision check intentionally sees whether the ID
+            # already exists, so a cross-tenant collision can return the same
+            # 404 as an inaccessible resource instead of leaking a 409.
             existing_farm = case_manager.farm_twin.get(case.farm.id)
         except KeyError:
             existing_farm = None

@@ -16,7 +16,8 @@ class FarmTwinRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def get(self, farm_id: str) -> Farm:
+    def get(self, farm_id: str, tenant_id: str | None = None) -> Farm:
+        """Return a farm, optionally constraining lookup to one tenant."""
         raise NotImplementedError
 
     @abstractmethod

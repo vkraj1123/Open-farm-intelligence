@@ -36,11 +36,16 @@ class FarmTwinStore(FarmTwinRepository):
         self._observations.setdefault(farm.id, [])
         return farm
 
-    def get(self, farm_id: str) -> Farm:
+    def get(self, farm_id: str, tenant_id: str | None = None) -> Farm:
         try:
-            return self._farms[farm_id]
+            farm = self._farms[farm_id]
         except KeyError as exc:
             raise KeyError(farm_id) from exc
+        if tenant_id is not None:
+            stored_tenant = farm.tenant_id or "legacy:default"
+            if stored_tenant != tenant_id:
+                raise KeyError(farm_id)
+        return farm
 
     def register_crop_cycle(self, farm_id: str, crop_cycle: CropCycle) -> None:
         self.get(farm_id)
