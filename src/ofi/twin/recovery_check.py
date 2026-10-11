@@ -1,8 +1,8 @@
-"""Non-destructive source / disposable-target PostgreSQL upgrade rehearsal.
+"""Non-destructive PostgreSQL backup, restore, and upgrade rehearsal.
 
-The source is never migrated or modified. The harness dumps a v(N-1) source,
-restores it into a separate empty database, upgrades only that restored copy,
-and compares table counts and data fingerprints before and after the upgrade.
+The source is never migrated or modified. The harness accepts either a source
+at the prior version (to rehearse a pending migration) or the current version
+(for recurring restore drills), and compares table counts/data fingerprints.
 """
 
 from __future__ import annotations
@@ -280,7 +280,7 @@ def run_recovery_check(
     encrypted_backup_path: str | Path | None = None,
     age_recipient: str | None = None,
 ) -> dict[str, Any]:
-    """Verify a source v(N-1) database can be backed up, restored and upgraded.
+    """Verify a prior-version or current-version source can be safely restored.
 
     The source database is read-only throughout this operation. The destination
     must be a separately provisioned, empty, disposable database; it is populated
