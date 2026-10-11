@@ -29,6 +29,7 @@ REQUIRED_RELATIONS = (
     "evidence_comparison_policy_heads",
     "evidence_comparison_policy_versions",
     "evidence_comparison_assessments",
+    "ofi_consent_grants",
 )
 
 
