@@ -5,9 +5,9 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable
 
-logger = logging.getLogger(__name__)
+from ofi.twin.migration_registry import CURRENT_SCHEMA_VERSION
 
-CURRENT_SCHEMA_VERSION = 1
+logger = logging.getLogger(__name__)
 
 # Relations exercised by the API's case/farm, evidence, and service-execution
 # persistence paths. Readiness checks names only; it never reads application data.
