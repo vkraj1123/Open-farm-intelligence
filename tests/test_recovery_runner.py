@@ -8,6 +8,7 @@ from ofi.services.dispatch_recovery_worker import (
     DispatchRecoveryItem,
     DispatchRecoveryReport,
 )
+from ofi.services.recovery_alerts import RecoveryAlertDeliveryError
 from ofi.services import recovery_runner
 from ofi.services.recovery_runner import run_from_environment
 
@@ -241,7 +242,7 @@ def test_runner_returns_failure_when_alert_delivery_fails(monkeypatch):
             pass
 
         def send(self, _event):
-            raise recovery_runner.RecoveryAlertDeliveryError(
+            raise RecoveryAlertDeliveryError(
                 "receiver private endpoint and secret"
             )
 
