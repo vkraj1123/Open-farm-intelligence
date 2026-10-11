@@ -11,7 +11,8 @@ class CaseRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def get(self, case_id: str) -> CaseRecord:
+    def get(self, case_id: str, tenant_id: str | None = None) -> CaseRecord:
+        """Return a case; when supplied, constrain lookup to that tenant."""
         raise NotImplementedError
 
     @abstractmethod
