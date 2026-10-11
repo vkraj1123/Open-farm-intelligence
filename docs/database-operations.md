@@ -81,7 +81,7 @@ This is a reproducible staging/CI rehearsal, not evidence that a production back
 
 ### Scheduled encrypted recovery drill
 
-The `.github/workflows/recovery-drill.yml` workflow can run manually from GitHub Actions or automatically every Monday at 09:00 India time. It skips safely when its required Actions secrets are not configured. To enable it, configure these under **Repository Settings → Secrets and variables → Actions** (or an environment used by the workflow):
+The `.github/workflows/recovery-drill.yml` workflow can run manually from GitHub Actions or automatically every Monday at 09:00 India time. It skips safely when its required Actions secrets are not configured. To enable it, configure these under **Repository Settings → Secrets and variables → Actions**:
 
 - `OFI_RECOVERY_SOURCE_DSN`: staging database connection string. Use a role with read access sufficient for `pg_dump` and the readiness/fingerprint queries; prefer TLS and least privilege.
 - `OFI_RECOVERY_RESTORE_ADMIN_DSN`: connection string to a maintenance database (commonly `postgres`) for a role allowed to create and drop databases. The workflow creates a uniquely named empty database for each run and drops it after the check, even when the check fails.
