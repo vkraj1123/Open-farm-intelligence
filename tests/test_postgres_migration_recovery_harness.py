@@ -16,6 +16,7 @@ from psycopg.conninfo import make_conninfo
 from ofi.twin.migrate import apply_schema
 from ofi.twin.migration_registry import CURRENT_SCHEMA_VERSION
 from ofi.twin.recovery_check import run_recovery_check
+from ofi.twin.recovery_drill import run_recovery_drill
 
 
 DATABASE_URL = os.environ.get("OFI_POSTGRES_DSN")
@@ -216,7 +217,6 @@ def test_current_schema_scheduled_drill_emits_encrypted_backup(tmp_path):
         pytest.skip("age and age-keygen are installed by the PostgreSQL CI workflow")
 
     source_name, source_dsn, admin_dsn = create_database(DATABASE_URL, "ofi_recovery_current")
-    restore_name, restore_dsn, _ = create_database(DATABASE_URL, "ofi_recovery_current_target")
     try:
         seed_v1_source(source_dsn)
         assert apply_schema(source_dsn) == CURRENT_SCHEMA_VERSION
@@ -235,10 +235,10 @@ def test_current_schema_scheduled_drill_emits_encrypted_backup(tmp_path):
         recipient = recipient_line.split(": ", 1)[1]
         encrypted_path = tmp_path / "recovery-backup.dump.age"
 
-        report = run_recovery_check(
+        report = run_recovery_drill(
             source_dsn,
-            restore_dsn,
-            encrypted_backup_path=encrypted_path,
+            admin_dsn,
+            encrypted_backup_path=str(encrypted_path),
             age_recipient=recipient,
         )
 
@@ -248,6 +248,7 @@ def test_current_schema_scheduled_drill_emits_encrypted_backup(tmp_path):
         assert report["restored_schema_version_before_migration"] == CURRENT_SCHEMA_VERSION
         assert report["upgraded_schema_version"] == CURRENT_SCHEMA_VERSION
         assert report["migration_applied"] is False
+        assert report["restore_database_disposed"] is True
         assert report["encrypted_backup"]["encryption"] == "age"
         assert report["encrypted_backup"]["size_bytes"] == encrypted_path.stat().st_size
         assert len(report["encrypted_backup"]["sha256"]) == 64
@@ -270,10 +271,11 @@ def test_current_schema_scheduled_drill_emits_encrypted_backup(tmp_path):
             text=True,
         )
         assert decrypted_path.read_bytes().startswith(b"PGDMP")
-        with psycopg.connect(restore_dsn) as restored:
-            assert restored.execute(
-                "SELECT max(version) FROM ofi_schema_migrations"
-            ).fetchone()[0] == CURRENT_SCHEMA_VERSION
+        with psycopg.connect(admin_dsn) as admin:
+            remaining = admin.execute(
+                "SELECT count(*) FROM pg_database WHERE datname=%s",
+                (report["restore_database_name"],),
+            ).fetchone()[0]
+        assert remaining == 0
     finally:
-        drop_database(admin_dsn, restore_name)
         drop_database(admin_dsn, source_name)
