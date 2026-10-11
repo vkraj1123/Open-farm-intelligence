@@ -35,16 +35,17 @@ The `ofi-schema` command applies numbered SQL files from `src/ofi/twin/migration
 | 1 | `001_initial_postgis_case_service_and_evidence_schema.sql` | Initial farm/case/service/evidence schema and PostGIS support |
 | 2 | `002_case_record_version_constraint.sql` | Enforce non-negative optimistic versions on case records |
 | 3 | `003_consent_scopes_and_revocation.sql` | Add actor-bound, scoped consent grants and durable revocation ledger |
+| 4 | `004_tenant_scoped_data_boundaries.sql` | Bind farms, cases, consent grants, evidence policies and assessments to a tenant |
 
 Each migration records its name and SHA-256 checksum in `ofi_schema_migrations`. Applied migrations are immutable: re-running is a no-op when the migration record matches; a checksum or name mismatch fails closed. The runner serializes concurrent migration processes with a PostgreSQL advisory transaction lock and records each version only in the transaction that applies its SQL. It refuses to run if it sees a newer version or a missing predecessor.
 
-The `src/ofi/twin/schema.sql` file remains as a compatibility/bootstrap script representing version 1, so older development and integration setups can create the baseline schema. Use `ofi-schema` for application installs and upgrades; after applying only the baseline script, `/ready` correctly reports an outdated schema until pending migrations are applied. The runner upgrades an existing v1 marker that predates checksums and applies all pending migrations, including v2 and v3.
+The `src/ofi/twin/schema.sql` file remains as a compatibility/bootstrap script representing version 1, so older development and integration setups can create the baseline schema. Use `ofi-schema` for application installs and upgrades; after applying only the baseline script, `/ready` correctly reports an outdated schema until pending migrations are applied. The runner upgrades an existing v1 marker that predates checksums and applies all pending migrations through v4.
 
 The database user needs permission to create the PostGIS extension if it is not already installed, and to create/alter the application's tables and indexes. In managed PostgreSQL services, a database administrator may need to enable PostGIS first. Back up production data before applying schema changes, and test migrations against a staging copy.
 
 ## Adding a schema migration
 
-1. Create the next contiguous, numerically prefixed SQL file, for example `004_add_observation_index.sql` (the current registry ends at v3). Do not edit files already applied to shared databases.
+1. Create the next contiguous, numerically prefixed SQL file, for example `005_add_observation_index.sql` (the current registry ends at v4). Do not edit files already applied to shared databases.
 2. Add a `SchemaMigration` entry to `MIGRATIONS` in `src/ofi/twin/migration_registry.py`, with the next version number, stable name and filename. The current version is derived from the last registry entry; readiness uses that registry value.
 3. Make the SQL forward-compatible, safe for existing data, and transactional. For potentially large production tables, assess table locks and use a staged/concurrent migration strategy where appropriate.
 4. Add PostgreSQL integration tests that start from the previous supported version, apply the migration, verify the resulting schema, and confirm a second run is a no-op.
@@ -55,7 +56,7 @@ The registry validates contiguous numbering and unique migration names/filenames
 
 ## Consent grants, scopes and revocation
 
-The HTTP consent lifecycle is described in [Authenticated consent API](consent-api.md). Consent routes and the existing case/farm/evidence/assessment routes now use the verified bearer-token boundary by default; public exceptions are `/health` and `/ready`. The signed JWT `sub` supplies the actor identity. Farm/case routes authorize the primary farmer or an active, verified owner/cultivator party whose role matches the token. Unauthorized resource IDs are hidden behind 404 responses. Global evidence-comparison policy writes require a trusted `agent`, `service_provider`, or `system` role.
+The HTTP consent lifecycle is described in [Authenticated consent API](consent-api.md). Consent routes and case/farm/evidence/assessment routes use the verified bearer-token boundary by default; public exceptions are `/health` and `/ready`. These protected routes require a signed, non-empty JWT `tenant_id` claim in addition to the actor subject and role. Farm/case routes authorize the primary farmer or an active, verified owner/cultivator party within that same tenant. Unauthorized resource IDs are hidden behind 404 responses. Evidence policies are namespaced by tenant, and assessment/consent lookups include the tenant filter. Global evidence-comparison policy writes require a trusted `agent`, `service_provider`, or `system` role.
 
 Migration v3 creates `ofi_consent_grants`, the authoritative PostgreSQL consent ledger. A grant records an opaque consent ID, actor ID, purpose, exact service scopes, grant time, optional expiry and optional revocation time. The database rejects changes to the original grant terms and deletion of consent records; only the first revocation timestamp can be set. Readiness includes this table, so a database that has a current migration marker but lacks the ledger does not pass `/ready`.
 
@@ -69,6 +70,12 @@ The HTTP API now provides `POST /consents`, `GET /consents/{consent_id}`, and `D
 The API requires `OFI_AUTH_HMAC_SECRET` (at least 32 UTF-8 bytes), `OFI_AUTH_ISSUER`, and `OFI_AUTH_AUDIENCE` for authenticated routes. The trusted issuer must mint compact HS256 JWTs with the expected issuer/audience and the `sub`, `role`, `iat`, and `exp` claims; tokens are limited to 24 hours. OFI does not issue tokens. When authentication configuration is missing, authenticated routes fail closed with HTTP 503.
 
 `OFI_RESOURCE_AUTH_ENABLED` defaults to `true`. Setting it to `false` bypasses resource-route identity checks and is only intended for isolated tests or a trusted local sandbox. **Never disable it on any reachable deployment.** This increment implements farm-level actor/party ownership, not organization-level tenant IDs or membership. Full RBAC, audit logging, purpose limitation, rate limiting, TLS configuration, key rotation, and an external security review remain deployment/product work.
+
+## Tenant cutover and legacy data
+
+Migration v4 backfills pre-existing farm, case, consent and evidence records to the special `legacy:default` tenant. This is a compatibility bucket, **not** a verified organization and not a tenant to assign to regular users. Normal authenticated routes operate only within the `tenant_id` signed into the verified bearer token; they do not expose a general endpoint for reassigning legacy records. Before multi-tenant production cutover, inventory existing records and perform an approved, audited ownership/tenant mapping through a controlled database migration. Tenant-binding triggers intentionally prevent ordinary application updates from silently moving existing records.
+
+The trusted identity issuer must authorize current tenant membership before minting tokens with a `tenant_id` claim. OFI verifies that claim but does not maintain an organization-membership registry or issue tokens. Full membership lifecycle management, migration tooling for tenant assignment, and broader RBAC remain open work.
 
 ## Operational boundary
 
