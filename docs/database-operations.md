@@ -34,22 +34,33 @@ The `ofi-schema` command applies numbered SQL files from `src/ofi/twin/migration
 |---:|---|---|
 | 1 | `001_initial_postgis_case_service_and_evidence_schema.sql` | Initial farm/case/service/evidence schema and PostGIS support |
 | 2 | `002_case_record_version_constraint.sql` | Enforce non-negative optimistic versions on case records |
+| 3 | `003_consent_scopes_and_revocation.sql` | Add actor-bound, scoped consent grants and durable revocation ledger |
 
 Each migration records its name and SHA-256 checksum in `ofi_schema_migrations`. Applied migrations are immutable: re-running is a no-op when the migration record matches; a checksum or name mismatch fails closed. The runner serializes concurrent migration processes with a PostgreSQL advisory transaction lock and records each version only in the transaction that applies its SQL. It refuses to run if it sees a newer version or a missing predecessor.
 
-The `src/ofi/twin/schema.sql` file remains as a compatibility/bootstrap script representing version 1, so older development and integration setups can create the baseline schema. Use `ofi-schema` for application installs and upgrades; after applying only the baseline script, `/ready` correctly reports an outdated schema until pending migrations are applied. The runner upgrades an existing v1 marker that predates checksums and applies the pending v2 migration.
+The `src/ofi/twin/schema.sql` file remains as a compatibility/bootstrap script representing version 1, so older development and integration setups can create the baseline schema. Use `ofi-schema` for application installs and upgrades; after applying only the baseline script, `/ready` correctly reports an outdated schema until pending migrations are applied. The runner upgrades an existing v1 marker that predates checksums and applies all pending migrations, including v2 and v3.
 
 The database user needs permission to create the PostGIS extension if it is not already installed, and to create/alter the application's tables and indexes. In managed PostgreSQL services, a database administrator may need to enable PostGIS first. Back up production data before applying schema changes, and test migrations against a staging copy.
 
 ## Adding a schema migration
 
-1. Create the next contiguous, numerically prefixed SQL file, for example `003_add_observation_index.sql`. Do not edit files already applied to shared databases.
+1. Create the next contiguous, numerically prefixed SQL file, for example `004_add_observation_index.sql` (the current registry ends at v3). Do not edit files already applied to shared databases.
 2. Add a `SchemaMigration` entry to `MIGRATIONS` in `src/ofi/twin/migration_registry.py`, with the next version number, stable name and filename. The current version is derived from the last registry entry; readiness uses that registry value.
 3. Make the SQL forward-compatible, safe for existing data, and transactional. For potentially large production tables, assess table locks and use a staged/concurrent migration strategy where appropriate.
 4. Add PostgreSQL integration tests that start from the previous supported version, apply the migration, verify the resulting schema, and confirm a second run is a no-op.
 5. Run standard and PostgreSQL CI. Test on a staging copy and verify backups/recovery before applying to production.
 
 The registry validates contiguous numbering and unique migration names/filenames at import time. The runner stores SHA-256 checksums and rejects drift in applied SQL. If an already-released migration is wrong, create a new corrective migration instead of rewriting history.
+
+
+## Consent grants, scopes and revocation
+
+Migration v3 creates `ofi_consent_grants`, the authoritative PostgreSQL consent ledger. A grant records an opaque consent ID, actor ID, purpose, exact service scopes, grant time, optional expiry and optional revocation time. The database rejects changes to the original grant terms and deletion of consent records; only the first revocation timestamp can be set. Readiness includes this table, so a database that has a current migration marker but lacks the ledger does not pass `/ready`.
+
+`ConsentGrant` validates timezone-aware timestamps and distinct, non-empty scopes. The execution gateway checks the authenticated actor, exact action/route identity, active time window, revocation state and requested service scope. With `PostgresConsentRepository` injected, the gateway resolves the consent ID against the authoritative database record on each submission and prepared-attempt dispatch; a stale caller-held object cannot override a persisted revocation or widen stored scopes. `InMemoryConsentRepository` is useful for local tests only: its revocation state is process-local and is not a production substitute for a shared durable ledger.
+
+The repository supports internal grant creation, lookup and actor-bound revocation. **This milestone does not add a public consent-issuance API or a farmer-facing consent interface.** A trusted application boundary must authenticate the actor, capture a clear affirmative action for the stated purpose/scopes, then call the repository to persist the grant. Never accept an arbitrary client-supplied actor ID as proof of identity. Revocation blocks subsequent authorization checks; it cannot undo an external action that has already been sent or cancel an in-flight provider request.
+
 
 ## Operational boundary
 
