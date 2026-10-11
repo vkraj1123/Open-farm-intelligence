@@ -116,3 +116,22 @@ def test_applied_migration_checksum_mismatch_fails_closed():
                 "UPDATE ofi_schema_migrations SET checksum=%s WHERE version=%s",
                 (migration.checksum, migration.version),
             )
+
+def test_new_migration_without_checksum_fails_closed():
+    apply_schema(DATABASE_URL)
+    migration = MIGRATIONS[-1]
+    try:
+        with psycopg.connect(DATABASE_URL) as connection:
+            connection.execute(
+                "UPDATE ofi_schema_migrations SET checksum=NULL WHERE version=%s",
+                (migration.version,),
+            )
+
+        with pytest.raises(RuntimeError, match="is missing its checksum"):
+            apply_schema(DATABASE_URL)
+    finally:
+        with psycopg.connect(DATABASE_URL) as connection:
+            connection.execute(
+                "UPDATE ofi_schema_migrations SET checksum=%s WHERE version=%s",
+                (migration.checksum, migration.version),
+            )
