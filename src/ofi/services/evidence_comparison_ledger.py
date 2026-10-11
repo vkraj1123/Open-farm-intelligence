@@ -350,7 +350,8 @@ class PostgresEvidenceComparisonLedger(EvidenceComparisonLedger):
                                p.comparison_rules, p.created_at
                         FROM evidence_comparison_policy_versions p
                         JOIN evidence_comparison_policy_heads h
-                          ON h.policy_id = p.policy_id
+                          ON h.tenant_id = p.tenant_id
+                         AND h.policy_id = p.policy_id
                          AND h.current_version = p.version
                         WHERE p.tenant_id = %s AND p.policy_id = %s
                         """,
