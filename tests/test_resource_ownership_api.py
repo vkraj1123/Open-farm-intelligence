@@ -27,19 +27,20 @@ def _b64url(value: bytes) -> str:
 def make_token(
     actor_id: str,
     role: str = "farmer",
-    tenant_id: str = "tenant-default",
+    tenant_id: str | None = "tenant-default",
 ) -> str:
     now = time.time()
     header = {"alg": "HS256", "typ": "JWT"}
     claims = {
         "sub": actor_id,
         "role": role,
-        "tenant_id": tenant_id,
         "iss": ISSUER,
         "aud": AUDIENCE,
         "iat": now,
         "exp": now + 3600,
     }
+    if tenant_id is not None:
+        claims["tenant_id"] = tenant_id
     encoded_header = _b64url(json.dumps(header, separators=(",", ":")).encode())
     encoded_claims = _b64url(json.dumps(claims, separators=(",", ":")).encode())
     signing_input = f"{encoded_header}.{encoded_claims}".encode("ascii")
@@ -50,7 +51,7 @@ def make_token(
 def auth(
     actor_id: str,
     role: str = "farmer",
-    tenant_id: str = "tenant-default",
+    tenant_id: str | None = "tenant-default",
 ) -> dict[str, str]:
     return {"Authorization": f"Bearer {make_token(actor_id, role, tenant_id)}"}
 
@@ -101,6 +102,10 @@ def create_case(
 def test_farm_and_case_routes_require_verified_bearer_tokens(resource_client):
     client = resource_client
     assert client.get("/cases/unknown-case").status_code == 401
+    no_tenant = client.get(
+        "/cases/unknown-case", headers=auth("farmer-no-tenant", tenant_id=None)
+    )
+    assert no_tenant.status_code == 401
     assert client.post(
         "/farms/unknown-farm/evidence-frame",
         json={"max_age_seconds_by_kind": {"weather": 3600}},
