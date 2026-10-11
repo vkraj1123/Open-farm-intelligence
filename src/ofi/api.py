@@ -525,6 +525,7 @@ def create_case(
     farm_data = case.farm.model_copy(update={"tenant_id": tenant_id})
     case = case.model_copy(update={"farm": farm_data})
     if actor is not None:
+        _require_farm_access(actor, case.farm)
         # Case creation must not act as an implicit farm transfer or profile update.
         try:
             existing_farm = case_manager.farm_twin.get(case.farm.id)
