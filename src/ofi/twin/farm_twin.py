@@ -23,6 +23,12 @@ class FarmTwinStore(FarmTwinRepository):
         self._observations: dict[str, list[Observation]] = {}
 
     def upsert(self, farm: Farm) -> Farm:
+        existing = self._farms.get(farm.id)
+        if existing is not None and (
+            (existing.tenant_id or "legacy:default") != (farm.tenant_id or "legacy:default")
+            or existing.farmer_id != farm.farmer_id
+        ):
+            raise ValueError("farm already exists in a different tenant or owner scope")
         self._farms[farm.id] = farm
         self._crop_cycles[farm.id] = [farm.crop_cycle]
         self._parties[farm.id] = list(farm.parties)
