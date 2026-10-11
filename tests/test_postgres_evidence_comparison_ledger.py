@@ -5,7 +5,6 @@ runs without OFI_POSTGRES_DSN skip this module rather than substituting mocks.
 """
 import os
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -17,6 +16,7 @@ from ofi.services.evidence_comparison_ledger import (
     EvidenceComparisonAssessment,
     PostgresEvidenceComparisonLedger,
 )
+from ofi.twin.migrate import apply_schema
 
 
 DATABASE_URL = os.environ.get("OFI_POSTGRES_DSN")
@@ -30,9 +30,7 @@ NOW = datetime(2026, 10, 11, 12, 0, tzinfo=timezone.utc)
 
 @pytest.fixture()
 def ledger():
-    schema_path = Path(__file__).parents[1] / "src" / "ofi" / "twin" / "schema.sql"
-    with psycopg.connect(DATABASE_URL) as connection:
-        connection.execute(schema_path.read_text(encoding="utf-8"))
+    assert apply_schema(DATABASE_URL) >= 4
     return PostgresEvidenceComparisonLedger(lambda: psycopg.connect(DATABASE_URL))
 
 

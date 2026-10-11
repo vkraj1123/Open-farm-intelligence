@@ -11,7 +11,8 @@ class CaseRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def get(self, case_id: str) -> CaseRecord:
+    def get(self, case_id: str, tenant_id: str | None = None) -> CaseRecord:
+        """Return a case; when supplied, constrain lookup to that tenant."""
         raise NotImplementedError
 
     @abstractmethod
@@ -43,11 +44,16 @@ class InMemoryCaseRepository(CaseRepository):
         self._records[case.id] = record
         return record
 
-    def get(self, case_id: str) -> CaseRecord:
+    def get(self, case_id: str, tenant_id: str | None = None) -> CaseRecord:
         try:
-            return self._records[case_id]
+            record = self._records[case_id]
         except KeyError as exc:
             raise KeyError(case_id) from exc
+        if tenant_id is not None:
+            stored_tenant = record.case.farm.tenant_id or "legacy:default"
+            if stored_tenant != tenant_id:
+                raise KeyError(case_id)
+        return record
 
     def save(self, record: CaseRecord) -> CaseRecord:
         record.version += 1

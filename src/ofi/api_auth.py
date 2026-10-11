@@ -1,6 +1,8 @@
 """Fail-closed HS256 bearer-token authentication for trusted API boundaries.
 
 Tokens must be minted by a trusted issuer that holds OFI_AUTH_HMAC_SECRET.
+Resource and consent routes require a signed tenant_id claim; the issuer must
+authorize the actor's membership before issuing a token for that tenant.
 This module validates identity claims; it does not issue tokens or replace an
 OIDC identity provider. Keep the secret in a deployment secret manager.
 """
@@ -116,6 +118,15 @@ def verify_bearer_token(token: str) -> ActorIdentity:
 
         actor_id = claims.get("sub")
         role = claims.get("role")
+        tenant_id = claims.get("tenant_id")
+        if tenant_id is not None:
+            if (
+                not isinstance(tenant_id, str)
+                or not tenant_id.strip()
+                or len(tenant_id) > 512
+            ):
+                raise ValueError("invalid tenant_id claim")
+            tenant_id = tenant_id.strip()
         if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 512:
             raise ValueError("invalid JWT subject")
         if not isinstance(role, str) or role not in _ALLOWED_ROLES:
@@ -133,7 +144,12 @@ def verify_bearer_token(token: str) -> ActorIdentity:
         if "nbf" in claims and _number_claim(claims, "nbf") > now:
             raise ValueError("JWT is not active yet")
 
-        return ActorIdentity(actor_id=actor_id.strip(), role=role, authenticated=True)
+        return ActorIdentity(
+            actor_id=actor_id.strip(),
+            role=role,
+            authenticated=True,
+            tenant_id=tenant_id,
+        )
     except HTTPException:
         raise
     except (ValueError, TypeError, UnicodeError, json.JSONDecodeError, OverflowError):

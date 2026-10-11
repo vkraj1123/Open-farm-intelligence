@@ -1,7 +1,6 @@
 """Integration tests for the shared PostgreSQL case + farm transaction."""
 
 import os
-from pathlib import Path
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -19,6 +18,7 @@ from ofi.domain.models import (
 )
 from ofi.services.case_manager import CaseManager
 from ofi.services.unit_of_work import PostgresFarmCaseUnitOfWork
+from ofi.twin.migrate import apply_schema
 
 
 DATABASE_URL = os.environ.get("OFI_POSTGRES_DSN")
@@ -30,9 +30,7 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture()
 def connection_factory():
-    schema_path = Path(__file__).parents[1] / "src" / "ofi" / "twin" / "schema.sql"
-    with psycopg.connect(DATABASE_URL) as connection:
-        connection.execute(schema_path.read_text(encoding="utf-8"))
+    assert apply_schema(DATABASE_URL) >= 4
     return lambda: psycopg.connect(DATABASE_URL)
 
 

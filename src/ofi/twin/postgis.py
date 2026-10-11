@@ -23,11 +23,18 @@ class PostGISFarmTwinStore(FarmTwinRepository):
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO farms (id, farmer_id) VALUES (%s, %s)
-                    ON CONFLICT (id) DO UPDATE SET farmer_id = EXCLUDED.farmer_id
+                    INSERT INTO farms (id, farmer_id, tenant_id)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (id) DO UPDATE
+                    SET farmer_id = farms.farmer_id
+                    WHERE farms.tenant_id = EXCLUDED.tenant_id
+                      AND farms.farmer_id = EXCLUDED.farmer_id
+                    RETURNING id
                     """,
-                    (farm.id, farm.farmer_id),
+                    (farm.id, farm.farmer_id, farm.tenant_id or "legacy:default"),
                 )
+                if cur.fetchone() is None:
+                    raise ValueError("farm already exists in a different tenant or owner scope")
                 boundary_wkt = self._polygon_wkt(farm.parcel.boundary)
                 cur.execute(
                     """
@@ -40,9 +47,11 @@ class PostGISFarmTwinStore(FarmTwinRepository):
                       %s::jsonb
                     )
                     ON CONFLICT (id) DO UPDATE SET
-                      farm_id=EXCLUDED.farm_id, area_ha=EXCLUDED.area_ha,
+                      area_ha=EXCLUDED.area_ha,
                       location=EXCLUDED.location, boundary=EXCLUDED.boundary,
                       administrative_area=EXCLUDED.administrative_area
+                    WHERE parcels.farm_id=EXCLUDED.farm_id
+                    RETURNING id
                     """,
                     (
                         farm.parcel.id, farm.id, farm.parcel.area_ha,
@@ -51,6 +60,8 @@ class PostGISFarmTwinStore(FarmTwinRepository):
                         json.dumps(farm.parcel.administrative_area),
                     ),
                 )
+                if cur.fetchone() is None:
+                    raise ValueError("parcel ID is already bound to a different farm")
                 self._upsert_crop_cycle(cur, farm.id, farm.crop_cycle)
                 for party in farm.parties:
                     self._insert_party(cur, farm.id, party)
@@ -65,7 +76,8 @@ class PostGISFarmTwinStore(FarmTwinRepository):
                     """
                     SELECT f.id, f.farmer_id, p.id, p.area_ha,
                            ST_Y(p.location::geometry), ST_X(p.location::geometry),
-                           ST_AsGeoJSON(p.boundary::geometry), p.administrative_area
+                           ST_AsGeoJSON(p.boundary::geometry), p.administrative_area,
+                           f.tenant_id
                     FROM farms f JOIN parcels p ON p.farm_id = f.id
                     WHERE f.id = %s
                     """,
@@ -125,6 +137,8 @@ class PostGISFarmTwinStore(FarmTwinRepository):
                       source=EXCLUDED.source, quality=EXCLUDED.quality,
                       confidence=EXCLUDED.confidence, value=EXCLUDED.value,
                       provenance=EXCLUDED.provenance
+                    WHERE observations.farm_id=EXCLUDED.farm_id
+                    RETURNING id
                     """,
                     (
                         observation.id, farm_id, observation.crop_cycle_id,
@@ -135,6 +149,8 @@ class PostGISFarmTwinStore(FarmTwinRepository):
                         json.dumps(observation.value), json.dumps(observation.provenance),
                     ),
                 )
+                if cur.fetchone() is None:
+                    raise ValueError("observation ID is already bound to a different farm")
 
     def snapshot(self, farm_id: str, as_of: datetime | None = None) -> FarmSnapshot:
         moment = self._utc(as_of or datetime.now(timezone.utc))
@@ -232,13 +248,17 @@ class PostGISFarmTwinStore(FarmTwinRepository):
               (id,farm_id,crop,season,sowing_date,harvest_date,irrigation_method,status)
             VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
             ON CONFLICT (id) DO UPDATE SET
-              farm_id=EXCLUDED.farm_id,crop=EXCLUDED.crop,season=EXCLUDED.season,
+              crop=EXCLUDED.crop,season=EXCLUDED.season,
               sowing_date=EXCLUDED.sowing_date,harvest_date=EXCLUDED.harvest_date,
               irrigation_method=EXCLUDED.irrigation_method,status=EXCLUDED.status
+            WHERE crop_cycles.farm_id=EXCLUDED.farm_id
+            RETURNING id
             """,
             (cycle.id,farm_id,cycle.crop,cycle.season,cycle.sowing_date,
              cycle.harvest_date,cycle.irrigation_method,cycle.status),
         )
+        if cur.fetchone() is None:
+            raise ValueError("crop-cycle ID is already bound to a different farm")
 
     @staticmethod
     def _insert_party(cur: Any, farm_id: str, party: LandParty) -> None:
@@ -260,13 +280,17 @@ class PostGISFarmTwinStore(FarmTwinRepository):
               (contract_id,farm_id,owner_id,cultivator_id,valid_from,valid_to,arrangement)
             VALUES (%s,%s,%s,%s,%s,%s,%s)
             ON CONFLICT (contract_id) DO UPDATE SET
-              farm_id=EXCLUDED.farm_id,owner_id=EXCLUDED.owner_id,
-              cultivator_id=EXCLUDED.cultivator_id,valid_from=EXCLUDED.valid_from,
-              valid_to=EXCLUDED.valid_to,arrangement=EXCLUDED.arrangement
+              owner_id=EXCLUDED.owner_id, cultivator_id=EXCLUDED.cultivator_id,
+              valid_from=EXCLUDED.valid_from, valid_to=EXCLUDED.valid_to,
+              arrangement=EXCLUDED.arrangement
+            WHERE production_contracts.farm_id=EXCLUDED.farm_id
+            RETURNING contract_id
             """,
             (contract.contract_id,farm_id,contract.owner_id,contract.cultivator_id,
              contract.valid_from,contract.valid_to,contract.arrangement),
         )
+        if cur.fetchone() is None:
+            raise ValueError("contract ID is already bound to a different farm")
 
     @staticmethod
     def _cycle(row: tuple[Any, ...]) -> CropCycle:
@@ -300,12 +324,54 @@ class PostGISFarmTwinStore(FarmTwinRepository):
         cycle_row=cur.fetchone()
         if cycle_row is None:
             raise ValueError(f"farm has no crop cycle: {row[0]}")
+        cur.execute(
+            """
+            SELECT party_id, role, valid_from, valid_to, verification
+            FROM land_parties
+            WHERE farm_id = %s
+            ORDER BY valid_from, party_id, role
+            """,
+            (row[0],),
+        )
+        parties = [
+            LandParty(
+                party_id=party_id,
+                role=role,
+                valid_from=valid_from,
+                valid_to=valid_to,
+                verification=verification,
+            )
+            for party_id, role, valid_from, valid_to, verification in cur.fetchall()
+        ]
+        cur.execute(
+            """
+            SELECT contract_id, owner_id, cultivator_id, valid_from, valid_to, arrangement
+            FROM production_contracts
+            WHERE farm_id = %s
+            ORDER BY valid_from, contract_id
+            """,
+            (row[0],),
+        )
+        contracts = [
+            ProductionContract(
+                contract_id=contract_id,
+                owner_id=owner_id,
+                cultivator_id=cultivator_id,
+                valid_from=valid_from,
+                valid_to=valid_to,
+                arrangement=arrangement,
+            )
+            for contract_id, owner_id, cultivator_id, valid_from, valid_to, arrangement
+            in cur.fetchall()
+        ]
         return Farm(
-            id=row[0],farmer_id=row[1],
+            id=row[0],farmer_id=row[1],tenant_id=row[8],
             parcel=Parcel(
                 id=row[2],area_ha=row[3],
                 location=GeoPoint(latitude=row[4],longitude=row[5]),
                 boundary=boundary,administrative_area=row[7] or {},
             ),
             crop_cycle=PostGISFarmTwinStore._cycle(cycle_row),
+            parties=parties,
+            contracts=contracts,
         )

@@ -29,6 +29,7 @@ class EvidenceComparisonPolicyVersion:
     require_provenance: bool
     comparison_rules: tuple[MetricComparisonRule, ...]
     created_at: datetime
+    tenant_id: str = "legacy:default"
 
 
 @dataclass(frozen=True)
@@ -43,6 +44,7 @@ class EvidenceComparisonAssessment:
     observations_snapshot: list[dict[str, Any]]
     evidence_frame: dict[str, Any]
     comparisons: list[dict[str, Any]]
+    tenant_id: str = "legacy:default"
 
 
 def _rule_to_payload(rule: MetricComparisonRule) -> dict[str, Any]:
@@ -135,12 +137,17 @@ class EvidenceComparisonLedger(ABC):
         max_age_seconds_by_kind: Mapping[str, float],
         require_provenance: bool,
         comparison_rules: Sequence[MetricComparisonRule],
+        tenant_id: str = "legacy:default",
     ) -> EvidenceComparisonPolicyVersion:
         raise NotImplementedError
 
     @abstractmethod
     def get_policy(
-        self, policy_id: str, version: int | None = None
+        self,
+        policy_id: str,
+        version: int | None = None,
+        *,
+        tenant_id: str = "legacy:default",
     ) -> EvidenceComparisonPolicyVersion:
         raise NotImplementedError
 
@@ -151,7 +158,9 @@ class EvidenceComparisonLedger(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def get_assessment(self, assessment_id: str) -> EvidenceComparisonAssessment:
+    def get_assessment(
+        self, assessment_id: str, tenant_id: str = "legacy:default"
+    ) -> EvidenceComparisonAssessment:
         raise NotImplementedError
 
 
@@ -160,7 +169,7 @@ class InMemoryEvidenceComparisonLedger(EvidenceComparisonLedger):
 
     def __init__(self) -> None:
         self._lock = RLock()
-        self._policy_versions: dict[str, dict[int, EvidenceComparisonPolicyVersion]] = {}
+        self._policy_versions: dict[tuple[str, str], dict[int, EvidenceComparisonPolicyVersion]] = {}
         self._assessments: dict[str, EvidenceComparisonAssessment] = {}
 
     def create_policy_version(
@@ -171,10 +180,14 @@ class InMemoryEvidenceComparisonLedger(EvidenceComparisonLedger):
         max_age_seconds_by_kind: Mapping[str, float],
         require_provenance: bool,
         comparison_rules: Sequence[MetricComparisonRule],
+        tenant_id: str = "legacy:default",
     ) -> EvidenceComparisonPolicyVersion:
         _validate_policy(policy_id, description, max_age_seconds_by_kind, comparison_rules)
+        if not isinstance(tenant_id, str) or not tenant_id.strip():
+            raise ValueError("tenant_id must not be blank")
+        tenant_id = tenant_id.strip()
         with self._lock:
-            versions = self._policy_versions.setdefault(policy_id, {})
+            versions = self._policy_versions.setdefault((tenant_id, policy_id), {})
             version = max(versions, default=0) + 1
             policy = EvidenceComparisonPolicyVersion(
                 policy_id=policy_id,
@@ -184,15 +197,20 @@ class InMemoryEvidenceComparisonLedger(EvidenceComparisonLedger):
                 require_provenance=bool(require_provenance),
                 comparison_rules=tuple(deepcopy(tuple(comparison_rules))),
                 created_at=datetime.now(timezone.utc),
+                tenant_id=tenant_id,
             )
             versions[version] = _copy_policy(policy)
             return _copy_policy(policy)
 
     def get_policy(
-        self, policy_id: str, version: int | None = None
+        self,
+        policy_id: str,
+        version: int | None = None,
+        *,
+        tenant_id: str = "legacy:default",
     ) -> EvidenceComparisonPolicyVersion:
         with self._lock:
-            versions = self._policy_versions.get(policy_id)
+            versions = self._policy_versions.get((tenant_id, policy_id))
             if not versions:
                 raise KeyError(policy_id)
             selected = max(versions) if version is None else version
@@ -207,7 +225,9 @@ class InMemoryEvidenceComparisonLedger(EvidenceComparisonLedger):
         with self._lock:
             if assessment.assessment_id in self._assessments:
                 raise ValueError(f"assessment already exists: {assessment.assessment_id}")
-            policy_versions = self._policy_versions.get(assessment.policy_id, {})
+            policy_versions = self._policy_versions.get(
+                (assessment.tenant_id, assessment.policy_id), {}
+            )
             if assessment.policy_version not in policy_versions:
                 raise KeyError(
                     f"{assessment.policy_id}@{assessment.policy_version}"
@@ -216,12 +236,17 @@ class InMemoryEvidenceComparisonLedger(EvidenceComparisonLedger):
             self._assessments[assessment.assessment_id] = stored
             return _copy_assessment(stored)
 
-    def get_assessment(self, assessment_id: str) -> EvidenceComparisonAssessment:
+    def get_assessment(
+        self, assessment_id: str, tenant_id: str = "legacy:default"
+    ) -> EvidenceComparisonAssessment:
         with self._lock:
             try:
-                return _copy_assessment(self._assessments[assessment_id])
+                assessment = self._assessments[assessment_id]
             except KeyError as exc:
                 raise KeyError(assessment_id) from exc
+            if assessment.tenant_id != tenant_id:
+                raise KeyError(assessment_id)
+            return _copy_assessment(assessment)
 
 
 class PostgresEvidenceComparisonLedger(EvidenceComparisonLedger):
@@ -238,28 +263,32 @@ class PostgresEvidenceComparisonLedger(EvidenceComparisonLedger):
         max_age_seconds_by_kind: Mapping[str, float],
         require_provenance: bool,
         comparison_rules: Sequence[MetricComparisonRule],
+        tenant_id: str = "legacy:default",
     ) -> EvidenceComparisonPolicyVersion:
         _validate_policy(policy_id, description, max_age_seconds_by_kind, comparison_rules)
+        if not isinstance(tenant_id, str) or not tenant_id.strip():
+            raise ValueError("tenant_id must not be blank")
+        tenant_id = tenant_id.strip()
         with connection_scope(self._connection_factory) as conn:
             with conn.transaction():
                 with conn.cursor() as cur:
                     cur.execute(
                         """
                         INSERT INTO evidence_comparison_policy_heads
-                          (policy_id, current_version)
-                        VALUES (%s, 0)
-                        ON CONFLICT (policy_id) DO NOTHING
+                          (tenant_id, policy_id, current_version)
+                        VALUES (%s, %s, 0)
+                        ON CONFLICT (tenant_id, policy_id) DO NOTHING
                         """,
-                        (policy_id,),
+                        (tenant_id, policy_id),
                     )
                     cur.execute(
                         """
                         SELECT current_version
                         FROM evidence_comparison_policy_heads
-                        WHERE policy_id = %s
+                        WHERE tenant_id = %s AND policy_id = %s
                         FOR UPDATE
                         """,
-                        (policy_id,),
+                        (tenant_id, policy_id),
                     )
                     row = cur.fetchone()
                     if row is None:
@@ -270,11 +299,12 @@ class PostgresEvidenceComparisonLedger(EvidenceComparisonLedger):
                     cur.execute(
                         """
                         INSERT INTO evidence_comparison_policy_versions
-                          (policy_id, version, description, max_age_seconds_by_kind,
+                          (tenant_id, policy_id, version, description, max_age_seconds_by_kind,
                            require_provenance, comparison_rules, created_at)
-                        VALUES (%s, %s, %s, %s::jsonb, %s, %s::jsonb, %s)
+                        VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s::jsonb, %s)
                         """,
                         (
+                            tenant_id,
                             policy_id,
                             version,
                             description,
@@ -288,9 +318,9 @@ class PostgresEvidenceComparisonLedger(EvidenceComparisonLedger):
                         """
                         UPDATE evidence_comparison_policy_heads
                         SET current_version = %s
-                        WHERE policy_id = %s
+                        WHERE tenant_id = %s AND policy_id = %s
                         """,
-                        (version, policy_id),
+                        (version, tenant_id, policy_id),
                     )
         return EvidenceComparisonPolicyVersion(
             policy_id=policy_id,
@@ -300,10 +330,15 @@ class PostgresEvidenceComparisonLedger(EvidenceComparisonLedger):
             require_provenance=bool(require_provenance),
             comparison_rules=tuple(deepcopy(tuple(comparison_rules))),
             created_at=created_at,
+            tenant_id=tenant_id,
         )
 
     def get_policy(
-        self, policy_id: str, version: int | None = None
+        self,
+        policy_id: str,
+        version: int | None = None,
+        *,
+        tenant_id: str = "legacy:default",
     ) -> EvidenceComparisonPolicyVersion:
         with connection_scope(self._connection_factory) as conn:
             with conn.cursor() as cur:
@@ -315,11 +350,12 @@ class PostgresEvidenceComparisonLedger(EvidenceComparisonLedger):
                                p.comparison_rules, p.created_at
                         FROM evidence_comparison_policy_versions p
                         JOIN evidence_comparison_policy_heads h
-                          ON h.policy_id = p.policy_id
+                          ON h.tenant_id = p.tenant_id
+                         AND h.policy_id = p.policy_id
                          AND h.current_version = p.version
-                        WHERE p.policy_id = %s
+                        WHERE p.tenant_id = %s AND p.policy_id = %s
                         """,
-                        (policy_id,),
+                        (tenant_id, policy_id),
                     )
                 else:
                     cur.execute(
@@ -328,9 +364,9 @@ class PostgresEvidenceComparisonLedger(EvidenceComparisonLedger):
                                max_age_seconds_by_kind, require_provenance,
                                comparison_rules, created_at
                         FROM evidence_comparison_policy_versions
-                        WHERE policy_id = %s AND version = %s
+                        WHERE tenant_id = %s AND policy_id = %s AND version = %s
                         """,
-                        (policy_id, version),
+                        (tenant_id, policy_id, version),
                     )
                 row = cur.fetchone()
                 if row is None:
@@ -355,6 +391,7 @@ class PostgresEvidenceComparisonLedger(EvidenceComparisonLedger):
                         _rule_from_payload(item) for item in _jsonb_value(rules)
                     ),
                     created_at=created_at,
+                    tenant_id=tenant_id,
                 )
 
     def save_assessment(
@@ -367,14 +404,15 @@ class PostgresEvidenceComparisonLedger(EvidenceComparisonLedger):
                     cur.execute(
                         """
                         INSERT INTO evidence_comparison_assessments
-                          (assessment_id, policy_id, policy_version, farm_id,
+                          (assessment_id, tenant_id, policy_id, policy_version, farm_id,
                            crop_cycle_id, as_of, recorded_at, observations_snapshot,
                            evidence_frame, comparisons)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s,
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s,
                                 %s::jsonb, %s::jsonb, %s::jsonb)
                         """,
                         (
                             assessment.assessment_id,
+                            assessment.tenant_id,
                             assessment.policy_id,
                             assessment.policy_version,
                             assessment.farm_id,
@@ -388,7 +426,9 @@ class PostgresEvidenceComparisonLedger(EvidenceComparisonLedger):
                     )
         return _copy_assessment(assessment)
 
-    def get_assessment(self, assessment_id: str) -> EvidenceComparisonAssessment:
+    def get_assessment(
+        self, assessment_id: str, tenant_id: str = "legacy:default"
+    ) -> EvidenceComparisonAssessment:
         with connection_scope(self._connection_factory) as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -397,9 +437,9 @@ class PostgresEvidenceComparisonLedger(EvidenceComparisonLedger):
                            crop_cycle_id, as_of, recorded_at, observations_snapshot,
                            evidence_frame, comparisons
                     FROM evidence_comparison_assessments
-                    WHERE assessment_id = %s
+                    WHERE assessment_id = %s AND tenant_id = %s
                     """,
-                    (assessment_id,),
+                    (assessment_id, tenant_id),
                 )
                 row = cur.fetchone()
                 if row is None:
@@ -427,11 +467,12 @@ class PostgresEvidenceComparisonLedger(EvidenceComparisonLedger):
                     observations_snapshot=list(_jsonb_value(observations)),
                     evidence_frame=dict(_jsonb_value(evidence_frame)),
                     comparisons=list(_jsonb_value(comparisons)),
+                    tenant_id=tenant_id,
                 )
 
     @staticmethod
     def _validate_assessment(assessment: EvidenceComparisonAssessment) -> None:
-        for name in ("assessment_id", "policy_id", "farm_id", "crop_cycle_id"):
+        for name in ("assessment_id", "policy_id", "farm_id", "crop_cycle_id", "tenant_id"):
             value = getattr(assessment, name)
             if not isinstance(value, str) or not value.strip():
                 raise ValueError(f"{name} must not be blank")
