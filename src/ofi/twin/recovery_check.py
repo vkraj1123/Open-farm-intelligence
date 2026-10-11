@@ -273,6 +273,8 @@ def run_recovery_check(source_dsn: str, restore_dsn: str) -> dict[str, Any]:
                 "--exit-on-error",
                 "--no-owner",
                 "--no-privileges",
+                "--dbname",
+                _connection_info(restore_dsn)["dbname"],
                 str(backup_path),
             ],
             restore_dsn,
