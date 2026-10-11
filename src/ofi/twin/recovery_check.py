@@ -337,12 +337,19 @@ def main() -> int:
     try:
         report = run_recovery_check(args.source_dsn, args.restore_dsn)
     except Exception as exc:
+        # Our own validation errors are useful and contain no connection string.
+        # Driver exceptions can expose endpoint details, so redact their messages.
+        message = (
+            str(exc)
+            if isinstance(exc, (RuntimeError, ValueError))
+            else "Database utility or connection operation failed; details withheld."
+        )
         print(
             json.dumps(
                 {
                     "status": "failed",
                     "error_type": type(exc).__name__,
-                    "message": str(exc),
+                    "message": message,
                 },
                 sort_keys=True,
             ),
