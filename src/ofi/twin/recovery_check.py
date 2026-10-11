@@ -162,8 +162,8 @@ def _data_fingerprints(
                     """
                     SELECT md5(
                         COALESCE(
-                            string_agg(to_jsonb(row_data)::text, E'\\n'
-                                       ORDER BY to_jsonb(row_data)::text),
+                            string_agg((to_jsonb(row_data) - 'tenant_id')::text, E'\\n'
+                                       ORDER BY (to_jsonb(row_data) - 'tenant_id')::text),
                             ''
                         )
                     )
