@@ -93,6 +93,8 @@ def test_postgres_farm_case_policy_assessment_and_consent_are_tenant_scoped():
         farm_store.upsert(takeover)
     assert farm_store.get(farm_id).tenant_id == tenant_a
     assert farm_store.get(farm_id).farmer_id == farmer_id
+    with pytest.raises(KeyError):
+        farm_store.get(farm_id, tenant_id=tenant_b)
     with pytest.raises(psycopg.Error, match="tenant binding is immutable"):
         with psycopg.connect(DATABASE_URL) as connection:
             connection.execute(
