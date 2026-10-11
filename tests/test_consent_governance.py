@@ -14,9 +14,12 @@ from ofi.services.execution_gateway import (
     ActorIdentity,
     ConsentGrant,
     ExecutionError,
+    ExecutionRequest,
     MockServiceAdapter,
     ServiceExecutionGateway,
 )
+from ofi.services.service_transaction import ExecutionAttempt, ServiceTransaction
+from ofi.services.transaction_repository import InMemoryTransactionRepository
 
 
 def action(service="soil_test"):
@@ -242,3 +245,64 @@ def test_gateway_rejects_consent_snapshot_for_another_actor():
             actor=ActorIdentity("farmer-2", "farmer"),
             consent=stored,
         )
+
+
+
+def test_revocation_before_prepared_attempt_dispatch_prevents_provider_call():
+    actor = ActorIdentity("farmer-1", "farmer")
+    consent = grant(actor_id=actor.actor_id)
+    store = InMemoryConsentRepository()
+    store.create(consent)
+
+    request_action = action()
+    route = ActionRouter().route_action(request_action)
+    transaction_id = f"txn:{uuid4().hex}"
+    attempt_id = f"attempt:{uuid4().hex}"
+    now = datetime.now(timezone.utc)
+    transactions = InMemoryTransactionRepository()
+    transactions.create(
+        ServiceTransaction(
+            transaction_id=transaction_id,
+            idempotency_key=f"dispatch:{uuid4().hex}",
+            request_fingerprint=f"request:{uuid4().hex}",
+            action_id=request_action.id,
+            provider_id="lab-01",
+            status="submitted",
+        )
+    )
+    transactions.create_attempt(
+        ExecutionAttempt(
+            attempt_id=attempt_id,
+            transaction_id=transaction_id,
+            attempt_number=1,
+            provider_id="lab-01",
+            status="ready",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    adapter = MockServiceAdapter("soil_test", provider_id="lab-01")
+    gateway = ServiceExecutionGateway(
+        [adapter],
+        transaction_repository=transactions,
+        consent_repository=store,
+    )
+    execution_request = ExecutionRequest(
+        action=request_action,
+        route=route,
+        actor=actor,
+        consent=consent,
+        idempotency_key=f"dispatch:{uuid4().hex}",
+        provider_id="lab-01",
+        transaction_id=transaction_id,
+        attempt_id=attempt_id,
+    )
+
+    store.revoke(consent.consent_id, actor_id=actor.actor_id)
+    with pytest.raises(ExecutionError, match="consent is not active"):
+        gateway.dispatch_ready_attempt(
+            attempt_id=attempt_id,
+            request=execution_request,
+        )
+
+    assert transactions.list_attempts(transaction_id)[0].status == "ready"
