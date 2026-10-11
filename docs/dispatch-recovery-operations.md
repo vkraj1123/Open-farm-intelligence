@@ -123,6 +123,13 @@ These are routing recommendations, not a configured alert integration. Configure
 
 The health event intentionally excludes provider IDs, transaction IDs, attempt IDs, raw provider response bodies, and exception text. Keep high-cardinality identifiers and sensitive provider details out of metric labels and alert titles. If per-attempt investigation is required, use the access-controlled audit/reconciliation records rather than widening the aggregate health event.
 
+## 4A. Consent boundary for external service execution
+
+A consent grant is actor-bound and authorizes only its explicit service scopes. The execution gateway verifies the request's actor and route against the consent record and rejects denied, future-dated, expired, or revoked grants. When a PostgreSQL consent repository is configured, stored grant terms and revocation state are authoritative; caller-held snapshots do not widen permissions. Use the shared `PostgresConsentRepository` for multi-process deployments rather than the process-local in-memory reference store.
+
+Consent should be created only after a trusted application authenticates the person and captures the scope, purpose, and expiry they affirmatively accepted. This repository change supplies the durable ledger and enforcement primitives, not a public issuance endpoint or consent user interface. A revocation prevents subsequent checks from authorizing new submissions; it cannot recall an action already sent to a provider. A production design should document the small race window between final authorization and the external network call, and where required use a stronger shared transaction/locking design for the consent check and dispatch claim.
+
+
 ## 5. Ambiguous outcomes and safe recovery
 
 The following states must remain distinct:

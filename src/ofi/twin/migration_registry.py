@@ -45,6 +45,11 @@ MIGRATIONS = (
         name="case_record_version_nonnegative_constraint",
         filename="002_case_record_version_constraint.sql",
     ),
+    SchemaMigration(
+        version=3,
+        name="consent_scopes_and_revocation_ledger",
+        filename="003_consent_scopes_and_revocation.sql",
+    ),
 )
 
 versions = tuple(item.version for item in MIGRATIONS)

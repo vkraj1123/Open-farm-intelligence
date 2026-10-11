@@ -14,7 +14,7 @@ from psycopg import sql
 from psycopg.conninfo import make_conninfo
 
 from ofi.twin.migrate import apply_schema
-from ofi.twin.migration_registry import CURRENT_SCHEMA_VERSION
+from ofi.twin.migration_registry import CURRENT_SCHEMA_VERSION, MIGRATIONS
 from ofi.twin.recovery_check import run_recovery_check
 from ofi.twin.recovery_drill import run_recovery_drill
 
@@ -105,11 +105,27 @@ def seed_v1_source(dsn):
     }
 
 
-def test_backup_restore_and_v1_to_v2_upgrade_preserve_source_data():
+def seed_v2_source(dsn):
+    """Seed representative rows in schema v2, immediately before migration 003."""
+    ids = seed_v1_source(dsn)
+    migration = MIGRATIONS[1]
+    with psycopg.connect(dsn) as connection:
+        connection.execute(migration.sql)
+        connection.execute(
+            """
+            INSERT INTO ofi_schema_migrations (version, name, checksum)
+            VALUES (%s, %s, %s)
+            """,
+            (migration.version, migration.name, migration.checksum),
+        )
+    return ids
+
+
+def test_backup_restore_and_v2_to_v3_upgrade_preserve_source_data():
     source_name, source_dsn, admin_dsn = create_database(DATABASE_URL, "ofi_recovery_source")
     restore_name, restore_dsn, _ = create_database(DATABASE_URL, "ofi_recovery_target")
     try:
-        record_ids = seed_v1_source(source_dsn)
+        record_ids = seed_v2_source(source_dsn)
         report = run_recovery_check(source_dsn, restore_dsn)
 
         assert report["status"] == "passed"
