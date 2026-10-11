@@ -55,7 +55,7 @@ The registry validates contiguous numbering and unique migration names/filenames
 
 ## Consent grants, scopes and revocation
 
-The HTTP consent lifecycle is described in [Authenticated consent API](consent-api.md). Its new routes use a verified bearer JWT and derive the grant owner from the signed \`sub\` claim; they never accept a request-body actor ID as identity. This authentication protection currently applies to the consent lifecycle routes only. The existing case/farm/evidence endpoints are not yet protected by this authentication boundary, so do not expose the wider API to untrusted networks.
+The HTTP consent lifecycle is described in [Authenticated consent API](consent-api.md). Its new routes use a verified bearer JWT and derive the grant owner from the signed `sub` claim; they never accept a request-body actor ID as identity. This authentication protection currently applies to the consent lifecycle routes only. The existing case/farm/evidence endpoints are not yet protected by this authentication boundary, so do not expose the wider API to untrusted networks.
 
 Migration v3 creates `ofi_consent_grants`, the authoritative PostgreSQL consent ledger. A grant records an opaque consent ID, actor ID, purpose, exact service scopes, grant time, optional expiry and optional revocation time. The database rejects changes to the original grant terms and deletion of consent records; only the first revocation timestamp can be set. Readiness includes this table, so a database that has a current migration marker but lacks the ledger does not pass `/ready`.
 

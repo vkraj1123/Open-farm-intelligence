@@ -1413,6 +1413,7 @@ The core closed-loop architecture is implemented and tested, but the project is 
 - [ ] Purpose limitation across all downstream data uses
 - [x] Consent expiry and timezone-aware validity
 - [x] Actor-bound revocation with durable PostgreSQL state
+- [x] Authenticated consent lifecycle API (create, retrieve, revoke)
 - [ ] Encryption at rest
 - [ ] Encryption in transit configuration
 - [ ] Audit log
@@ -1422,7 +1423,7 @@ The core closed-loop architecture is implemented and tested, but the project is 
 - [ ] Privacy/data-sharing policy
 - [ ] Security audit
 
-**Status: 🟡 Consent scope/expiry/revocation primitives are implemented; authenticated grant issuance, tenant isolation, purpose enforcement across downstream data use, RBAC and broader security review remain**
+**Status: 🟡 Scoped consent, expiry, durable revocation, and an authenticated consent API are implemented. Farmer-facing consent UX, tenant isolation, purpose enforcement across all downstream data uses, RBAC, authentication for the wider API, and broader security review remain**
 
 ---
 
@@ -2325,8 +2326,27 @@ The execution gateway now checks that the authenticated actor matches the grant 
 | Durable revocation | Implemented and PostgreSQL-tested | `PostgresConsentRepository` supports create/get/revoke; revocation is bound to the owning actor and stored grant ID |
 | Immutable grant terms | Enforced in PostgreSQL | Only the first revocation timestamp can change; consent records cannot be deleted |
 | Execution enforcement | Implemented and regression-tested | Applies at submission and prepared-attempt dispatch; cannot cancel an action already sent or in flight |
-| Consent issuance UX/API | Not implemented | A trusted app flow must authenticate the actor, capture affirmative permission, and create the grant; do not treat a client-supplied actor ID as proof of identity |
+| Authenticated consent API | Implemented; farmer-facing UX remains open | `POST /consents`, `GET /consents/{consent_id}`, and `DELETE /consents/{consent_id}` require a verified bearer JWT; the signed `sub` is the actor, and creation requires `affirmative: true` plus unique explicit scopes. The other case/farm/evidence routes are not yet protected by this auth layer |
 | Multi-tenant isolation/RBAC | Not completed | Tenant-level access control, purpose limitation across all downstream data use, key/role design, and broader security review remain |
 | Production deployment | Not demonstrated | Use a shared durable repository; the in-memory repository is only a test/single-process development reference |
 
 **Verification:** PR #63 passed standard CI ([run #714](https://github.com/vkraj1123/Open-farm-intelligence/actions/runs/38100581281)) and PostgreSQL-backed CI ([run #849](https://github.com/vkraj1123/Open-farm-intelligence/actions/runs/38100581299)). The PostgreSQL suite covers migration v3, consent-ledger immutability/revocation, and the recovery harness upgrading a v2 source to v3. These tests verify code and database behavior; they do not demonstrate that a real farmer-facing consent capture flow or multi-tenant security review exists.
+
+
+# 55. Authenticated consent lifecycle API
+
+PR [#65](https://github.com/vkraj1123/Open-farm-intelligence/pull/65) added the first authenticated HTTP lifecycle for consent grants and was merged to `main` as [`52053cc5d9a150f0cb1b320ef01e2dfb7dc5c0eb`](https://github.com/vkraj1123/Open-farm-intelligence/commit/52053cc5d9a150f0cb1b320ef01e2dfb7dc5c0eb).
+
+The new `src/ofi/api_auth.py` verifier accepts compact HS256 JWTs only. It checks the HMAC signature, exact configured issuer and audience, a non-empty subject, a supported role, issued-at and expiry claims, optional not-before time, and a maximum 24-hour token lifetime. It requires `OFI_AUTH_HMAC_SECRET` (at least 32 UTF-8 bytes), `OFI_AUTH_ISSUER`, and `OFI_AUTH_AUDIENCE`; missing configuration fails closed. OFI validates tokens but does not issue them, so deployments must integrate a trusted issuer and protect/rotate secrets.
+
+| Capability | Status | Boundary |
+|---|---|---|
+| Grant creation | Implemented and tested | `POST /consents`; farmer/cultivator/owner role only; explicit `affirmative: true`, purpose and unique scopes required |
+| Actor binding | Implemented and tested | The JWT `sub` claim supplies the owner; body-supplied identity fields are rejected |
+| Owner-only retrieval | Implemented and tested | `GET /consents/{consent_id}`; another actor receives the same 404 response as an unknown grant |
+| Actor-bound revocation | Implemented and tested | `DELETE /consents/{consent_id}` records revocation without deleting the grant |
+| Persistence | Configuration-dependent | PostgreSQL ledger when `OFI_DATABASE_URL` is set; otherwise process-local memory, which is not durable across restarts or processes |
+| Authentication for other routes | Not implemented | Existing case, farm, evidence and assessment routes remain outside this JWT dependency; do not expose the wider API to untrusted networks |
+| Tenant isolation, full RBAC and purpose limitation | Not completed | Requires resource-level enforcement and broader review; this API increment does not claim those controls |
+
+**Verification:** PR #65 passed the standard workflow ([run #726](https://github.com/vkraj1123/Open-farm-intelligence/actions/runs/38101451663)) and PostgreSQL-backed workflow ([run #861](https://github.com/vkraj1123/Open-farm-intelligence/actions/runs/38101451611)). The tests exercise token validation, configuration fail-closed behavior, affirmative scoped grants, cross-actor denial, and revocation. They do not demonstrate a real farmer-facing interface, production token issuer, deployment key rotation, or tenant-wide access control.
