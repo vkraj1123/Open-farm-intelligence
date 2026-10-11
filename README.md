@@ -2335,17 +2335,17 @@ The execution gateway now checks that the authenticated actor matches the grant 
 
 # 55. Authenticated consent lifecycle API
 
-PR [#65](https://github.com/vkraj1123/Open-farm-intelligence/pull/65) added the first authenticated HTTP lifecycle for consent grants and was merged to \`main\` as [\`52053cc5d9a150f0cb1b320ef01e2dfb7dc5c0eb\`](https://github.com/vkraj1123/Open-farm-intelligence/commit/52053cc5d9a150f0cb1b320ef01e2dfb7dc5c0eb).
+PR [#65](https://github.com/vkraj1123/Open-farm-intelligence/pull/65) added the first authenticated HTTP lifecycle for consent grants and was merged to `main` as [`52053cc5d9a150f0cb1b320ef01e2dfb7dc5c0eb`](https://github.com/vkraj1123/Open-farm-intelligence/commit/52053cc5d9a150f0cb1b320ef01e2dfb7dc5c0eb).
 
-The new \`src/ofi/api_auth.py\` verifier accepts compact HS256 JWTs only. It checks the HMAC signature, exact configured issuer and audience, a non-empty subject, a supported role, issued-at and expiry claims, optional not-before time, and a maximum 24-hour token lifetime. It requires \`OFI_AUTH_HMAC_SECRET\` (at least 32 UTF-8 bytes), \`OFI_AUTH_ISSUER\`, and \`OFI_AUTH_AUDIENCE\`; missing configuration fails closed. OFI validates tokens but does not issue them, so deployments must integrate a trusted issuer and protect/rotate secrets.
+The new `src/ofi/api_auth.py` verifier accepts compact HS256 JWTs only. It checks the HMAC signature, exact configured issuer and audience, a non-empty subject, a supported role, issued-at and expiry claims, optional not-before time, and a maximum 24-hour token lifetime. It requires `OFI_AUTH_HMAC_SECRET` (at least 32 UTF-8 bytes), `OFI_AUTH_ISSUER`, and `OFI_AUTH_AUDIENCE`; missing configuration fails closed. OFI validates tokens but does not issue them, so deployments must integrate a trusted issuer and protect/rotate secrets.
 
 | Capability | Status | Boundary |
 |---|---|---|
-| Grant creation | Implemented and tested | \`POST /consents\`; farmer/cultivator/owner role only; explicit \`affirmative: true\`, purpose and unique scopes required |
-| Actor binding | Implemented and tested | The JWT \`sub\` claim supplies the owner; body-supplied identity fields are rejected |
-| Owner-only retrieval | Implemented and tested | \`GET /consents/{consent_id}\`; another actor receives the same 404 response as an unknown grant |
-| Actor-bound revocation | Implemented and tested | \`DELETE /consents/{consent_id}\` records revocation without deleting the grant |
-| Persistence | Configuration-dependent | PostgreSQL ledger when \`OFI_DATABASE_URL\` is set; otherwise process-local memory, which is not durable across restarts or processes |
+| Grant creation | Implemented and tested | `POST /consents`; farmer/cultivator/owner role only; explicit `affirmative: true`, purpose and unique scopes required |
+| Actor binding | Implemented and tested | The JWT `sub` claim supplies the owner; body-supplied identity fields are rejected |
+| Owner-only retrieval | Implemented and tested | `GET /consents/{consent_id}`; another actor receives the same 404 response as an unknown grant |
+| Actor-bound revocation | Implemented and tested | `DELETE /consents/{consent_id}` records revocation without deleting the grant |
+| Persistence | Configuration-dependent | PostgreSQL ledger when `OFI_DATABASE_URL` is set; otherwise process-local memory, which is not durable across restarts or processes |
 | Authentication for other routes | Not implemented | Existing case, farm, evidence and assessment routes remain outside this JWT dependency; do not expose the wider API to untrusted networks |
 | Tenant isolation, full RBAC and purpose limitation | Not completed | Requires resource-level enforcement and broader review; this API increment does not claim those controls |
 
