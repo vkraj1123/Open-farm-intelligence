@@ -10,7 +10,9 @@ identity. Configure these deployment environment variables:
 - `OFI_AUTH_AUDIENCE`: the exact JWT audience accepted by OFI.
 
 The trusted issuer must sign compact JWTs with HS256 and include `sub`
-(actor ID), `role`, `iss`, `aud`, `iat`, and `exp`. The verifier rejects
+(actor ID), `role`, `tenant_id`, `iss`, `aud`, `iat`, and `exp`.
+The issuer must authorize the actor's membership in the named tenant before
+minting the token. The verifier rejects
 other algorithms, invalid signatures, expired/future-issued tokens, tokens
 with the wrong issuer/audience, unsupported roles, and tokens whose lifetime
 exceeds 24 hours. OFI validates tokens but does not issue them; use a trusted
@@ -29,28 +31,36 @@ Consent routes are:
 Without auth configuration, these routes fail closed with HTTP 503. Missing or
 invalid credentials receive HTTP 401; a role that cannot issue/revoke consent
 receives HTTP 403; a missing or another actor's grant is reported as HTTP 404.
-Grant records are process-local when `OFI_DATABASE_URL` is unset; production
-must use PostgreSQL with migration v3 applied.
+Every consent request must carry the signed `tenant_id` claim; the tenant is
+not accepted from the request body. Grant records are process-local when
+`OFI_DATABASE_URL` is unset; production must use PostgreSQL with migration v4
+applied.
 
 ## Resource access and remaining limits
 
-The consent API is part of a broader JWT boundary for case/farm/evidence and
-evidence-assessment routes. Those routes require authentication by default,
-except public `/health` and `/ready` endpoints. The signed actor may access a
-farm as its primary `farmer_id`, or as a currently valid land party with
-`verification: "verified"` and a `role` matching `owner` or `cultivator`.
-Cross-actor farm/case lookups return 404. Global evidence-comparison policy
-writes are limited to `agent`, `service_provider`, and `system` roles.
+The consent API is part of a broader tenant-aware JWT boundary for case/farm,
+evidence, evidence-assessment and policy routes. Those routes require a signed
+non-empty `tenant_id` claim by default, except public `/health` and `/ready`
+endpoints. A farm is accessible only within the token's tenant and by its
+primary farmer or a currently valid land party with `verification: "verified"`
+and a `role` matching `owner` or `cultivator`. Policy versions are separately
+namespaced by tenant; consent and assessment lookups are tenant-filtered.
+Cross-tenant farm/case/consent lookups return 404. Global evidence-comparison
+policy writes are limited to `agent`, `service_provider`, and `system` roles.
 
 The resource guard can be disabled only with the explicit
 `OFI_RESOURCE_AUTH_ENABLED=false` setting, intended solely for isolated unit
 tests or a trusted local sandbox. It defaults to enabled; never disable it on
 a reachable deployment. Missing JWT configuration fails closed with HTTP 503.
 
-This is still not complete multi-tenancy or full API security. It does not yet
-define organization/tenant IDs or membership, complete RBAC, purpose limitation
-for downstream data use, audit monitoring, rate limiting, TLS enforcement, key
-rotation automation, or a security review. OFI validates HS256 tokens but does
-not issue them; connect a trusted issuer and protect the shared secret in a
-deployment secret manager. A farmer-facing consent UI and production issuer
-integration remain deployment/product work.
+Migration v4 adds tenant columns and storage scoping to farms, cases, consent
+grants, evidence policy versions and assessments. Existing rows are backfilled
+to `legacy:default`; that label is not an organization and must not be granted
+to ordinary users. Existing records need an approved, audited ownership mapping
+before multi-tenant production cutover. Tenant membership is not managed inside
+OFI yet—the trusted token issuer must validate membership before signing the
+`tenant_id` claim. OFI still lacks a tenant membership registry/lifecycle,
+complete RBAC, downstream purpose limitation, audit monitoring, rate limiting,
+TLS enforcement, automated key rotation, and an independent security review.
+OFI validates HS256 tokens but does not issue them; keep the shared secret in a
+deployment secret manager. A farmer-facing consent UI remains open.
