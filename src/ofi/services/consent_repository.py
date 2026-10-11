@@ -24,7 +24,7 @@ class ConsentRepository(Protocol):
         """Persist one immutable, not-yet-revoked grant."""
         ...
 
-    def get(self, consent_id: str) -> ConsentGrant:
+    def get(self, consent_id: str, tenant_id: str | None = None) -> ConsentGrant:
         """Return the authoritative grant or raise KeyError."""
         ...
 
@@ -33,6 +33,7 @@ class ConsentRepository(Protocol):
         consent_id: str,
         *,
         actor_id: str,
+        tenant_id: str | None = None,
         revoked_at: datetime | None = None,
     ) -> ConsentGrant:
         """Revoke for the owning actor; first revocation timestamp wins."""
@@ -65,18 +66,22 @@ class InMemoryConsentRepository:
             self._grants[grant.consent_id] = grant
             return grant
 
-    def get(self, consent_id: str) -> ConsentGrant:
+    def get(self, consent_id: str, tenant_id: str | None = None) -> ConsentGrant:
         with self._lock:
             try:
-                return self._grants[consent_id]
+                grant = self._grants[consent_id]
             except KeyError as exc:
                 raise KeyError("consent grant not found") from exc
+            if tenant_id is not None and grant.tenant_id != tenant_id:
+                raise KeyError("consent grant not found")
+            return grant
 
     def revoke(
         self,
         consent_id: str,
         *,
         actor_id: str,
+        tenant_id: str | None = None,
         revoked_at: datetime | None = None,
     ) -> ConsentGrant:
         moment = revoked_at or datetime.now(timezone.utc)
@@ -84,7 +89,7 @@ class InMemoryConsentRepository:
             raise ValueError("revoked_at must be timezone-aware")
         with self._lock:
             try:
-                grant = self._grants[consent_id]
+                grant = self.get(consent_id, tenant_id=tenant_id)
             except KeyError as exc:
                 raise KeyError("consent grant not found") from exc
             if grant.actor_id != actor_id:
@@ -118,6 +123,7 @@ class PostgresConsentRepository:
             granted_at,
             expires_at,
             revoked_at,
+            tenant_id,
         ) = row
         return ConsentGrant(
             actor_id=actor_id,
@@ -128,6 +134,7 @@ class PostgresConsentRepository:
             scopes=tuple(scopes or ()),
             consent_id=consent_id,
             revoked_at=revoked_at,
+            tenant_id=tenant_id,
         )
 
     def create(self, grant: ConsentGrant) -> ConsentGrant:
@@ -139,15 +146,16 @@ class PostgresConsentRepository:
             row = connection.execute(
                 """
                 INSERT INTO ofi_consent_grants
-                    (consent_id, actor_id, purpose, status, scopes,
+                    (consent_id, tenant_id, actor_id, purpose, status, scopes,
                      granted_at, expires_at, revoked_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, NULL)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NULL)
                 ON CONFLICT (consent_id) DO NOTHING
                 RETURNING consent_id, actor_id, purpose, status, scopes,
-                          granted_at, expires_at, revoked_at
+                          granted_at, expires_at, revoked_at, tenant_id
                 """,
                 (
                     grant.consent_id,
+                    grant.tenant_id,
                     grant.actor_id,
                     grant.purpose,
                     grant.status,
@@ -166,17 +174,28 @@ class PostgresConsentRepository:
             )
         return existing
 
-    def get(self, consent_id: str) -> ConsentGrant:
+    def get(self, consent_id: str, tenant_id: str | None = None) -> ConsentGrant:
         with self._connection_factory() as connection:
-            row = connection.execute(
-                """
-                SELECT consent_id, actor_id, purpose, status, scopes,
-                       granted_at, expires_at, revoked_at
-                FROM ofi_consent_grants
-                WHERE consent_id = %s
-                """,
-                (consent_id,),
-            ).fetchone()
+            if tenant_id is None:
+                row = connection.execute(
+                    """
+                    SELECT consent_id, actor_id, purpose, status, scopes,
+                           granted_at, expires_at, revoked_at, tenant_id
+                    FROM ofi_consent_grants
+                    WHERE consent_id = %s
+                    """,
+                    (consent_id,),
+                ).fetchone()
+            else:
+                row = connection.execute(
+                    """
+                    SELECT consent_id, actor_id, purpose, status, scopes,
+                           granted_at, expires_at, revoked_at, tenant_id
+                    FROM ofi_consent_grants
+                    WHERE consent_id = %s AND tenant_id = %s
+                    """,
+                    (consent_id, tenant_id),
+                ).fetchone()
         if row is None:
             raise KeyError("consent grant not found")
         return self._grant(row)
@@ -186,12 +205,13 @@ class PostgresConsentRepository:
         consent_id: str,
         *,
         actor_id: str,
+        tenant_id: str | None = None,
         revoked_at: datetime | None = None,
     ) -> ConsentGrant:
         moment = revoked_at or datetime.now(timezone.utc)
         if moment.tzinfo is None or moment.utcoffset() is None:
             raise ValueError("revoked_at must be timezone-aware")
-        current = self.get(consent_id)
+        current = self.get(consent_id, tenant_id=tenant_id)
         if current.actor_id != actor_id:
             raise KeyError("consent grant not found")
         # Validate the temporal rule before relying on PostgreSQL constraints.
@@ -202,10 +222,11 @@ class PostgresConsentRepository:
                 UPDATE ofi_consent_grants
                 SET revoked_at = COALESCE(revoked_at, %s)
                 WHERE consent_id = %s AND actor_id = %s
+                  AND (%s::text IS NULL OR tenant_id = %s)
                 RETURNING consent_id, actor_id, purpose, status, scopes,
-                          granted_at, expires_at, revoked_at
+                          granted_at, expires_at, revoked_at, tenant_id
                 """,
-                (moment, consent_id, actor_id),
+                (moment, consent_id, actor_id, tenant_id, tenant_id),
             ).fetchone()
         if row is None:
             # Avoid exposing another actor's grant-existence information.
