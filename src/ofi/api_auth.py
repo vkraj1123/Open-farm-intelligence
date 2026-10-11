@@ -1,6 +1,8 @@
 """Fail-closed HS256 bearer-token authentication for trusted API boundaries.
 
 Tokens must be minted by a trusted issuer that holds OFI_AUTH_HMAC_SECRET.
+Resource and consent routes require a signed tenant_id claim; the issuer must
+authorize the actor's membership before issuing a token for that tenant.
 This module validates identity claims; it does not issue tokens or replace an
 OIDC identity provider. Keep the secret in a deployment secret manager.
 """
