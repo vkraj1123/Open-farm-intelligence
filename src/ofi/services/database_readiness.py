@@ -30,6 +30,8 @@ REQUIRED_RELATIONS = (
     "evidence_comparison_policy_versions",
     "evidence_comparison_assessments",
     "ofi_consent_grants",
+    "ofi_tenant_memberships",
+    "ofi_tenant_membership_events",
 )
 
 

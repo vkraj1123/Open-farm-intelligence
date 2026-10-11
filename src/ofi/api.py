@@ -4,7 +4,7 @@ import os
 from uuid import uuid4
 from typing import Literal, get_args
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
@@ -22,6 +22,14 @@ from ofi.api_auth import require_authenticated_actor
 from ofi.services.database_readiness import check_persistence_readiness
 from ofi.services.evidence_alignment import align_observations
 from ofi.services.unit_of_work import PostgresFarmCaseUnitOfWork
+from ofi.services.tenant_membership_repository import (
+    InMemoryTenantMembershipRepository,
+    LastTenantAdminError,
+    MembershipRole,
+    MembershipStatus,
+    PostgresTenantMembershipRepository,
+    TenantMembershipRepository,
+)
 from ofi.services.evidence_comparison import MetricComparisonRule, compare_aligned_observations
 from ofi.services.evidence_comparison_ledger import (
     EvidenceComparisonAssessment,
@@ -71,6 +79,17 @@ def _build_consent_repository(connection_factory=_UNSET_CONNECTION_FACTORY) -> C
     return PostgresConsentRepository(connection_factory)
 
 
+def _build_tenant_membership_repository(
+    connection_factory=_UNSET_CONNECTION_FACTORY,
+) -> TenantMembershipRepository:
+    """Use durable membership state whenever durable application storage is configured."""
+    if connection_factory is _UNSET_CONNECTION_FACTORY:
+        connection_factory = _build_postgres_connection_factory()
+    if connection_factory is None:
+        return InMemoryTenantMembershipRepository()
+    return PostgresTenantMembershipRepository(connection_factory)
+
+
 app = FastAPI(
     title="Open Farm Intelligence",
     version="0.2.0",
@@ -83,6 +102,7 @@ case_manager = _build_case_manager(postgres_connection_factory)
 provider_registry = default_mock_registry()
 
 consent_repository = _build_consent_repository(postgres_connection_factory)
+tenant_membership_repository = _build_tenant_membership_repository(postgres_connection_factory)
 
 
 class ConsentGrantRequest(BaseModel):
@@ -121,6 +141,86 @@ class ConsentGrantRequest(BaseModel):
         return value
 
 
+class TenantMembershipGrantRequest(BaseModel):
+    """Create or reactivate a tenant membership; tenant_id comes only from the route."""
+
+    model_config = {"extra": "forbid"}
+
+    actor_id: str = Field(min_length=1, max_length=512)
+    membership_role: Literal["tenant_admin", "member"] = "member"
+
+    @field_validator("actor_id")
+    @classmethod
+    def actor_id_must_not_be_blank(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized or len(normalized) > 512:
+            raise ValueError("actor_id must be non-empty and at most 512 characters")
+        return normalized
+
+
+class TenantMembershipUpdateRequest(BaseModel):
+    """Change one existing membership's role and/or active status."""
+
+    model_config = {"extra": "forbid"}
+
+    membership_role: Literal["tenant_admin", "member"]
+    status: Literal["active", "suspended", "revoked"]
+
+
+def _membership_payload(membership) -> dict:
+    return {
+        "tenant_id": membership.tenant_id,
+        "actor_id": membership.actor_id,
+        "membership_role": membership.membership_role,
+        "status": membership.status,
+        "created_at": membership.created_at.isoformat(),
+        "updated_at": membership.updated_at.isoformat(),
+        "created_by": membership.created_by,
+        "updated_by": membership.updated_by,
+    }
+
+
+def _membership_enforcement_enabled() -> bool:
+    mode = os.getenv("OFI_TENANT_MEMBERSHIP_ENFORCEMENT", "required").strip().lower()
+    if mode == "required":
+        return True
+    if mode == "disabled" and os.getenv("OFI_ENV", "").strip().lower() == "test":
+        return False
+    raise HTTPException(
+        status_code=503,
+        detail="tenant membership enforcement configuration is invalid",
+    )
+
+
+def _require_active_tenant_membership(actor: ActorIdentity) -> None:
+    """Check current membership state, not only the tenant claim signed into a token."""
+    if not actor.tenant_id:
+        raise HTTPException(status_code=401, detail="a tenant-scoped bearer token is required")
+    if not _membership_enforcement_enabled() or actor.role == "system":
+        return
+    try:
+        tenant_membership_repository.get_active(actor.tenant_id, actor.actor_id)
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=403,
+            detail="active tenant membership is required",
+        ) from exc
+    except Exception as exc:
+        # The authorization decision is unavailable; do not fall back to the signed claim.
+        raise HTTPException(
+            status_code=503,
+            detail="tenant membership verification is unavailable",
+        ) from exc
+
+
+def _authenticated_tenant_actor(
+    actor: ActorIdentity = Depends(require_authenticated_actor),
+) -> ActorIdentity:
+    """Verified token identity plus current membership for consent boundaries."""
+    _require_active_tenant_membership(actor)
+    return actor
+
+
 def _require_consent_subject(actor: ActorIdentity) -> None:
     if not actor.tenant_id:
         raise HTTPException(
@@ -152,7 +252,7 @@ def _consent_payload(grant: ConsentGrant) -> dict:
 @app.post("/consents", status_code=201)
 def create_consent(
     request: ConsentGrantRequest,
-    actor: ActorIdentity = Depends(require_authenticated_actor),
+    actor: ActorIdentity = Depends(_authenticated_tenant_actor),
 ):
     """Create a scoped grant for the verified actor after affirmative consent."""
     _require_consent_subject(actor)
@@ -176,7 +276,7 @@ def create_consent(
 @app.get("/consents/{consent_id}")
 def get_consent(
     consent_id: str,
-    actor: ActorIdentity = Depends(require_authenticated_actor),
+    actor: ActorIdentity = Depends(_authenticated_tenant_actor),
 ):
     """Return only a grant owned by the verified actor."""
     _require_consent_subject(actor)
@@ -192,7 +292,7 @@ def get_consent(
 @app.delete("/consents/{consent_id}")
 def revoke_consent(
     consent_id: str,
-    actor: ActorIdentity = Depends(require_authenticated_actor),
+    actor: ActorIdentity = Depends(_authenticated_tenant_actor),
 ):
     """Record actor-bound revocation without deleting the consent record."""
     _require_consent_subject(actor)
@@ -424,7 +524,12 @@ def _resource_actor(
     """Require verified identity by default; the opt-out is for isolated tests only."""
     mode = os.getenv("OFI_RESOURCE_AUTH_ENABLED", "true").strip().lower()
     if mode in {"0", "false", "no", "off"}:
-        return None
+        if os.getenv("OFI_ENV", "").strip().lower() == "test":
+            return None
+        raise HTTPException(
+            status_code=503,
+            detail="resource authentication cannot be disabled outside test mode",
+        )
     if mode not in {"1", "true", "yes", "on"}:
         raise HTTPException(
             status_code=503,
@@ -437,6 +542,7 @@ def _resource_actor(
             detail="a tenant-scoped bearer token is required",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    _require_active_tenant_membership(actor)
     return actor
 
 
@@ -518,6 +624,139 @@ def _require_policy_manager(actor: ActorIdentity | None) -> None:
             status_code=403,
             detail="this role cannot manage global evidence-comparison policies",
         )
+
+
+def _require_tenant_membership_admin(
+    actor: ActorIdentity | None,
+    tenant_id: str,
+) -> bool:
+    """Authorize membership administration; returns True for the platform system role."""
+    normalized_tenant_id = tenant_id.strip() if isinstance(tenant_id, str) else ""
+    if not normalized_tenant_id or len(normalized_tenant_id) > 512:
+        raise HTTPException(status_code=422, detail="invalid tenant ID")
+    if actor is None:
+        raise HTTPException(status_code=401, detail="authenticated tenant administrator required")
+    if actor.role == "system":
+        return True
+    if actor.tenant_id != normalized_tenant_id:
+        raise HTTPException(status_code=404, detail="tenant not found")
+    try:
+        membership = tenant_membership_repository.get_active(
+            normalized_tenant_id, actor.actor_id
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=403, detail="tenant administrator role is required") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="tenant membership verification is unavailable") from exc
+    if membership.membership_role != "tenant_admin":
+        raise HTTPException(status_code=403, detail="tenant administrator role is required")
+    return False
+
+
+@app.post("/tenants/{tenant_id}/memberships", status_code=201)
+def grant_tenant_membership(
+    tenant_id: str,
+    request: TenantMembershipGrantRequest,
+    actor: ActorIdentity | None = Depends(_resource_actor),
+):
+    """Grant/reactivate a member; only platform system can grant tenant-admin role."""
+    platform_admin = _require_tenant_membership_admin(actor, tenant_id)
+    if request.membership_role == "tenant_admin" and not platform_admin:
+        raise HTTPException(status_code=403, detail="only platform system may grant tenant-admin role")
+    if not platform_admin:
+        try:
+            existing = tenant_membership_repository.get(tenant_id.strip(), request.actor_id)
+        except KeyError:
+            existing = None
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail="tenant membership lookup is unavailable") from exc
+        if existing is not None and existing.membership_role == "tenant_admin":
+            raise HTTPException(
+                status_code=403,
+                detail="only platform system may change tenant-administrator roles",
+            )
+    try:
+        membership = tenant_membership_repository.grant(
+            tenant_id.strip(), request.actor_id, request.membership_role,
+            granted_by=actor.actor_id,
+        )
+    except LastTenantAdminError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="tenant membership update is unavailable") from exc
+    return _membership_payload(membership)
+
+
+@app.get("/tenants/{tenant_id}/memberships")
+def list_tenant_memberships(
+    tenant_id: str,
+    actor: ActorIdentity | None = Depends(_resource_actor),
+):
+    """List memberships inside a tenant, visible only to its admins or platform system."""
+    _require_tenant_membership_admin(actor, tenant_id)
+    try:
+        items = tenant_membership_repository.list_for_tenant(tenant_id.strip())
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="tenant membership lookup is unavailable") from exc
+    return {"tenant_id": tenant_id.strip(), "memberships": [_membership_payload(item) for item in items]}
+
+
+@app.patch("/tenants/{tenant_id}/memberships/{member_actor_id}")
+def update_tenant_membership(
+    tenant_id: str,
+    member_actor_id: str,
+    request: TenantMembershipUpdateRequest,
+    actor: ActorIdentity | None = Depends(_resource_actor),
+):
+    """Suspend, revoke, reactivate or change a member role with an audited update."""
+    platform_admin = _require_tenant_membership_admin(actor, tenant_id)
+    if not platform_admin:
+        if request.membership_role != "member":
+            raise HTTPException(status_code=403, detail="only platform system may change tenant-admin roles")
+        try:
+            target = tenant_membership_repository.get(tenant_id.strip(), member_actor_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="tenant membership not found") from exc
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail="tenant membership lookup is unavailable") from exc
+        if target.membership_role == "tenant_admin":
+            raise HTTPException(status_code=403, detail="only platform system may manage tenant administrators")
+    try:
+        membership = tenant_membership_repository.update(
+            tenant_id.strip(), member_actor_id, request.membership_role, request.status,
+            changed_by=actor.actor_id,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="tenant membership not found") from exc
+    except LastTenantAdminError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="tenant membership update is unavailable") from exc
+    return _membership_payload(membership)
+
+
+@app.get("/tenants/{tenant_id}/membership-events")
+def list_tenant_membership_events(
+    tenant_id: str,
+    limit: int = Query(default=100, ge=1, le=500),
+    actor: ActorIdentity | None = Depends(_resource_actor),
+):
+    """Read the append-only membership administration audit log for an authorized tenant."""
+    _require_tenant_membership_admin(actor, tenant_id)
+    try:
+        events = tenant_membership_repository.list_events(tenant_id.strip(), limit=limit)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="tenant membership audit lookup is unavailable") from exc
+    return {"tenant_id": tenant_id.strip(), "events": [
+        {**event, "occurred_at": event["occurred_at"].isoformat()}
+        for event in events
+    ]}
 
 
 @app.post("/cases", response_model=CaseRecord)

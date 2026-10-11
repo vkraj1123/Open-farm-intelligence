@@ -55,6 +55,11 @@ MIGRATIONS = (
         name="tenant_scoped_data_boundaries",
         filename="004_tenant_scoped_data_boundaries.sql",
     ),
+    SchemaMigration(
+        version=5,
+        name="tenant_membership_registry_and_audit",
+        filename="005_tenant_membership_registry_and_audit.sql",
+    ),
 )
 
 versions = tuple(item.version for item in MIGRATIONS)
