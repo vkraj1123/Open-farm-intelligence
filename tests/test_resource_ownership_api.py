@@ -24,12 +24,17 @@ def _b64url(value: bytes) -> str:
     return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
 
 
-def make_token(actor_id: str, role: str = "farmer") -> str:
+def make_token(
+    actor_id: str,
+    role: str = "farmer",
+    tenant_id: str = "tenant-default",
+) -> str:
     now = time.time()
     header = {"alg": "HS256", "typ": "JWT"}
     claims = {
         "sub": actor_id,
         "role": role,
+        "tenant_id": tenant_id,
         "iss": ISSUER,
         "aud": AUDIENCE,
         "iat": now,
@@ -42,8 +47,12 @@ def make_token(actor_id: str, role: str = "farmer") -> str:
     return f"{encoded_header}.{encoded_claims}.{_b64url(signature)}"
 
 
-def auth(actor_id: str, role: str = "farmer") -> dict[str, str]:
-    return {"Authorization": f"Bearer {make_token(actor_id, role)}"}
+def auth(
+    actor_id: str,
+    role: str = "farmer",
+    tenant_id: str = "tenant-default",
+) -> dict[str, str]:
+    return {"Authorization": f"Bearer {make_token(actor_id, role, tenant_id)}"}
 
 
 @pytest.fixture
