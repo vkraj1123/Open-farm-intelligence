@@ -2426,3 +2426,20 @@ Farm/case API reads pass the tenant ID from the verified JWT into the repository
 | Broader tenant administration/RBAC | Not completed | Signed tenant claims still depend on trusted-issuer membership checks; membership lifecycle, full RBAC, audit and downstream purpose enforcement remain open |
 
 **Verification:** PR #71 passed [standard CI](https://github.com/vkraj1123/Open-farm-intelligence/actions/runs/38106617569) and [PostgreSQL-backed CI](https://github.com/vkraj1123/Open-farm-intelligence/actions/runs/38106617589). This verifies repository/API behavior in test environments; production identity-provider integration, tenant membership lifecycle and an independent security review remain deployment/product work.
+
+
+# 59. Tenant-scoped farm snapshots
+
+This follow-up extends the tenant boundary from farm lookup to the farm snapshot read itself. The FarmTwinRepository.snapshot() contract now accepts an optional keyword-only tenant_id. Both the in-memory store and PostGISFarmTwinStore validate the requested tenant at the storage boundary before assembling crop-cycle, land-party, contract and observation data.
+
+Authenticated API handlers now pass the verified token tenant to snapshot operations used by evidence collection, evidence-frame reporting, evidence comparison and persisted comparison assessment. The evidence-policy case-reasoning path also carries the same tenant scope through its case lookup, snapshot lookup and result retrieval. Existing trusted internal callers remain compatible by omitting the optional scope.
+
+| Capability | Status | Boundary |
+|---|---|---|
+| Tenant-scoped in-memory snapshot | Implemented in branch | A mismatched tenant raises the same KeyError as a missing farm |
+| Tenant-scoped PostgreSQL snapshot | Implemented in branch | Snapshot construction first requires a successful tenant-filtered farm query |
+| Authenticated evidence API integration | Implemented in branch | Signed tenant identity is propagated to farm snapshot reads |
+| Evidence-policy case reasoning | Implemented in branch | The case, farm snapshot and returned case record use the same tenant scope |
+| Regression coverage | Added; CI verification pending | Unit test plus PostgreSQL tenant-isolation test exercise matching and mismatched tenants |
+
+**Verification boundary:** passing repository tests will demonstrate application and database behavior in CI, not production token-issuer membership checks, live service-provider authorization, or a completed independent security audit. Keep the tenant-membership and legacy-data cutover limitations in section #57 in force.

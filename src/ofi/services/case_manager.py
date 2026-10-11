@@ -73,14 +73,18 @@ class CaseManager:
         *,
         max_age_by_kind: dict[str, timedelta],
         require_provenance: bool = False,
+        tenant_id: str | None = None,
     ) -> tuple[CaseRecord, EvidenceFrame]:
         """Reason only over observations eligible under an explicit caller policy.
 
         The ordinary reason() path remains unchanged. This opt-in path returns the
         exact frame used to filter inputs so callers can audit exclusions.
         """
-        record = self.store.get(case_id)
-        snapshot = self.farm_twin.snapshot(record.case.farm.id)
+        record = self.store.get(case_id, tenant_id=tenant_id)
+        snapshot = self.farm_twin.snapshot(
+            record.case.farm.id,
+            tenant_id=tenant_id,
+        )
         frame = align_observations(
             snapshot,
             record.case.observations,
@@ -105,7 +109,7 @@ class CaseManager:
                 "require_provenance": require_provenance,
             },
         )
-        return self.store.get(case_id), frame
+        return self.store.get(case_id, tenant_id=tenant_id), frame
 
     def collect_evidence(self, case_id: str, provider_registry, actor: str = "provider_registry") -> CaseRecord:
         with self.unit_of_work.atomic():

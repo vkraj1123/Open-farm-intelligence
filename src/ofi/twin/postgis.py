@@ -154,9 +154,16 @@ class PostGISFarmTwinStore(FarmTwinRepository):
                 if cur.fetchone() is None:
                     raise ValueError("observation ID is already bound to a different farm")
 
-    def snapshot(self, farm_id: str, as_of: datetime | None = None) -> FarmSnapshot:
+    def snapshot(
+        self,
+        farm_id: str,
+        as_of: datetime | None = None,
+        *,
+        tenant_id: str | None = None,
+    ) -> FarmSnapshot:
         moment = self._utc(as_of or datetime.now(timezone.utc))
-        farm = self.get(farm_id)
+        # The scoped SQL lookup must succeed before related farm records load.
+        farm = self.get(farm_id, tenant_id=tenant_id)
         with connection_scope(self._connection_factory) as conn:
             with conn.cursor() as cur:
                 cur.execute(

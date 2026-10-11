@@ -1,5 +1,7 @@
 from datetime import date, datetime, timedelta, timezone
 
+import pytest
+
 from ofi.domain.models import CropCycle, Farm, GeoPoint, LandParty, Parcel, ProductionContract
 from ofi.twin.farm_twin import FarmTwinStore
 
@@ -65,3 +67,17 @@ def test_snapshot_carries_parcel_boundary():
     twin.upsert(farm)
     snap = twin.snapshot("farm-1", datetime(2026, 7, 15, tzinfo=timezone.utc))
     assert len(snap.parcel_boundary) == 4
+
+
+
+def test_snapshot_rejects_a_different_tenant():
+    twin = FarmTwinStore()
+    farm = make_farm().model_copy(update={"tenant_id": "tenant-a"})
+    twin.upsert(farm)
+    as_of = datetime(2026, 7, 15, tzinfo=timezone.utc)
+
+    snapshot = twin.snapshot("farm-1", as_of, tenant_id="tenant-a")
+    assert snapshot.farm_id == "farm-1"
+
+    with pytest.raises(KeyError):
+        twin.snapshot("farm-1", as_of, tenant_id="tenant-b")

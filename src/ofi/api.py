@@ -618,7 +618,10 @@ def collect_evidence(
 ):
     _farm_or_404(farm_id, actor)
     try:
-        snapshot = case_manager.farm_twin.snapshot(farm_id)
+        snapshot = case_manager.farm_twin.snapshot(
+            farm_id,
+            tenant_id=actor.tenant_id if actor is not None else None,
+        )
     except (KeyError, ValueError) as exc:
         raise HTTPException(status_code=404, detail="farm snapshot not available") from exc
     observations = provider_registry.collect(snapshot)
@@ -636,7 +639,10 @@ def get_evidence_frame(
     """Return a deterministic evidence eligibility report for the current farm snapshot."""
     _farm_or_404(farm_id, actor)
     try:
-        snapshot = case_manager.farm_twin.snapshot(farm_id)
+        snapshot = case_manager.farm_twin.snapshot(
+            farm_id,
+            tenant_id=actor.tenant_id if actor is not None else None,
+        )
     except (KeyError, ValueError) as exc:
         raise HTTPException(status_code=404, detail="farm snapshot not available") from exc
 
@@ -687,6 +693,7 @@ def reason_with_evidence_policy(
                 for kind, seconds in request.max_age_seconds_by_kind.items()
             },
             require_provenance=request.require_provenance,
+            tenant_id=actor.tenant_id if actor is not None else None,
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="case not found") from exc
@@ -728,7 +735,10 @@ def compare_farm_evidence(
     """Assess pairwise comparability using explicit caller-owned rules."""
     _farm_or_404(farm_id, actor)
     try:
-        snapshot = case_manager.farm_twin.snapshot(farm_id)
+        snapshot = case_manager.farm_twin.snapshot(
+            farm_id,
+            tenant_id=actor.tenant_id if actor is not None else None,
+        )
     except (KeyError, ValueError) as exc:
         raise HTTPException(status_code=404, detail="farm snapshot not available") from exc
 
@@ -869,7 +879,10 @@ def create_evidence_comparison_assessment(
         raise HTTPException(status_code=404, detail="comparison policy version not found") from exc
 
     try:
-        snapshot = case_manager.farm_twin.snapshot(farm_id)
+        snapshot = case_manager.farm_twin.snapshot(
+            farm_id,
+            tenant_id=actor.tenant_id if actor is not None else None,
+        )
     except (KeyError, ValueError) as exc:
         raise HTTPException(status_code=404, detail="farm snapshot not available") from exc
 
