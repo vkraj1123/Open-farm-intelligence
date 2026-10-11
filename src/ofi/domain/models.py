@@ -48,6 +48,9 @@ class CropCycle(BaseModel):
 class Farm(BaseModel):
     id: str
     farmer_id: str
+    # Set from the verified JWT at the API boundary; None is retained only for
+    # legacy direct-domain callers before they pass through a tenant boundary.
+    tenant_id: str | None = None
     parcel: Parcel
     crop_cycle: CropCycle
     parties: list[LandParty] = Field(default_factory=list)
