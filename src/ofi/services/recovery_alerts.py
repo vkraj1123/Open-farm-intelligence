@@ -53,7 +53,7 @@ def _validated_payload(event: Mapping[str, Any]) -> dict[str, Any]:
     if event.get("event") != _EVENT_NAME:
         raise ValueError("unsupported recovery alert event")
     status = event.get("status")
-    if status not in _ALLOWED_STATUSES:
+    if not isinstance(status, str) or status not in _ALLOWED_STATUSES:
         raise ValueError("only warning or critical health events can be delivered")
 
     observed_at = event.get("observed_at")
@@ -82,7 +82,12 @@ def _validated_payload(event: Mapping[str, Any]) -> dict[str, Any]:
         severity = alert.get("severity")
         observed = alert.get("observed")
         threshold = alert.get("threshold")
-        if code not in _ALLOWED_ALERTS or severity not in _ALLOWED_STATUSES:
+        if (
+            not isinstance(code, str)
+            or code not in _ALLOWED_ALERTS
+            or not isinstance(severity, str)
+            or severity not in _ALLOWED_STATUSES
+        ):
             raise ValueError("recovery alert signal has an unsupported code or severity")
         if (
             isinstance(observed, bool)
