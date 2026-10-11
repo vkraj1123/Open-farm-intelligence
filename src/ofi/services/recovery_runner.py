@@ -15,6 +15,7 @@ import sys
 from datetime import timedelta
 from typing import Any, Mapping, TextIO
 
+from ofi.services.recovery_alerts import RecoveryAlertWebhook
 from ofi.services.recovery_health import RecoveryHealthThresholds
 from ofi.services.recovery_runtime import run_recovery_cycle
 
@@ -117,16 +118,55 @@ def run_from_environment(
         thresholds = _thresholds(env)
         stale_after_seconds = _positive_int("OFI_RECOVERY_STALE_AFTER_SECONDS", env)
         limit = _positive_int("OFI_RECOVERY_LIMIT", env)
+
+        alert_endpoint = env.get("OFI_RECOVERY_ALERT_ENDPOINT", "").strip()
+        alert_secret = env.get("OFI_RECOVERY_ALERT_SECRET", "")
+        alert_webhook = None
+        if bool(alert_endpoint) != bool(alert_secret):
+            raise ValueError(
+                "OFI_RECOVERY_ALERT_ENDPOINT and OFI_RECOVERY_ALERT_SECRET "
+                "must be configured together"
+            )
+        if alert_endpoint and alert_secret:
+            raw_timeout = env.get("OFI_RECOVERY_ALERT_TIMEOUT_SECONDS", "5").strip()
+            try:
+                alert_timeout = float(raw_timeout)
+            except ValueError as exc:
+                raise ValueError(
+                    "OFI_RECOVERY_ALERT_TIMEOUT_SECONDS must be a finite positive number"
+                ) from exc
+            alert_webhook = RecoveryAlertWebhook(
+                alert_endpoint,
+                alert_secret,
+                timeout_seconds=alert_timeout,
+            )
+
         factory = _load_factory(factory_spec)
         worker = factory()
         logger = _logger(out)
-        run_recovery_cycle(
+        result = run_recovery_cycle(
             worker,
             thresholds=thresholds,
             logger=logger,
             stale_after=timedelta(seconds=stale_after_seconds),
             limit=limit,
         )
+        if alert_webhook is not None and result.assessment.status in {"warning", "critical"}:
+            receipt = alert_webhook.send(result.event)
+            print(
+                json.dumps(
+                    {
+                        "event": "ofi.recovery.alert_delivery",
+                        "status": "delivered",
+                        "health_status": result.assessment.status,
+                        "event_id": receipt.event_id,
+                        "http_status": receipt.status_code,
+                    },
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
+                file=out,
+            )
         return 0
     except Exception as exc:
         payload = {
