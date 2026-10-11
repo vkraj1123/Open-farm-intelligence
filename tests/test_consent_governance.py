@@ -81,7 +81,8 @@ def test_consent_active_checks_grant_time_expiry_and_revocation():
     assert not future.active(as_of=now)
     assert not expired.active(as_of=now)
     assert not revoked.active(as_of=now)
-    assert revoked.active(as_of=now - timedelta(minutes=1))
+    assert revoked.revoked_at is not None
+    assert revoked.active(as_of=revoked.revoked_at - timedelta(seconds=1))
 
 
 def test_consent_rejects_naive_or_inconsistent_timestamps():
