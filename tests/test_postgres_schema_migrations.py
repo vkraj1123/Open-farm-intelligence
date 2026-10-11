@@ -43,6 +43,10 @@ def test_legacy_v1_bootstrap_applies_pending_v2_migration():
             "case_records_version_nonnegative"
         )
         connection.execute("DELETE FROM ofi_schema_migrations WHERE version = 2")
+        # Emulate the pre-checksum migration ledger schema from the last release.
+        connection.execute(
+            "ALTER TABLE ofi_schema_migrations DROP COLUMN IF EXISTS checksum"
+        )
 
     assert apply_schema(DATABASE_URL) == CURRENT_SCHEMA_VERSION
 
