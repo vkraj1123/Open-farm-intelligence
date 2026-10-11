@@ -1139,7 +1139,8 @@ The core closed-loop architecture is implemented and tested, but the project is 
 - [x] PostGIS schema
 - [ ] Production migration system
 - [ ] Production backup/recovery strategy
-- [ ] Multi-farm tenant isolation validation
+- [x] Initial cross-tenant API and PostgreSQL persistence validation (PR #69)
+- [ ] Tenant membership administration and audited legacy-data cutover
 - [ ] Full PostGIS integration test suite
 
 **Status: 🟡 Functional; production persistence remains**
@@ -2351,7 +2352,8 @@ The new `src/ofi/api_auth.py` verifier accepts compact HS256 JWTs only. It check
 | Actor-bound revocation | Implemented and tested | `DELETE /consents/{consent_id}` records revocation without deleting the grant |
 | Persistence | Configuration-dependent | PostgreSQL ledger when `OFI_DATABASE_URL` is set; otherwise process-local memory, which is not durable across restarts or processes |
 | Resource authentication for other routes | Implemented by PR #67 | Case, farm, evidence and assessment routes require verified JWT authentication by default, except public `/health` and `/ready`; resource-level authorization is described in section #56 |
-| Tenant isolation, full RBAC and purpose limitation | Not completed | Requires resource-level enforcement and broader review; this API increment does not claim those controls |
+| Tenant-scoped core records and resource checks | Implemented in PR #69 | Signed `tenant_id` scoping covers farms, cases, consent grants, evidence policies and assessments |
+| Tenant membership, full RBAC and purpose limitation | Not completed | The token issuer must verify membership; OFI has no organization membership registry, tenant-administration lifecycle, or downstream purpose gate yet |
 
 **Verification:** PR #65 passed the standard workflow ([run #726](https://github.com/vkraj1123/Open-farm-intelligence/actions/runs/38101451663)) and PostgreSQL-backed workflow ([run #861](https://github.com/vkraj1123/Open-farm-intelligence/actions/runs/38101451611)). The tests exercise token validation, configuration fail-closed behavior, affirmative scoped grants, cross-actor denial, and revocation. They do not demonstrate a real farmer-facing interface, production token issuer, deployment key rotation, or tenant-wide access control.
 
