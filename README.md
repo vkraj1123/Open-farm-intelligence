@@ -1409,10 +1409,10 @@ The core closed-loop architecture is implemented and tested, but the project is 
 - [x] Provider identity
 - [x] Provenance representation
 - [x] Versioning
-- [ ] Consent scopes
-- [ ] Purpose limitation
-- [ ] Consent expiry
-- [ ] Revocation
+- [x] Explicit service scopes on consent grants
+- [ ] Purpose limitation across all downstream data uses
+- [x] Consent expiry and timezone-aware validity
+- [x] Actor-bound revocation with durable PostgreSQL state
 - [ ] Encryption at rest
 - [ ] Encryption in transit configuration
 - [ ] Audit log
@@ -1422,7 +1422,7 @@ The core closed-loop architecture is implemented and tested, but the project is 
 - [ ] Privacy/data-sharing policy
 - [ ] Security audit
 
-**Status: 🟡 Architectural foundation only**
+**Status: 🟡 Consent scope/expiry/revocation primitives are implemented; authenticated grant issuance, tenant isolation, purpose enforcement across downstream data use, RBAC and broader security review remain**
 
 ---
 
@@ -2310,3 +2310,23 @@ The webhook sends a minimized allow-listed payload and signs the exact request b
 | End-to-end delivery | Not demonstrated | A real receiver, secret rotation, on-call routing, and synthetic delivery test remain deployment responsibilities |
 
 **Verification:** PR #61 passed standard CI ([run #691](https://github.com/vkraj1123/Open-farm-intelligence/actions/runs/38099439423)) and PostgreSQL-backed CI ([run #826](https://github.com/vkraj1123/Open-farm-intelligence/actions/runs/38099439426)). These checks verify software behavior and signed request construction, not delivery to a real operational alert receiver.
+
+
+# 54. Scoped consent grants and durable revocation
+
+PR [#63](https://github.com/vkraj1123/Open-farm-intelligence/pull/63) introduced explicit service-scoped consent and a durable revocation ledger, merged to `main` as [`274b5f7b91bed12ef9741a71e3f3f7f84427a8d4`](https://github.com/vkraj1123/Open-farm-intelligence/commit/274b5f7b91bed12ef9741a71e3f3f7f84427a8d4). Schema migration v3 creates `ofi_consent_grants` with an opaque consent ID, actor ID, purpose, exact service scopes, status, grant time, optional expiry, and optional revocation time. PostgreSQL constraints and triggers make grant terms immutable, prevent deletion, and permit only the first revocation timestamp to be set.
+
+The execution gateway now checks that the authenticated actor matches the grant owner, that the route exactly matches the requested action/service, that the grant is active at the time of authorization, and that the requested service is in the grant's scopes. If `PostgresConsentRepository` is injected, stored database state is authoritative at submission and when a prepared attempt is dispatched; a stale caller-held consent snapshot cannot widen scope or bypass a persisted revocation. Actor mismatch, expired/future/denied/revoked grants, and service-scope mismatch fail closed.
+
+| Capability | Status | Boundary |
+|---|---|---|
+| Exact service scopes | Implemented and unit-tested | Empty explicit scopes keep backwards compatibility by using the purpose as a single narrow legacy scope; new callers should pass scopes explicitly |
+| Grant/expiry/revocation timestamps | Implemented and unit-tested | All timestamps must be timezone-aware; grant expiry must follow grant time |
+| Durable revocation | Implemented and PostgreSQL-tested | `PostgresConsentRepository` supports create/get/revoke; revocation is bound to the owning actor and stored grant ID |
+| Immutable grant terms | Enforced in PostgreSQL | Only the first revocation timestamp can change; consent records cannot be deleted |
+| Execution enforcement | Implemented and regression-tested | Applies at submission and prepared-attempt dispatch; cannot cancel an action already sent or in flight |
+| Consent issuance UX/API | Not implemented | A trusted app flow must authenticate the actor, capture affirmative permission, and create the grant; do not treat a client-supplied actor ID as proof of identity |
+| Multi-tenant isolation/RBAC | Not completed | Tenant-level access control, purpose limitation across all downstream data use, key/role design, and broader security review remain |
+| Production deployment | Not demonstrated | Use a shared durable repository; the in-memory repository is only a test/single-process development reference |
+
+**Verification:** PR #63 passed standard CI ([run #714](https://github.com/vkraj1123/Open-farm-intelligence/actions/runs/38100581281)) and PostgreSQL-backed CI ([run #849](https://github.com/vkraj1123/Open-farm-intelligence/actions/runs/38100581299)). The PostgreSQL suite covers migration v3, consent-ledger immutability/revocation, and the recovery harness upgrading a v2 source to v3. These tests verify code and database behavior; they do not demonstrate that a real farmer-facing consent capture flow or multi-tenant security review exists.
