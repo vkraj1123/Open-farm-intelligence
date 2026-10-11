@@ -90,8 +90,15 @@ class PostGISFarmTwinStore(FarmTwinRepository):
                     raise KeyError(farm_id)
                 return self._farm_from_row(cur, row)
 
-    def register_crop_cycle(self, farm_id: str, crop_cycle: CropCycle) -> None:
-        self.get(farm_id)
+    def register_crop_cycle(
+        self,
+        farm_id: str,
+        crop_cycle: CropCycle,
+        *,
+        tenant_id: str | None = None,
+    ) -> None:
+        # Reject a tenant mismatch before touching any farm-child records.
+        self.get(farm_id, tenant_id=tenant_id)
         with connection_scope(self._connection_factory) as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT 1 FROM crop_cycles WHERE id=%s", (crop_cycle.id,))
@@ -99,20 +106,41 @@ class PostGISFarmTwinStore(FarmTwinRepository):
                     raise ValueError(f"crop cycle already registered: {crop_cycle.id}")
                 self._upsert_crop_cycle(cur, farm_id, crop_cycle)
 
-    def add_land_party(self, farm_id: str, party: LandParty) -> None:
-        self.get(farm_id)
+    def add_land_party(
+        self,
+        farm_id: str,
+        party: LandParty,
+        *,
+        tenant_id: str | None = None,
+    ) -> None:
+        # Reject a tenant mismatch before touching any farm-child records.
+        self.get(farm_id, tenant_id=tenant_id)
         with connection_scope(self._connection_factory) as conn:
             with conn.cursor() as cur:
                 self._insert_party(cur, farm_id, party)
 
-    def add_contract(self, farm_id: str, contract: ProductionContract) -> None:
-        self.get(farm_id)
+    def add_contract(
+        self,
+        farm_id: str,
+        contract: ProductionContract,
+        *,
+        tenant_id: str | None = None,
+    ) -> None:
+        # Reject a tenant mismatch before touching any farm-child records.
+        self.get(farm_id, tenant_id=tenant_id)
         with connection_scope(self._connection_factory) as conn:
             with conn.cursor() as cur:
                 self._insert_contract(cur, farm_id, contract)
 
-    def add_observation(self, farm_id: str, observation: Observation) -> None:
-        self.get(farm_id)
+    def add_observation(
+        self,
+        farm_id: str,
+        observation: Observation,
+        *,
+        tenant_id: str | None = None,
+    ) -> None:
+        # Reject a tenant mismatch before touching any farm-child records.
+        self.get(farm_id, tenant_id=tenant_id)
         location_wkt = None
         if observation.location:
             location_wkt = (
