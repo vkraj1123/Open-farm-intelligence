@@ -2440,6 +2440,6 @@ Authenticated API handlers now pass the verified token tenant to snapshot operat
 | Tenant-scoped PostgreSQL snapshot | Implemented in branch | Snapshot construction first requires a successful tenant-filtered farm query |
 | Authenticated evidence API integration | Implemented in branch | Signed tenant identity is propagated to farm snapshot reads |
 | Evidence-policy case reasoning | Implemented in branch | The case, farm snapshot and returned case record use the same tenant scope |
-| Regression coverage | Added; CI verification pending | Unit test plus PostgreSQL tenant-isolation test exercise matching and mismatched tenants |
+| Regression coverage | Passing in CI on implementation commit 74fd2e9 | Unit test plus PostgreSQL tenant-isolation test exercise matching and mismatched tenants |
 
-**Verification boundary:** passing repository tests will demonstrate application and database behavior in CI, not production token-issuer membership checks, live service-provider authorization, or a completed independent security audit. Keep the tenant-membership and legacy-data cutover limitations in section #57 in force.
+**Verification:** All four GitHub Actions test runs passed on implementation commit [74fd2e9](https://github.com/vkraj1123/Open-farm-intelligence/commit/74fd2e9c714bad5a0f39e2112f18208dc4ea520c), including the PostgreSQL-backed regression run. The code changes covered by that commit passed; a subsequent documentation-only update is being rechecked by CI. These tests do not establish production token-issuer membership checks, live service-provider authorization, or a completed independent security audit. Keep the tenant-membership and legacy-data cutover limitations in section #57 in force.
