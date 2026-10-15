@@ -2609,3 +2609,18 @@ The staging invitation smoke check now rejects documentation-only hostnames (`ex
 | Placeholder-host detection | Added and regression-tested | Fails before network access with an actionable configuration error |
 | Deployment prerequisite clarity | Updated | Invitation guide links the Render setup and distinguishes API deployment from delivery-provider acceptance |
 | Live staging deployment | Still unverified | Owner must authorize the Render Blueprint and verify the actual hostname and PostgreSQL readiness |
+
+# 70. Phone-launchable API deployment readiness check
+
+A read-only manual GitHub Actions workflow now lets the repository owner verify a live Render API entirely from a phone, before any invitation or identity-provider setup is attempted.
+
+| Capability | Status | Evidence / boundary |
+|---|---|---|
+| Phone-first endpoint smoke check | Added | Manual `workflow_dispatch`; accepts the actual Render service origin |
+| Health and readiness validation | Added and unit-tested | Requires `/health` = `ok`; `/ready` = ready with PostgreSQL, PostGIS, durable storage, and complete current schema |
+| URL and network safeguards | Added and unit-tested | HTTPS only; Render `.onrender.com` host only; placeholder/path/query/credential/port ambiguity rejected; redirects are not followed |
+| Secret and data exposure | Designed to be read-only | No credentials or invitation data required; response bodies are not printed |
+| Live service verification | Still pending | Requires the owner to approve Render deployment, then run the workflow with the actual assigned hostname |
+
+See the [phone-first Render deployment guide](docs/deploy-to-render.md) and [Staging API readiness workflow](https://github.com/vkraj1123/Open-farm-intelligence/actions/workflows/staging-api-readiness.yml). A green readiness workflow proves deployment/database readiness only; it does not prove live authentication, invitation delivery, redemption, backups, or production readiness.
+
