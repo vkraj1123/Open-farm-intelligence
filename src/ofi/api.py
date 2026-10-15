@@ -846,6 +846,7 @@ def create_tenant_invitation(
             "invitation_token": token,
             "delivery": "manual_or_external",
         },
+        status_code=201,
         headers={"Cache-Control": "no-store, private", "Pragma": "no-cache"},
     )
 
