@@ -2564,3 +2564,18 @@ OFI now supports an opt-in provider-neutral delivery webhook so a deployment can
 | Provider/email integration | Not yet verified | Deployment must install/configure a trusted bridge, delivery channel, secret rotation and monitoring |
 
 See [the invitation delivery runbook](docs/tenant-invitation-delivery.md) for receiver verification and deployment configuration. The webhook is an integration contract, not a built-in mail server. It does not by itself prove email ownership, synchronize identity-provider memberships, or establish that a real delivery provider is operational.
+
+
+# 67. Phone-launchable staging invitation acceptance
+
+A manual GitHub Actions workflow now provides a guarded staging check that can be started from GitHub's mobile app/browser. It verifies health/readiness, creates one one-hour invitation for a configured disposable identity, checks no-store headers and token-free webhook-mode responses, confirms the API's delivery-acceptance event ID, and verifies that invitation metadata remains in durable storage. It deliberately does not print API response bodies, credentials, or invitation tokens, and refuses redirect targets.
+
+| Capability | Status | Evidence / boundary |
+|---|---|---|
+| Launch from GitHub without a local development machine | Implemented | Manual workflow dispatch; Python standard library only |
+| Staging environment separation | Implemented in workflow contract | Dedicated \`ofi-staging\` GitHub environment, protected branch check, explicit typed confirmation |
+| Safe URL, TLS and redirect handling | Implemented and unit-tested | HTTPS origin only; obvious local/private IP targets and redirects rejected; default TLS verification retained |
+| Token-free response and durable-state checks | Implemented and unit-tested | Checks no-store headers, secret-like response fields, delivery event ID and invitation metadata |
+| Real delivery receipt and subject-bound redemption | Not yet verified | Requires staging deployment, environment secrets, bridge operations view and a disposable test identity |
+
+See the [phone-launchable staging acceptance guide](docs/staging-invitation-acceptance.md). A green workflow will prove the staging API accepted the webhook handoff; it will not by itself prove mailbox delivery or successful redemption. Do not configure production credentials in this workflow.
