@@ -64,6 +64,14 @@ After you know the real service URL, update GitHub's
 for example `https://ofi-staging-api.onrender.com`. Do not include a slash path,
 query, fragment, whitespace, or a trailing backslash.
 
+## Verify the API from GitHub on your phone
+
+After Render creates the service, open the [Staging API readiness workflow](https://github.com/vkraj1123/Open-farm-intelligence/actions/workflows/staging-api-readiness.yml) while signed in to GitHub. Select **Run workflow**, choose the `main` branch, and paste the actual root origin Render assigned, such as `https://ofi-staging-api.onrender.com`.
+
+This read-only workflow checks `/health` and `/ready` over verified HTTPS. It confirms the API is alive and that PostgreSQL, PostGIS, durable persistence, and the complete current migration schema are ready. It rejects placeholder or non-Render URLs, does not follow redirects, does not need credentials, and does not create an invitation. A successful readiness check is a prerequisite—not a substitute—for configuring the identity provider and invitation delivery bridge.
+
+If it fails, open the Render service logs and use the failure message to determine whether startup, database connectivity, PostGIS, or schema migration needs attention. Do not run invitation acceptance until readiness passes and the separate identity/delivery integrations are configured.
+
 ## Identity and invitations are still separate setup steps
 
 The Blueprint keeps resource authentication enabled and does not publish an
