@@ -1,0 +1,38 @@
+name: staging invitation acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type RUN-STAGING-INVITATION-CHECK to create a real one-hour staging invitation"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ofi-staging-invitation-acceptance
+  cancel-in-progress: false
+
+jobs:
+  staging-acceptance:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: ofi-staging
+    env:
+      OFI_STAGING_BASE_URL: ${{ vars.OFI_STAGING_BASE_URL }}
+      OFI_STAGING_ADMIN_BEARER_TOKEN: ${{ secrets.OFI_STAGING_ADMIN_BEARER_TOKEN }}
+      OFI_STAGING_TENANT_ID: ${{ secrets.OFI_STAGING_TENANT_ID }}
+      OFI_STAGING_INVITED_SUBJECT_ID: ${{ secrets.OFI_STAGING_INVITED_SUBJECT_ID }}
+      OFI_STAGING_CONFIRMATION: ${{ inputs.confirm }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Verify staging onboarding handoff
+        run: python scripts/staging_invitation_smoke.py
