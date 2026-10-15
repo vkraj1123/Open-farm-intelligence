@@ -1,0 +1,94 @@
+# Phone-first Render staging deployment
+
+This is the first deployment route for testing OFI's FastAPI service without a
+desktop. It is **temporary staging infrastructure**, not a production
+recommendation.
+
+## Before you begin
+
+- The repository is public: [vkraj1123/Open-farm-intelligence](https://github.com/vkraj1123/Open-farm-intelligence).
+- Sign in to [Render](https://render.com/) with a browser on your phone.
+- Approve Render's request to access the GitHub repository when prompted.
+- Do not enter production credentials or real farmer/tenant records in this
+  temporary environment.
+
+## One-tap Blueprint setup
+
+After the deployment files are merged into `main`, open:
+
+[Deploy OFI staging to Render](https://render.com/deploy?repo=https://github.com/vkraj1123/Open-farm-intelligence)
+
+Review the Blueprint before approving it. It creates:
+
+- `ofi-staging-api`: Python/FastAPI web service in Singapore, Free plan.
+- `ofi-staging-db`: PostgreSQL 16 in Singapore, Free plan, restricted to
+  Render's private network.
+- Generated HMAC secret for the API's existing HS256 verifier.
+- The ordered database migrations run through `ofi-schema` at startup before
+  Uvicorn starts.
+
+If Render asks you to connect GitHub, select this repository and authorize only
+the repository access you intend to grant. Approve the Blueprint after checking
+the service names and Free plans. If Render reports a Blueprint YAML error,
+stop and copy the error text; do not create a different service manually yet.
+
+## Important Free-plan limitation
+
+Render documents that Free Postgres databases expire **30 days after creation**
+and are deleted after the additional 14-day upgrade grace period. The Free web
+service can spin down after inactivity and has no persistent local disk.
+Consequently, this configuration is for an initial smoke test only. Do not use
+it as the system of record, for real farmer data, or for production. Before
+longer-lived staging, arrange a database plan with suitable retention/backups
+and review hosting costs and operational controls.
+
+## Verify the live API
+
+In the Render dashboard, wait for the database and web service to finish
+deploying. Open the service logs and confirm that `ofi-schema` finishes with a
+current schema version and Uvicorn starts without errors.
+
+Then open these URLs using the actual hostname shown in Render:
+
+- `https://<your-service>.onrender.com/health` — expected HTTP 200 and
+  `{"status":"ok"}`.
+- `https://<your-service>.onrender.com/ready` — expected HTTP 200,
+  `status: "ready"`, `persistence: "postgresql"`, and `durable: true`.
+
+The readiness endpoint also checks PostGIS and the complete current migration
+schema. Do not continue to invitation testing until both checks pass. The health
+route can pass while database readiness fails.
+
+After you know the real service URL, update GitHub's
+`ofi-staging` environment variable `OFI_STAGING_BASE_URL` to the origin only,
+for example `https://ofi-staging-api.onrender.com`. Do not include a slash path,
+query, fragment, whitespace, or a trailing backslash.
+
+## Identity and invitations are still separate setup steps
+
+The Blueprint keeps resource authentication enabled and does not publish an
+identity issuer. `OFI_AUTH_ISSUER=https://ofi-staging.invalid` is a deliberately
+non-routable placeholder. Before authenticating real test clients, configure
+the real trusted identity provider's exact issuer, audience and JWKS URL, then
+set `OFI_AUTH_MODE=oidc_jwks` and complete the
+[identity-provider runbook](identity-provider.md). Do not disable resource
+authentication on a reachable deployment.
+
+Invitation delivery remains in `manual` mode because OFI does not include a
+trusted mail/delivery bridge. Therefore the GitHub
+`Staging invitation acceptance` workflow is **not expected to pass yet**.
+Before that test, deploy a trusted bridge and configure
+`OFI_INVITATION_DELIVERY_MODE=webhook`,
+`OFI_INVITATION_DELIVERY_WEBHOOK_URL`, and
+`OFI_INVITATION_DELIVERY_WEBHOOK_SECRET` on the API. The secret must be at
+least 32 UTF-8 bytes. Follow the
+[invitation delivery runbook](tenant-invitation-delivery.md); do not use a
+public webhook inspector because the signed event body contains a usable
+one-time invitation credential.
+
+## Current acceptance boundary
+
+This deployment gets the API online with PostgreSQL-backed schema state. It
+does not establish live user authentication, trusted invitation delivery,
+successful invitation redemption, backups, disaster recovery or production
+readiness. Record each of those as a separate acceptance item.
