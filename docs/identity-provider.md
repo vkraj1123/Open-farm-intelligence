@@ -66,7 +66,7 @@ staging-only service client with the identity provider before changing
 `OFI_AUTH_MODE` in any deployed environment. Ensure the external JWT contains
 OFI-specific role/tenant claims from trusted authorization data, then verify
 suspended/revoked membership still blocks tenant-scoped requests. Keep
-`OFI_TENANT_MEMBERSHIP_ENFORCEMENT=required) outside tests.
+`OFI_TENANT_MEMBERSHIP_ENFORCEMENT` at `required` outside tests.
 
 The current implementation supports one trusted issuer/JWKS endpoint per API
 process configuration. It is not an OIDC login flow or authorization-code

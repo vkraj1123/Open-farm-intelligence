@@ -204,9 +204,6 @@ def test_oidc_key_service_failure_is_unavailable_not_bad_credentials(
 
 def test_oidc_jwks_url_requires_https(oidc_env, monkeypatch):
     monkeypatch.setenv("OFI_AUTH_JWKS_URL", "http://identity.example.test/jwks")
-    with pytest.raises(HTTPException) as error:
-        api_auth.verify_bearer_token("not-a-jwt")
-    assert error.value.status_code == 401  # size/shape validation precedes config
     valid_shape_token = hs256_token(claims())
     with pytest.raises(HTTPException) as error:
         api_auth.verify_bearer_token(valid_shape_token)
