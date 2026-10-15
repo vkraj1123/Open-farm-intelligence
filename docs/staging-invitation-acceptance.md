@@ -45,6 +45,6 @@ After the workflow passes:
 
 ## Failure handling
 
-The API revokes an invitation when the bridge returns a non-2xx status, redirects, or produces an ambiguous transport outcome, but the runner can itself lose contact after the API has processed a request. If the workflow reports an ambiguous creation failure, inspect the staging invitation list before rerunning. The script attempts best-effort cleanup when it can identify an invitation created by that run. If cleanup cannot be confirmed, an operator must inspect and revoke any unintended pending invitation.
+The API revokes an invitation when the bridge returns a non-2xx status, redirects, or produces an ambiguous transport outcome, but the runner can itself lose contact after the API has processed a request. If the workflow reports an ambiguous creation failure, inspect the staging invitation list before rerunning. The script deliberately does not revoke a newly visible row based only on subject and timing, because another administrator may have created it concurrently. An operator must identify and revoke any unintended pending invitation before retrying.
 
 A green GitHub run is a useful staging checkpoint, **not a production approval**. Production rollout still requires live-provider testing, correct verified-subject mapping, email/notification controls, secret rotation, rate limiting, monitoring, operational ownership and independent security review.
