@@ -22,6 +22,10 @@ from ofi.services.consent_repository import (
 from ofi.services.execution_gateway import ActorIdentity, ConsentGrant
 from ofi.api_auth import require_authenticated_actor
 from ofi.services.database_readiness import check_persistence_readiness
+from ofi.services.invitation_delivery import (
+    InvitationDeliveryError,
+    TenantInvitationDeliveryWebhook,
+)
 from ofi.services.evidence_alignment import align_observations
 from ofi.services.unit_of_work import PostgresFarmCaseUnitOfWork
 from ofi.services.tenant_membership_repository import (
@@ -813,6 +817,30 @@ def list_tenant_membership_events(
 
 
 
+
+
+def _configured_tenant_invitation_webhook() -> TenantInvitationDeliveryWebhook:
+    """Build the trusted delivery adapter from deployment-owned configuration."""
+    endpoint = os.getenv("OFI_INVITATION_DELIVERY_WEBHOOK_URL", "").strip()
+    secret = os.getenv("OFI_INVITATION_DELIVERY_WEBHOOK_SECRET", "")
+    timeout_raw = os.getenv("OFI_INVITATION_DELIVERY_TIMEOUT_SECONDS", "5")
+    if not endpoint or not secret:
+        raise HTTPException(
+            status_code=503,
+            detail="tenant invitation webhook delivery is not configured",
+        )
+    try:
+        timeout = float(timeout_raw)
+        return TenantInvitationDeliveryWebhook(
+            endpoint, secret, timeout_seconds=timeout
+        )
+    except (TypeError, ValueError):
+        raise HTTPException(
+            status_code=503,
+            detail="tenant invitation webhook delivery configuration is invalid",
+        ) from None
+
+
 @app.post("/tenants/{tenant_id}/invitations", status_code=201)
 def create_tenant_invitation(
     tenant_id: str, request: TenantInvitationCreateRequest,
@@ -825,6 +853,23 @@ def create_tenant_invitation(
     _require_tenant_membership_admin(actor, tenant_id)
     if actor is None:
         raise HTTPException(status_code=401, detail="authenticated tenant administrator required")
+    delivery_mode = os.getenv("OFI_INVITATION_DELIVERY_MODE", "manual").strip().lower()
+    delivery_webhook = None
+    if delivery_mode == "webhook":
+        delivery_webhook = _configured_tenant_invitation_webhook()
+        # Delivered invitations must survive process restarts. Memory mode is for
+        # tests/local development only and is not an acceptable delivery backend.
+        if isinstance(tenant_membership_repository, InMemoryTenantMembershipRepository):
+            raise HTTPException(
+                status_code=503,
+                detail="webhook invitation delivery requires durable PostgreSQL storage",
+            )
+    elif delivery_mode != "manual":
+        raise HTTPException(
+            status_code=503,
+            detail="tenant invitation delivery mode is invalid",
+        )
+
     token = secrets.token_urlsafe(32)
     token_sha256 = hashlib.sha256(token.encode("utf-8")).hexdigest()
     expires_at = datetime.now(timezone.utc) + timedelta(hours=request.expires_in_hours)
@@ -839,7 +884,46 @@ def create_tenant_invitation(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=503, detail="tenant invitation creation is unavailable") from exc
-    # This response contains a one-time credential: explicitly prohibit cache storage.
+
+    if delivery_webhook is not None:
+        try:
+            receipt = delivery_webhook.send_invitation(
+                invitation_id=invitation.invitation_id,
+                tenant_id=invitation.tenant_id,
+                subject_id=invitation.invited_actor_id,
+                invitation_token=token,
+                expires_at=invitation.expires_at,
+            )
+        except Exception:
+            # Delivery may have succeeded remotely even when the response was lost.
+            # Never retry or return the token to the caller; invalidate it instead.
+            try:
+                revoked = tenant_membership_repository.revoke_invitation(
+                    invitation.tenant_id, invitation.invitation_id,
+                    revoked_by=actor.actor_id,
+                )
+                if revoked.status not in {"revoked", "expired"}:
+                    raise RuntimeError("invitation revocation was not confirmed")
+            except Exception:
+                raise HTTPException(
+                    status_code=503,
+                    detail="invitation delivery failed and invitation revocation could not be confirmed",
+                ) from None
+            raise HTTPException(
+                status_code=503,
+                detail="invitation delivery failed; the invitation was invalidated",
+            ) from None
+        return JSONResponse(
+            content={
+                "invitation": _invitation_payload(invitation),
+                "delivery": "accepted",
+                "delivery_event_id": receipt.event_id,
+            },
+            status_code=201,
+            headers={"Cache-Control": "no-store, private", "Pragma": "no-cache"},
+        )
+
+    # Manual mode returns the secret once and always prohibits HTTP caching.
     return JSONResponse(
         content={
             "invitation": _invitation_payload(invitation),
