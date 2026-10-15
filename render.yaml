@@ -11,7 +11,7 @@ services:
     buildCommand: pip install --upgrade pip && pip install ".[postgres,auth]"
     startCommand: sh scripts/render_start.sh
     healthCheckPath: /health
-    autoDeployTrigger: off
+    autoDeployTrigger: 'off'
     envVars:
       - key: OFI_DATABASE_URL
         fromDatabase:
