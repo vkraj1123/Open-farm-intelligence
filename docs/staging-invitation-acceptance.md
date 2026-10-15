@@ -20,7 +20,7 @@ A passing workflow proves the staging API accepted the delivery handoff and pers
 
 1. Open the repository on GitHub, go to **Settings → Environments**, and create an environment named \`ofi-staging\`. Restrict deployments to \`main\`. Add required reviewers/protection where your repository plan supports it; the workflow also requires a typed confirmation.
 2. In the \`ofi-staging\` environment, add this variable:
-   - \`OFI_STAGING_BASE_URL\` — the root origin of the deployed staging API, for example \`the actual HTTPS origin shown by Render (not a documentation placeholder)\`. Do not include a path, query, fragment, or credentials.
+   - \\`OFI_STAGING_BASE_URL\\` — the root HTTPS origin of the *already deployed* staging API. Copy the actual hostname from Render; never use a documentation/example hostname. Do not include a path, query, fragment, credentials, or trailing backslash.
 3. Add these **environment secrets**:
    - \`OFI_STAGING_ADMIN_BEARER_TOKEN\` — a short-lived staging tenant-admin access token for the selected tenant.
    - \`OFI_STAGING_TENANT_ID\` — the exact staging tenant identifier.
