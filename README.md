@@ -2525,9 +2525,9 @@ Migration 006 adds a tenant-scoped invitation lifecycle. Tenant administrators (
 | POST \`/tenants/{tenant_id}/invitations/{invitation_id}/revoke\` | Revoke a pending invitation | Tenant administrator or platform system |
 | GET \`/tenants/{tenant_id}/invitation-events\` | Read append-only lifecycle audit events | Tenant administrator or platform system |
 
-The invitation token is generated with a cryptographically secure random generator; only its SHA-256 digest is persisted. The raw token is returned once by the create endpoint and is not included in list responses or audit events. The subject identifier must be the trusted issuer's stable \`sub\` claim, not a client-supplied email. Redemption verifies the caller's authenticated subject, tenant path, pending state and expiry. Membership creation/reactivation, membership audit, invitation consumption and invitation audit commit in one PostgreSQL transaction. A token cannot be redeemed twice, by another subject, or against another tenant. Pending invitations expire after a bounded duration (1 hour to 30 days; default 7 days) and can be revoked.
+The invitation token is generated with a cryptographically secure random generator; only its SHA-256 digest is persisted. In manual mode the raw token is returned once by the create endpoint; in webhook mode it is sent only to the configured signed HTTPS delivery bridge and is not returned to the API caller. The token is not included in list responses or audit events. The subject identifier must be the trusted issuer's stable \`sub\` claim, not a client-supplied email. Redemption verifies the caller's authenticated subject, tenant path, pending state and expiry. Membership creation/reactivation, membership audit, invitation consumption and invitation audit commit in one PostgreSQL transaction. A token cannot be redeemed twice, by another subject, or against another tenant. Pending invitations expire after a bounded duration (1 hour to 30 days; default 7 days) and can be revoked.
 
-**Delivery and identity boundary:** OFI does not send invitation email, prove ownership of an email address, create identity-provider accounts, or issue authentication tokens. The caller must securely deliver the returned token to the intended user through a trusted channel. An identity provider must authenticate that subject and map it to the same stable \`sub\` claim. Invitation redemption is an onboarding primitive, not a complete OIDC login/signup flow. Email verification, MFA policy, provider-side membership/claim synchronization, edge rate limiting, and independent security review remain outstanding.
+**Delivery and identity boundary:** OFI does not send invitation email itself, prove ownership of an email address, create identity-provider accounts, or issue authentication tokens. Manual mode requires the caller to deliver the returned token securely. Optional webhook mode sends the token to a configured trusted bridge, which must map the stable identity-provider subject to an approved delivery channel and protect the token from logs and unauthorized access. An identity provider must authenticate that subject and map it to the same stable \`sub\` claim. Invitation redemption is an onboarding primitive, not a complete OIDC login/signup flow. Email verification, MFA policy, provider-side membership/claim synchronization, edge rate limiting, and independent security review remain outstanding.
 
 | Capability | Status | Boundary |
 |---|---|---|
@@ -2550,3 +2550,17 @@ This follow-up closes two narrow security-validation gaps in the invitation life
 | External delivery / email verification | Still outstanding | No delivery provider, identity lifecycle, MFA or live issuer has been configured |
 
 The raw invitation token is a short-lived credential, so the create response explicitly prohibits HTTP caching. PostgreSQL's row-level lock during redemption is validated with concurrent independent connections, rather than relying only on sequential tests or the in-memory lock. CI evidence does not substitute for live identity-provider, delivery-channel or independent security testing.
+
+# 66. Signed invitation-delivery bridge
+
+OFI now supports an opt-in provider-neutral delivery webhook so a deployment can connect its own email/notification system without coupling invitation management to one vendor. Set \`OFI_INVITATION_DELIVERY_MODE=webhook\` to enable it. The bridge receives a versioned JSON event over HTTPS, signed with HMAC-SHA256 over the exact request body. It receives the one-time token, invitation ID, tenant ID, stable target subject and expiry; it is responsible for resolving the subject through a trusted directory and delivering the token through an approved channel.
+
+| Capability | Status | Security boundary |
+|---|---|---|
+| Signed outbound HTTPS delivery | Implemented and unit-tested | HTTPS only; URL credentials/query/fragments rejected; redirects are not followed |
+| Token handling | Implemented and API-tested | Token is not returned to the API caller in webhook mode; response cache is disabled |
+| Delivery acceptance and failure | Implemented and API-tested | Only 2xx counts as accepted; failed/ambiguous delivery triggers revocation and no automatic retry |
+| Durable-state requirement | Enforced | Webhook mode refuses the in-memory invitation repository |
+| Provider/email integration | Not yet verified | Deployment must install/configure a trusted bridge, delivery channel, secret rotation and monitoring |
+
+See [the invitation delivery runbook](docs/tenant-invitation-delivery.md) for receiver verification and deployment configuration. The webhook is an integration contract, not a built-in mail server. It does not by itself prove email ownership, synchronize identity-provider memberships, or establish that a real delivery provider is operational.

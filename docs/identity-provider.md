@@ -70,8 +70,11 @@ suspended/revoked membership still blocks tenant-scoped requests. Keep
 
 The current implementation supports one trusted issuer/JWKS endpoint per API
 process configuration. It is not an OIDC login flow or authorization-code
-client, and does not implement group synchronization, tenant invitations,
-email verification, MFA policy, token issuance, key-management operations, or
-live-provider staging tests. Synthetic RSA tests exercise cryptographic
-verification and claim validation; they do not substitute for an independently
-reviewed provider configuration or production security assessment.
+client, and does not implement group synchronization, email verification, MFA
+policy, token issuance, or key-management operations. Tenant invitations and an
+opt-in signed HTTPS delivery webhook are implemented as a separate OFI boundary;
+the webhook does not replace provider identity proofing or membership claims.
+See [the invitation delivery runbook](tenant-invitation-delivery.md). Neither
+synthetic RSA tests nor mocked delivery tests substitute for staging tests with
+the selected identity provider and delivery receiver, or an independent
+production security assessment.
