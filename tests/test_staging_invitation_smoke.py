@@ -61,3 +61,11 @@ def test_response_secret_detector_allows_metadata_only_response():
         "delivery": "accepted",
         "delivery_event_id": "a" * 64,
     })
+
+
+
+def test_redirect_handler_never_returns_a_redirect_request():
+    handler = smoke._NoRedirect()
+    assert handler.redirect_request(
+        None, None, 302, "Found", {}, "https://another-host.example.test"
+    ) is None
