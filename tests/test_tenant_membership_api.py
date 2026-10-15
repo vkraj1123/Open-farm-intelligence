@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import json
 import time
+from types import SimpleNamespace
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
@@ -327,3 +328,112 @@ def test_invitation_creation_requires_admin_and_rejects_active_member_or_duplica
         json={"actor_id": "dave", "membership_role": "tenant_admin"},
     )
     assert admin_role_attempt.status_code == 422
+
+def _as_durable_test_repository(monkeypatch, repository):
+    """Proxy test memory state so the API's durable-storage guard can be tested around."""
+    class DurableRepositoryProxy:
+        def __getattr__(self, name):
+            return getattr(repository, name)
+
+    monkeypatch.setattr(api, "tenant_membership_repository", DurableRepositoryProxy())
+
+
+def test_webhook_delivery_does_not_return_token_and_reports_signed_delivery_receipt(
+    membership_client, monkeypatch
+):
+    client = membership_client
+    repository = api.tenant_membership_repository
+    repository.grant("tenant-a", "alice", "tenant_admin", granted_by="platform-root")
+    _as_durable_test_repository(monkeypatch, repository)
+    monkeypatch.setenv("OFI_INVITATION_DELIVERY_MODE", "webhook")
+    sent = {}
+
+    class FakeWebhook:
+        def send_invitation(self, **kwargs):
+            sent.update(kwargs)
+            return SimpleNamespace(event_id="event-digest-123", status_code=202)
+
+    monkeypatch.setattr(api, "_configured_tenant_invitation_webhook", FakeWebhook)
+    response = _create_invitation(client)
+
+    assert response.status_code == 201
+    assert response.headers["cache-control"] == "no-store, private"
+    assert response.headers["pragma"] == "no-cache"
+    body = response.json()
+    assert body["delivery"] == "accepted"
+    assert body["delivery_event_id"] == "event-digest-123"
+    assert "invitation_token" not in body
+    assert sent["tenant_id"] == "tenant-a"
+    assert sent["subject_id"] == "bob"
+    assert sent["invitation_token"]
+    digest = hashlib.sha256(sent["invitation_token"].encode()).hexdigest()
+    assert digest in repository._invitations
+    assert repository._invitations[digest].status == "pending"
+
+
+def test_webhook_delivery_failure_revokes_invitation_and_never_returns_token(
+    membership_client, monkeypatch
+):
+    client = membership_client
+    repository = api.tenant_membership_repository
+    repository.grant("tenant-a", "alice", "tenant_admin", granted_by="platform-root")
+    _as_durable_test_repository(monkeypatch, repository)
+    monkeypatch.setenv("OFI_INVITATION_DELIVERY_MODE", "webhook")
+
+    class BrokenWebhook:
+        def send_invitation(self, **kwargs):
+            raise api.InvitationDeliveryError(
+                "transport failed; one-time-token-must-not-leak"
+            )
+
+    monkeypatch.setattr(api, "_configured_tenant_invitation_webhook", BrokenWebhook)
+    response = _create_invitation(client)
+
+    assert response.status_code == 503
+    assert "one-time-token-must-not-leak" not in response.text
+    pending_or_revoked = list(repository._invitations.items())
+    assert len(pending_or_revoked) == 1
+    token_hash, invitation = pending_or_revoked[0]
+    assert invitation.status == "revoked"
+    assert [event["action"] for event in repository.list_invitation_events("tenant-a")] == [
+        "revoked", "created"
+    ]
+    assert token_hash not in response.text
+
+
+def test_webhook_delivery_requires_valid_configuration_before_creating_invitation(
+    membership_client, monkeypatch
+):
+    client = membership_client
+    repository = api.tenant_membership_repository
+    repository.grant("tenant-a", "alice", "tenant_admin", granted_by="platform-root")
+    monkeypatch.setenv("OFI_INVITATION_DELIVERY_MODE", "webhook")
+    monkeypatch.delenv("OFI_INVITATION_DELIVERY_WEBHOOK_URL", raising=False)
+    monkeypatch.delenv("OFI_INVITATION_DELIVERY_WEBHOOK_SECRET", raising=False)
+
+    response = _create_invitation(client)
+
+    assert response.status_code == 503
+    assert "invitation webhook delivery is not configured" in response.json()["detail"]
+    assert repository._invitations == {}
+
+
+def test_webhook_delivery_is_rejected_for_in_memory_storage(
+    membership_client, monkeypatch
+):
+    client = membership_client
+    repository = api.tenant_membership_repository
+    repository.grant("tenant-a", "alice", "tenant_admin", granted_by="platform-root")
+    monkeypatch.setenv("OFI_INVITATION_DELIVERY_MODE", "webhook")
+
+    class FakeWebhook:
+        def send_invitation(self, **kwargs):
+            raise AssertionError("webhook must not run without durable storage")
+
+    monkeypatch.setattr(api, "_configured_tenant_invitation_webhook", FakeWebhook)
+
+    response = _create_invitation(client)
+
+    assert response.status_code == 503
+    assert "requires durable PostgreSQL storage" in response.json()["detail"]
+    assert repository._invitations == {}
