@@ -2512,3 +2512,28 @@ Milestone #62 documented installation with `python -m pip install -e ".[auth]"`,
 | Live OIDC provider integration | Still unverified | Needs a trusted staging issuer, provider-issued tokens and deployment network/TLS checks |
 
 This closes a packaging/documentation mismatch. It does not configure a real issuer, enable OIDC mode in any deployment, or replace identity-provider and security review.
+
+# 64. Tenant invitation lifecycle
+
+Migration 006 adds a tenant-scoped invitation lifecycle. Tenant administrators (or the trusted platform-system authority) can create a time-limited invitation for a specific identity-provider subject, list invitation metadata, revoke an unused invitation and inspect invitation audit events. Invitations always grant the regular \`member\` role; this API cannot grant tenant-administrator privileges.
+
+| Endpoint | Purpose | Authorization |
+|---|---|---|
+| POST \`/tenants/{tenant_id}/invitations\` | Issue an invitation for a stable identity-provider \`sub\` | Tenant administrator or platform system |
+| GET \`/tenants/{tenant_id}/invitations\` | List invitation metadata | Tenant administrator or platform system |
+| POST \`/tenants/{tenant_id}/invitations/redeem\` | Redeem a one-time secret | Authenticated, matching invited subject |
+| POST \`/tenants/{tenant_id}/invitations/{invitation_id}/revoke\` | Revoke a pending invitation | Tenant administrator or platform system |
+| GET \`/tenants/{tenant_id}/invitation-events\` | Read append-only lifecycle audit events | Tenant administrator or platform system |
+
+The invitation token is generated with a cryptographically secure random generator; only its SHA-256 digest is persisted. The raw token is returned once by the create endpoint and is not included in list responses or audit events. The subject identifier must be the trusted issuer's stable \`sub\` claim, not a client-supplied email. Redemption verifies the caller's authenticated subject, tenant path, pending state and expiry. Membership creation/reactivation, membership audit, invitation consumption and invitation audit commit in one PostgreSQL transaction. A token cannot be redeemed twice, by another subject, or against another tenant. Pending invitations expire after a bounded duration (1 hour to 30 days; default 7 days) and can be revoked.
+
+**Delivery and identity boundary:** OFI does not send invitation email, prove ownership of an email address, create identity-provider accounts, or issue authentication tokens. The caller must securely deliver the returned token to the intended user through a trusted channel. An identity provider must authenticate that subject and map it to the same stable \`sub\` claim. Invitation redemption is an onboarding primitive, not a complete OIDC login/signup flow. Email verification, MFA policy, provider-side membership/claim synchronization, edge rate limiting, and independent security review remain outstanding.
+
+| Capability | Status | Boundary |
+|---|---|---|
+| Hashed, expiring, single-use invitations | Implemented | No raw token stored or returned by list endpoints |
+| Intended-subject and tenant binding | Implemented | Redemption requires valid authentication and exact subject/tenant match |
+| Revocation and lifecycle audit | Implemented | Append-only SQL audit table; expiry is recorded when inspected or redeemed |
+| Atomic redemption with membership creation/reactivation | Implemented | PostgreSQL transaction keeps invitation consumption, membership and both audit events consistent |
+| Live identity provider and notification delivery | Not verified | Requires deployment integration; no provider/email service configured |
+

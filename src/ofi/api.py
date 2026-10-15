@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta, timezone
+import hashlib
 import math
+import secrets
 import os
 from uuid import uuid4
 from typing import Literal, get_args
@@ -24,10 +26,13 @@ from ofi.services.evidence_alignment import align_observations
 from ofi.services.unit_of_work import PostgresFarmCaseUnitOfWork
 from ofi.services.tenant_membership_repository import (
     InMemoryTenantMembershipRepository,
+    InvitationConflictError,
+    InvitationUnavailableError,
     LastTenantAdminError,
     MembershipRole,
     MembershipStatus,
     PostgresTenantMembershipRepository,
+    TenantInvitation,
     TenantMembershipRepository,
 )
 from ofi.services.evidence_comparison import MetricComparisonRule, compare_aligned_observations
@@ -167,6 +172,36 @@ class TenantMembershipUpdateRequest(BaseModel):
     status: Literal["active", "suspended", "revoked"]
 
 
+
+class TenantInvitationCreateRequest(BaseModel):
+    """Invite a trusted identity-provider subject as a regular tenant member."""
+    model_config = {"extra": "forbid"}
+    actor_id: str = Field(min_length=1, max_length=512)
+    expires_in_hours: int = Field(default=168, ge=1, le=720)
+
+    @field_validator("actor_id")
+    @classmethod
+    def actor_id_must_not_be_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value or len(value) > 512:
+            raise ValueError("actor_id must be non-empty and at most 512 characters")
+        return value
+
+
+class TenantInvitationRedeemRequest(BaseModel):
+    """Single-use secret presented by its intended authenticated identity."""
+    model_config = {"extra": "forbid"}
+    invitation_token: str = Field(min_length=32, max_length=256)
+
+    @field_validator("invitation_token")
+    @classmethod
+    def token_must_not_be_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("invitation_token must not be blank")
+        return value
+
+
 def _membership_payload(membership) -> dict:
     return {
         "tenant_id": membership.tenant_id,
@@ -177,6 +212,24 @@ def _membership_payload(membership) -> dict:
         "updated_at": membership.updated_at.isoformat(),
         "created_by": membership.created_by,
         "updated_by": membership.updated_by,
+    }
+
+
+
+def _invitation_payload(invitation: TenantInvitation) -> dict:
+    """Serialize metadata only; token hashes and raw secrets are not exposed."""
+    return {
+        "invitation_id": invitation.invitation_id,
+        "tenant_id": invitation.tenant_id,
+        "invited_actor_id": invitation.invited_actor_id,
+        "status": invitation.status,
+        "created_at": invitation.created_at.isoformat(),
+        "expires_at": invitation.expires_at.isoformat(),
+        "created_by": invitation.created_by,
+        "redeemed_at": invitation.redeemed_at.isoformat() if invitation.redeemed_at else None,
+        "redeemed_by": invitation.redeemed_by,
+        "revoked_at": invitation.revoked_at.isoformat() if invitation.revoked_at else None,
+        "revoked_by": invitation.revoked_by,
     }
 
 
@@ -757,6 +810,122 @@ def list_tenant_membership_events(
         {**event, "occurred_at": event["occurred_at"].isoformat()}
         for event in events
     ]}
+
+
+
+@app.post("/tenants/{tenant_id}/invitations", status_code=201)
+def create_tenant_invitation(
+    tenant_id: str, request: TenantInvitationCreateRequest,
+    actor: ActorIdentity | None = Depends(_resource_actor),
+):
+    """Issue a one-time invite for a stable, externally authenticated subject.
+
+    The raw token is returned only in this response; delivery is managed externally.
+    """
+    _require_tenant_membership_admin(actor, tenant_id)
+    if actor is None:
+        raise HTTPException(status_code=401, detail="authenticated tenant administrator required")
+    token = secrets.token_urlsafe(32)
+    token_sha256 = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=request.expires_in_hours)
+    try:
+        invitation = tenant_membership_repository.create_invitation(
+            str(uuid4()), tenant_id.strip(), request.actor_id, token_sha256,
+            expires_at, created_by=actor.actor_id,
+        )
+    except InvitationConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="tenant invitation creation is unavailable") from exc
+    return {"invitation": _invitation_payload(invitation), "invitation_token": token,
+            "delivery": "manual_or_external"}
+
+
+@app.get("/tenants/{tenant_id}/invitations")
+def list_tenant_invitations(
+    tenant_id: str, limit: int = Query(default=100, ge=1, le=500),
+    actor: ActorIdentity | None = Depends(_resource_actor),
+):
+    """List invitation metadata without exposing raw secrets or token digests."""
+    _require_tenant_membership_admin(actor, tenant_id)
+    if actor is None:
+        raise HTTPException(status_code=401, detail="authenticated tenant administrator required")
+    try:
+        items = tenant_membership_repository.list_invitations(
+            tenant_id.strip(), checked_by=actor.actor_id, limit=limit
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="tenant invitation lookup is unavailable") from exc
+    return {"tenant_id": tenant_id.strip(), "invitations": [_invitation_payload(item) for item in items]}
+
+
+@app.post("/tenants/{tenant_id}/invitations/redeem")
+def redeem_tenant_invitation(
+    tenant_id: str, request: TenantInvitationRedeemRequest,
+    actor: ActorIdentity = Depends(require_authenticated_actor),
+):
+    """Redeem an invitation only as its intended authenticated subject."""
+    if actor.role == "system":
+        raise HTTPException(status_code=403, detail="platform system identities cannot redeem tenant invitations")
+    token_sha256 = hashlib.sha256(request.invitation_token.encode("utf-8")).hexdigest()
+    try:
+        membership = tenant_membership_repository.redeem_invitation(
+            token_sha256, actor.actor_id, tenant_id=tenant_id.strip()
+        )
+    except InvitationUnavailableError as exc:
+        raise HTTPException(status_code=400, detail="invitation is invalid or unavailable") from exc
+    except InvitationConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="tenant invitation redemption is unavailable") from exc
+    return _membership_payload(membership)
+
+
+@app.post("/tenants/{tenant_id}/invitations/{invitation_id}/revoke")
+def revoke_tenant_invitation(
+    tenant_id: str, invitation_id: str,
+    actor: ActorIdentity | None = Depends(_resource_actor),
+):
+    """Revoke a pending invitation and append a lifecycle audit event."""
+    _require_tenant_membership_admin(actor, tenant_id)
+    if actor is None:
+        raise HTTPException(status_code=401, detail="authenticated tenant administrator required")
+    try:
+        invitation = tenant_membership_repository.revoke_invitation(
+            tenant_id.strip(), invitation_id, revoked_by=actor.actor_id
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="invitation not found") from exc
+    except InvitationConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="tenant invitation update is unavailable") from exc
+    return _invitation_payload(invitation)
+
+
+@app.get("/tenants/{tenant_id}/invitation-events")
+def list_tenant_invitation_events(
+    tenant_id: str, limit: int = Query(default=100, ge=1, le=500),
+    actor: ActorIdentity | None = Depends(_resource_actor),
+):
+    """Read tenant-scoped invitation audit history."""
+    _require_tenant_membership_admin(actor, tenant_id)
+    try:
+        events = tenant_membership_repository.list_invitation_events(tenant_id.strip(), limit=limit)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="tenant invitation audit lookup is unavailable") from exc
+    return {"tenant_id": tenant_id.strip(), "events": [
+        {**event, "occurred_at": event["occurred_at"].isoformat()} for event in events
+    ]}
+
 
 
 @app.post("/cases", response_model=CaseRecord)

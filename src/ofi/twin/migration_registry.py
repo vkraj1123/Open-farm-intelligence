@@ -60,6 +60,11 @@ MIGRATIONS = (
         name="tenant_membership_registry_and_audit",
         filename="005_tenant_membership_registry_and_audit.sql",
     ),
+    SchemaMigration(
+        version=6,
+        name="tenant_invitation_lifecycle",
+        filename="006_tenant_invitation_lifecycle.sql",
+    ),
 )
 
 versions = tuple(item.version for item in MIGRATIONS)
