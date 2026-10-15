@@ -1,19 +1,26 @@
 """Offline regression tests for the phone-launchable staging API check."""
 
+from importlib.util import module_from_spec, spec_from_file_location
+from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request
 
 import pytest
 
-from scripts.staging_api_readiness import (
-    CheckFailure,
-    MAX_RESPONSE_BYTES,
-    _NoRedirectHandler,
-    fetch_json,
-    run_check,
-    validate_base_url,
-    verify_readiness_payload,
-)
+# Load the phone-invoked script directly; pytest's configured pythonpath is src/.
+_SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "staging_api_readiness.py"
+_SPEC = spec_from_file_location("staging_api_readiness", _SCRIPT_PATH)
+assert _SPEC is not None and _SPEC.loader is not None
+_readiness = module_from_spec(_SPEC)
+_SPEC.loader.exec_module(_readiness)
+
+CheckFailure = _readiness.CheckFailure
+MAX_RESPONSE_BYTES = _readiness.MAX_RESPONSE_BYTES
+_NoRedirectHandler = _readiness._NoRedirectHandler
+fetch_json = _readiness.fetch_json
+run_check = _readiness.run_check
+validate_base_url = _readiness.validate_base_url
+verify_readiness_payload = _readiness.verify_readiness_payload
 
 
 @pytest.mark.parametrize(
