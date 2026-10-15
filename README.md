@@ -2500,3 +2500,15 @@ The API authentication boundary now supports an opt-in OIDC/JWKS verification mo
 Configure `OFI_AUTH_MODE=oidc_jwks`, `OFI_AUTH_JWKS_URL`, `OFI_AUTH_ISSUER`, and `OFI_AUTH_AUDIENCE` only after testing with an approved staging issuer. See the [identity-provider runbook](docs/identity-provider.md). Keep the authoritative tenant-membership check enabled; a valid signed tenant claim never overrides a suspended or revoked membership.
 
 **Verification boundary:** unit tests use synthetic RSA keys and a stub key resolver, not a real identity provider. Passing CI proves the checked-in validator behavior, not that SSO/MFA, tenant provisioning or a production issuer is configured.
+
+# 63. OIDC runtime-extra packaging contract
+
+Milestone #62 documented installation with `python -m pip install -e ".[auth]"`, but the `auth` optional dependency group was not declared in package metadata. This milestone declares the runtime `auth` extra with `PyJWT[crypto]` and adds an independent GitHub Actions workflow that installs that extra, then runs the bearer-token verification tests without installing the development extra first.
+
+| Capability | Status | Boundary |
+|---|---|---|
+| Documented `.[auth]` extra | Added to package metadata | Installs PyJWT and its cryptographic dependencies required by OIDC/JWKS verification |
+| Isolated install-path regression check | Added to CI | Installs `.[auth]` and pytest separately, then runs `tests/test_api_auth.py` |
+| Live OIDC provider integration | Still unverified | Needs a trusted staging issuer, provider-issued tokens and deployment network/TLS checks |
+
+This closes a packaging/documentation mismatch. It does not configure a real issuer, enable OIDC mode in any deployment, or replace identity-provider and security review.
