@@ -2481,3 +2481,22 @@ The repository prevents revoking, suspending or demoting the last active tenant 
 **Security boundary:** this implements an authoritative OFI membership registry, but does not replace upstream identity proofing, SSO/MFA, tenant invitations/verification, or independent production security review. Keep OFI_TENANT_MEMBERSHIP_ENFORCEMENT at its default required value outside tests. Disabled mode is permitted only when OFI_ENV=test.
 
 **Verification:** All four GitHub Actions runs passed on hardened commit [2f4261c](https://github.com/vkraj1123/Open-farm-intelligence/commit/2f4261c25457e8632f70f7e31fb5e2e8894f30ba): [standard PR check](https://github.com/vkraj1123/Open-farm-intelligence/actions/runs/38111543850), [PostgreSQL PR check](https://github.com/vkraj1123/Open-farm-intelligence/actions/runs/38111543834), [standard push check](https://github.com/vkraj1123/Open-farm-intelligence/actions/runs/38111541411), and [PostgreSQL push check](https://github.com/vkraj1123/Open-farm-intelligence/actions/runs/38111541402). This tracker update is documentation-only and is being rechecked by CI.
+
+# 62. Opt-in OIDC/JWKS bearer-token verification
+
+The API authentication boundary now supports an opt-in OIDC/JWKS verification mode while preserving HS256 as the default for existing deployments. In `oidc_jwks` mode, OFI accepts RS256-signed access tokens only, resolves keys from a configured HTTPS JWKS endpoint, and validates the signature, exact issuer, audience, subject, time bounds, maximum 24-hour token lifetime, and an explicitly mapped OFI role claim. Role and tenant claim names are configurable; no arbitrary group list is treated as an administrator role.
+
+| Capability | Status | Boundary |
+|---|---|---|
+| Existing HS256 verifier | Preserved and regression-tested | Remains the default; configuration requirements are unchanged |
+| OIDC/JWKS RS256 verifier | Implemented and unit-tested with generated RSA keys | Synthetic local key selection validates signature/claim behavior; a real provider has not been configured |
+| Issuer/audience/algorithm constraints | Implemented and tested | Exact issuer and audience; RS256 only; token lifetime capped at 24 hours |
+| JWKS resilience | Implemented | Five-minute key-set cache; unknown key IDs trigger refresh; key-endpoint connection failure maps to sanitized 503 |
+| Role/tenant claim mapping | Implemented | External roles must map to one explicit OFI role; tenant routes still require active membership in OFI's registry |
+| Deployment documentation | Added in `docs/identity-provider.md` | Runtime must install the `auth` extra and use trusted environment/secret configuration |
+| Real identity-provider integration | Not verified | Needs provider-issued staging tokens, deployment network/TLS checks and security review |
+| Invitation, email verification, MFA and identity lifecycle | Not implemented by this milestone | Remain identity-provider/tenant-onboarding work |
+
+Configure `OFI_AUTH_MODE=oidc_jwks`, `OFI_AUTH_JWKS_URL`, `OFI_AUTH_ISSUER`, and `OFI_AUTH_AUDIENCE` only after testing with an approved staging issuer. See the [identity-provider runbook](docs/identity-provider.md). Keep the authoritative tenant-membership check enabled; a valid signed tenant claim never overrides a suspended or revoked membership.
+
+**Verification boundary:** unit tests use synthetic RSA keys and a stub key resolver, not a real identity provider. Passing CI proves the checked-in validator behavior, not that SSO/MFA, tenant provisioning or a production issuer is configured.
