@@ -839,8 +839,16 @@ def create_tenant_invitation(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=503, detail="tenant invitation creation is unavailable") from exc
-    return {"invitation": _invitation_payload(invitation), "invitation_token": token,
-            "delivery": "manual_or_external"}
+    # This response contains a one-time credential: explicitly prohibit cache storage.
+    return JSONResponse(
+        content={
+            "invitation": _invitation_payload(invitation),
+            "invitation_token": token,
+            "delivery": "manual_or_external",
+        },
+        status_code=201,
+        headers={"Cache-Control": "no-store, private", "Pragma": "no-cache"},
+    )
 
 
 @app.get("/tenants/{tenant_id}/invitations")

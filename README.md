@@ -2537,3 +2537,16 @@ The invitation token is generated with a cryptographically secure random generat
 | Atomic redemption with membership creation/reactivation | Implemented | PostgreSQL transaction keeps invitation consumption, membership and both audit events consistent |
 | Live identity provider and notification delivery | Not verified | Requires deployment integration; no provider/email service configured |
 
+# 65. Invitation response and concurrent-redemption hardening
+
+This follow-up closes two narrow security-validation gaps in the invitation lifecycle.
+
+| Capability | Status | Evidence / boundary |
+|---|---|---|
+| One-time token response caching | Hardened | Invitation creation sets \`Cache-Control: no-store, private\` and \`Pragma: no-cache\`; API test asserts both headers |
+| Concurrent redemption | Integration-tested | Two PostgreSQL transactions race on the same invitation; exactly one may redeem it |
+| Membership and audit consistency under replay | Integration-tested | Exactly one membership row and one membership-creation event are expected after the race |
+| Secret persistence check | Integration-tested | Database stores the SHA-256 digest, not the raw token |
+| External delivery / email verification | Still outstanding | No delivery provider, identity lifecycle, MFA or live issuer has been configured |
+
+The raw invitation token is a short-lived credential, so the create response explicitly prohibits HTTP caching. PostgreSQL's row-level lock during redemption is validated with concurrent independent connections, rather than relying only on sequential tests or the in-memory lock. CI evidence does not substitute for live identity-provider, delivery-channel or independent security testing.
