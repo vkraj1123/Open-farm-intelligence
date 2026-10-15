@@ -199,28 +199,12 @@ def run_check() -> str:
             payload={"actor_id": subject_id, "expires_in_hours": 1},
         )
     except SmokeCheckError:
-        # A network failure can be ambiguous: the server may have created the
-        # invitation. Reconcile by listing and revoke only new pending rows for
-        # this exact subject, if they can be identified unambiguously.
-        try:
-            latest = _list_invitations(opener, base_url, tenant_id, admin_token)
-            prior_ids = {item.get("invitation_id") for item in existing}
-            new_items = [
-                item for item in latest
-                if item.get("invited_actor_id") == subject_id
-                and item.get("status") == "pending"
-                and item.get("invitation_id") not in prior_ids
-            ]
-            if len(new_items) == 1 and new_items[0].get("invitation_id"):
-                if not _revoke_best_effort(
-                    opener, base_url, tenant_id, str(new_items[0]["invitation_id"]), admin_token
-                ):
-                    raise SmokeCheckError("creation outcome was ambiguous and cleanup could not be confirmed")
-        except SmokeCheckError as cleanup_error:
-            if "cleanup could not be confirmed" in str(cleanup_error):
-                raise
+        # We cannot prove which concurrent administrator created a new row when
+        # the HTTP result is ambiguous. Never revoke a row based only on subject
+        # and timing; ask the operator to inspect the tenant's pending invites.
         raise SmokeCheckError(
-            "invitation-creation request failed; check pending invitations before re-running"
+            "invitation-creation request failed; the result may be ambiguous. "
+            "Inspect pending invitations before any retry."
         ) from None
 
     invitation = created.get("invitation")
