@@ -1,5 +1,7 @@
 """PostgreSQL integration checks for durable tenant membership and audit history."""
 import os
+import hashlib
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
@@ -20,7 +22,7 @@ pytestmark = pytest.mark.skipif(
 
 
 def test_postgres_membership_state_is_tenant_scoped_and_audited():
-    assert apply_schema(DATABASE_URL) >= 5
+    assert apply_schema(DATABASE_URL) >= 6
     suffix = uuid4().hex
     tenant_a = f"membership-tenant-a-{suffix}"
     tenant_b = f"membership-tenant-b-{suffix}"
@@ -64,3 +66,38 @@ def test_postgres_membership_state_is_tenant_scoped_and_audited():
                 "UPDATE ofi_tenant_membership_events SET action='rewritten' WHERE event_id=%s",
                 (event_id,),
             )
+
+def test_postgres_invitation_redemption_is_single_use_and_audited():
+    assert apply_schema(DATABASE_URL) >= 6
+    suffix = uuid4().hex
+    tenant_id = f"invite-tenant-{suffix}"
+    intended_actor = f"invite-actor-{suffix}"
+    token = f"test-secret-{uuid4().hex}-{uuid4().hex}"
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    connections = lambda: psycopg.connect(DATABASE_URL)
+    repo = PostgresTenantMembershipRepository(connections)
+    invitation = repo.create_invitation(
+        f"invite-{suffix}", tenant_id, intended_actor, token_hash,
+        datetime.now(timezone.utc) + timedelta(hours=1), created_by="tenant-admin",
+    )
+    with pytest.raises(ValueError, match="invalid or unavailable"):
+        repo.redeem_invitation(token_hash, f"wrong-{suffix}", tenant_id=tenant_id)
+    assert repo.list_invitations(tenant_id, checked_by="tenant-admin")[0].status == "pending"
+
+    membership = repo.redeem_invitation(token_hash, intended_actor, tenant_id=tenant_id)
+    assert membership.actor_id == intended_actor
+    assert membership.membership_role == "member"
+    assert repo.get_active(tenant_id, intended_actor) == membership
+    with pytest.raises(ValueError, match="invalid or unavailable"):
+        repo.redeem_invitation(token_hash, intended_actor, tenant_id=tenant_id)
+
+    listed = repo.list_invitations(tenant_id, checked_by="tenant-admin")
+    assert listed[0].invitation_id == invitation.invitation_id
+    assert listed[0].status == "redeemed"
+    assert [event["action"] for event in repo.list_invitation_events(tenant_id)] == ["redeemed", "created"]
+    with psycopg.connect(DATABASE_URL) as connection:
+        count = connection.execute(
+            "SELECT count(*) FROM ofi_tenant_membership_events WHERE tenant_id=%s AND subject_actor_id=%s",
+            (tenant_id, intended_actor),
+        ).fetchone()[0]
+    assert count == 1

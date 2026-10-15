@@ -4,6 +4,8 @@ import hashlib
 import hmac
 import json
 import time
+from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -178,3 +180,148 @@ def test_resource_authentication_cannot_be_disabled_outside_test_mode(membership
     monkeypatch.setenv("OFI_RESOURCE_AUTH_ENABLED", "false")
     response = membership_client.get("/cases/not-present")
     assert response.status_code == 503
+
+def _create_invitation(client, actor_id="alice", target="bob", tenant_id="tenant-a"):
+    return client.post(
+        f"/tenants/{tenant_id}/invitations",
+        headers=headers(actor_id, tenant_id=tenant_id),
+        json={"actor_id": target, "expires_in_hours": 24},
+    )
+
+
+def test_invitation_is_subject_bound_single_use_and_audited(membership_client):
+    client = membership_client
+    repository = api.tenant_membership_repository
+    repository.grant("tenant-a", "alice", "tenant_admin", granted_by="platform-root")
+    created = _create_invitation(client)
+    assert created.status_code == 201
+    body = created.json()
+    invitation_id = body["invitation"]["invitation_id"]
+    secret = body["invitation_token"]
+    assert len(secret) >= 40
+    assert "token_sha256" not in body["invitation"]
+    token_hash = hashlib.sha256(secret.encode()).hexdigest()
+    assert token_hash in repository._invitations
+    assert secret not in repr(repository._invitations)
+
+    listed = client.get("/tenants/tenant-a/invitations", headers=headers("alice", tenant_id="tenant-a"))
+    assert listed.status_code == 200
+    assert listed.json()["invitations"][0]["status"] == "pending"
+    assert secret not in listed.text
+    assert token_hash not in listed.text
+
+    wrong_subject = client.post(
+        "/tenants/tenant-a/invitations/redeem",
+        headers=headers("mallory", tenant_id="tenant-a"),
+        json={"invitation_token": secret},
+    )
+    assert wrong_subject.status_code == 400
+    assert repository._invitations[token_hash].status == "pending"
+
+    redeemed = client.post(
+        "/tenants/tenant-a/invitations/redeem",
+        headers=headers("bob", tenant_id="tenant-a"),
+        json={"invitation_token": secret},
+    )
+    assert redeemed.status_code == 200
+    assert redeemed.json()["actor_id"] == "bob"
+    assert redeemed.json()["membership_role"] == "member"
+    assert client.get("/cases/not-present", headers=headers("bob", tenant_id="tenant-a")).status_code == 404
+
+    replay = client.post(
+        "/tenants/tenant-a/invitations/redeem",
+        headers=headers("bob", tenant_id="tenant-a"),
+        json={"invitation_token": secret},
+    )
+    assert replay.status_code == 400
+    events = client.get("/tenants/tenant-a/invitation-events", headers=headers("alice", tenant_id="tenant-a"))
+    assert [e["action"] for e in events.json()["events"]] == ["redeemed", "created"]
+    assert events.json()["events"][0]["invitation_id"] == invitation_id
+
+
+def test_invitation_cannot_be_redeemed_from_another_tenant_path(membership_client):
+    client = membership_client
+    api.tenant_membership_repository.grant("tenant-a", "alice", "tenant_admin", granted_by="platform-root")
+    created = _create_invitation(client)
+    secret = created.json()["invitation_token"]
+    wrong_tenant = client.post(
+        "/tenants/tenant-b/invitations/redeem",
+        headers=headers("bob", tenant_id="tenant-a"),
+        json={"invitation_token": secret},
+    )
+    assert wrong_tenant.status_code == 400
+    assert client.post(
+        "/tenants/tenant-a/invitations/redeem",
+        headers=headers("bob", tenant_id="tenant-a"),
+        json={"invitation_token": secret},
+    ).status_code == 200
+
+
+def test_invitation_revocation_blocks_redemption_and_is_audited(membership_client):
+    client = membership_client
+    api.tenant_membership_repository.grant("tenant-a", "alice", "tenant_admin", granted_by="platform-root")
+    created = _create_invitation(client)
+    invitation = created.json()["invitation"]
+    secret = created.json()["invitation_token"]
+    revoked = client.post(
+        f"/tenants/tenant-a/invitations/{invitation['invitation_id']}/revoke",
+        headers=headers("alice", tenant_id="tenant-a"),
+    )
+    assert revoked.status_code == 200
+    assert revoked.json()["status"] == "revoked"
+    rejected = client.post(
+        "/tenants/tenant-a/invitations/redeem",
+        headers=headers("bob", tenant_id="tenant-a"),
+        json={"invitation_token": secret},
+    )
+    assert rejected.status_code == 400
+    events = client.get("/tenants/tenant-a/invitation-events", headers=headers("alice", tenant_id="tenant-a"))
+    assert [e["action"] for e in events.json()["events"]] == ["revoked", "created"]
+
+
+def test_expired_invitation_is_rejected_and_audited(membership_client):
+    client = membership_client
+    repository = api.tenant_membership_repository
+    repository.grant("tenant-a", "alice", "tenant_admin", granted_by="platform-root")
+    created = _create_invitation(client)
+    secret = created.json()["invitation_token"]
+    token_hash = hashlib.sha256(secret.encode()).hexdigest()
+    old = repository._invitations[token_hash]
+    now = datetime.now(timezone.utc)
+    repository._invitations[token_hash] = replace(
+        old, created_at=now - timedelta(hours=2), expires_at=now - timedelta(hours=1)
+    )
+    response = client.post(
+        "/tenants/tenant-a/invitations/redeem",
+        headers=headers("bob", tenant_id="tenant-a"),
+        json={"invitation_token": secret},
+    )
+    assert response.status_code == 400
+    assert repository._invitations[token_hash].status == "expired"
+    events = client.get("/tenants/tenant-a/invitation-events", headers=headers("alice", tenant_id="tenant-a"))
+    assert [e["action"] for e in events.json()["events"]] == ["expired", "created"]
+
+
+def test_invitation_creation_requires_admin_and_rejects_active_member_or_duplicate(membership_client):
+    client = membership_client
+    denied = client.post(
+        "/tenants/tenant-a/invitations",
+        headers=headers("not-admin", tenant_id="tenant-a"),
+        json={"actor_id": "bob"},
+    )
+    assert denied.status_code == 403
+    repository = api.tenant_membership_repository
+    repository.grant("tenant-a", "alice", "tenant_admin", granted_by="platform-root")
+    first = _create_invitation(client, target="bob")
+    assert first.status_code == 201
+    duplicate = _create_invitation(client, target="bob")
+    assert duplicate.status_code == 409
+    repository.grant("tenant-a", "carol", "member", granted_by="alice")
+    active = _create_invitation(client, target="carol")
+    assert active.status_code == 409
+    admin_role_attempt = client.post(
+        "/tenants/tenant-a/invitations",
+        headers=headers("alice", tenant_id="tenant-a"),
+        json={"actor_id": "dave", "membership_role": "tenant_admin"},
+    )
+    assert admin_role_attempt.status_code == 422
