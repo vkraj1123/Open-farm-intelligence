@@ -2,6 +2,12 @@
 
 This check is designed to be launched from GitHub on a phone. It performs a real, short-lived invitation operation against a deployment you explicitly identify as **staging**; it does not deploy OFI or configure an identity/email provider.
 
+## Prerequisite: deploy and verify the API first
+
+If you do not yet have a deployed OFI API, stop here and follow the [phone-first Render deployment guide](deploy-to-render.md). This invitation workflow cannot create a server. After Render finishes deploying, use the exact hostname shown in the Render dashboard and confirm `/health` returns HTTP 200 with `status: "ok"` and `/ready` returns HTTP 200 with `status: "ready"`, PostgreSQL persistence, and `durable: true`.
+
+Do **not** copy a documentation example such as `https://ofi-staging.example.net` into GitHub Variables: `example.net`, `example.com`, `example.org`, `.test`, and `.invalid` are placeholders, not your service. Use only the real HTTPS origin, without a path, query, fragment, or trailing backslash. The workflow also needs a configured trusted identity provider and signed delivery bridge; deploying the API alone is not enough for invitation acceptance.
+
 ## What it verifies
 
 The workflow checks the staging health and readiness endpoints, uses a staging tenant-administrator bearer token to create a one-hour invitation for a configured test identity-provider subject, verifies no-store response headers, verifies the webhook-mode response contains no token/secret fields, confirms the API reports webhook acceptance with a well-formed event ID, and checks the invitation is visible in the durable metadata list.
@@ -14,7 +20,7 @@ A passing workflow proves the staging API accepted the delivery handoff and pers
 
 1. Open the repository on GitHub, go to **Settings → Environments**, and create an environment named \`ofi-staging\`. Restrict deployments to \`main\`. Add required reviewers/protection where your repository plan supports it; the workflow also requires a typed confirmation.
 2. In the \`ofi-staging\` environment, add this variable:
-   - \`OFI_STAGING_BASE_URL\` — the root origin of the deployed staging API, for example \`https://ofi-staging.example.net\`. Do not include a path, query, fragment, or credentials.
+   - \`OFI_STAGING_BASE_URL\` — the root origin of the deployed staging API, for example \`the actual HTTPS origin shown by Render (not a documentation placeholder)\`. Do not include a path, query, fragment, or credentials.
 3. Add these **environment secrets**:
    - \`OFI_STAGING_ADMIN_BEARER_TOKEN\` — a short-lived staging tenant-admin access token for the selected tenant.
    - \`OFI_STAGING_TENANT_ID\` — the exact staging tenant identifier.
