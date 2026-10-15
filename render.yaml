@@ -1,0 +1,42 @@
+# Render Blueprint for a temporary OFI staging deployment.
+# IMPORTANT: Render's Free Postgres expires 30 days after creation. This setup
+# is for smoke testing only; do not store real farmer/production data here.
+services:
+  - type: web
+    name: ofi-staging-api
+    runtime: python
+    plan: free
+    region: singapore
+    branch: main
+    buildCommand: pip install --upgrade pip && pip install ".[postgres,auth]"
+    startCommand: sh scripts/render_start.sh
+    healthCheckPath: /health
+    autoDeployTrigger: 'off'
+    envVars:
+      - key: OFI_DATABASE_URL
+        fromDatabase:
+          name: ofi-staging-db
+          property: connectionString
+      - key: OFI_AUTH_MODE
+        value: hs256
+      - key: OFI_AUTH_HMAC_SECRET
+        generateValue: true
+      - key: OFI_AUTH_ISSUER
+        value: https://ofi-staging.invalid
+      - key: OFI_AUTH_AUDIENCE
+        value: ofi-api
+      - key: OFI_TENANT_MEMBERSHIP_ENFORCEMENT
+        value: required
+      - key: OFI_INVITATION_DELIVERY_MODE
+        value: manual
+      - key: PYTHONUNBUFFERED
+        value: "1"
+
+databases:
+  - name: ofi-staging-db
+    databaseName: ofi_staging
+    user: ofi_staging_user
+    plan: free
+    region: singapore
+    postgresMajorVersion: "16"
+    ipAllowList: []

@@ -1,5 +1,9 @@
 # Open Farm Intelligence
 
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/vkraj1123/Open-farm-intelligence)
+
+> **Temporary staging only:** the included Free Render Postgres resource expires after 30 days. Do not use this setup for real farmer data or production.
+
 **Open Farm Intelligence (OFI)** is an open-source farm-level intelligence and orchestration system for Indian agriculture.
 
 > **Bharat-VISTAAR provides the agricultural digital network; Open Farm Intelligence provides the farm-level intelligence and orchestration layer that turns that network into a continuous farm decision system.**
@@ -2579,3 +2583,18 @@ A manual GitHub Actions workflow now provides a guarded staging check that can b
 | Real delivery receipt and subject-bound redemption | Not yet verified | Requires staging deployment, environment secrets, bridge operations view and a disposable test identity |
 
 See the [phone-launchable staging acceptance guide](docs/staging-invitation-acceptance.md). A green workflow will prove the staging API accepted the webhook handoff; it will not by itself prove mailbox delivery or successful redemption. Do not configure production credentials in this workflow.
+
+# 68. Phone-first Render API deployment starter
+
+Added a Render Blueprint and startup entrypoint to move OFI from CI-only code to a reachable FastAPI staging service without requiring a local PC. The Blueprint provisions a temporary Render web service and PostgreSQL database; the startup command applies OFI's ordered, checksum-verified schema migrations before starting Uvicorn. The web service uses `/health` as its liveness check and keeps resource authentication enabled.
+
+| Capability | Status | Evidence / boundary |
+|---|---|---|
+| Render Blueprint | Added in this milestone | `render.yaml` provisions a Python web service and PostgreSQL in Singapore |
+| Startup and schema migration | Added in this milestone | `scripts/render_start.sh` requires `OFI_DATABASE_URL`, runs `ofi-schema`, then binds Uvicorn to `0.0.0.0:$PORT` |
+| Phone-first deployment instructions | Added in this milestone | [Render deployment guide](docs/deploy-to-render.md) and Deploy to Render button |
+| Live service and database | Not yet verified | Repository changes cannot provision cloud resources without the owner's Render/GitHub authorization |
+| Durable long-lived staging / production | Not provided by the included free configuration | Render documents a 30-day expiry for Free Postgres; upgrade or select a database plan with appropriate retention/backups before keeping data |
+| Live identity provider and invitation delivery bridge | Still outstanding | Auth issuer is deliberately non-routable; delivery remains in manual mode until a trusted provider bridge is deployed |
+
+**Next acceptance step:** deploy the Blueprint, then verify that the actual `/health` endpoint returns HTTP 200 and `/ready` confirms PostgreSQL, PostGIS and the complete current schema. The staging invitation workflow remains blocked until the real URL, trusted identity issuer and signed delivery bridge are configured. A CI pass does not claim that hosting is live.
