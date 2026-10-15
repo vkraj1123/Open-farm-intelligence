@@ -2578,7 +2578,7 @@ A manual GitHub Actions workflow now provides a guarded staging check that can b
 |---|---|---|
 | Launch from GitHub without a local development machine | Implemented | Manual workflow dispatch; Python standard library only |
 | Staging environment separation | Implemented in workflow contract | Dedicated \`ofi-staging\` GitHub environment, protected branch check, explicit typed confirmation |
-| Safe URL, TLS and redirect handling | Implemented and unit-tested | HTTPS origin only; obvious local/private IP targets and redirects rejected; default TLS verification retained |
+| Safe URL, TLS, placeholder and redirect handling | Implemented and unit-tested | HTTPS origin only; documentation-only hostnames, obvious local/private IP targets and redirects rejected; default TLS verification retained |
 | Token-free response and durable-state checks | Implemented and unit-tested | Checks no-store headers, secret-like response fields, delivery event ID and invitation metadata |
 | Real delivery receipt and subject-bound redemption | Not yet verified | Requires staging deployment, environment secrets, bridge operations view and a disposable test identity |
 
@@ -2598,3 +2598,14 @@ Added a Render Blueprint and startup entrypoint to move OFI from CI-only code to
 | Live identity provider and invitation delivery bridge | Still outstanding | Auth issuer is deliberately non-routable; delivery remains in manual mode until a trusted provider bridge is deployed |
 
 **Next acceptance step:** deploy the Blueprint, then verify that the actual `/health` endpoint returns HTTP 200 and `/ready` confirms PostgreSQL, PostGIS and the complete current schema. The staging invitation workflow remains blocked until the real URL, trusted identity issuer and signed delivery bridge are configured. A CI pass does not claim that hosting is live.
+
+
+# 69. Staging URL placeholder fail-fast validation
+
+The staging invitation smoke check now rejects documentation-only hostnames (`example.com`, `example.net`, `example.org`, `.example`, `.invalid`, and `.test`) before making a network request. The phone runbook now states that deployment and `/health` + `/ready` verification must happen first, and that invitation acceptance additionally requires a real identity-provider configuration and trusted signed delivery bridge.
+
+| Capability | Status | Evidence / boundary |
+|---|---|---|
+| Placeholder-host detection | Added and regression-tested | Fails before network access with an actionable configuration error |
+| Deployment prerequisite clarity | Updated | Invitation guide links the Render setup and distinguishes API deployment from delivery-provider acceptance |
+| Live staging deployment | Still unverified | Owner must authorize the Render Blueprint and verify the actual hostname and PostgreSQL readiness |
