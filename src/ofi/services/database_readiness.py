@@ -32,6 +32,8 @@ REQUIRED_RELATIONS = (
     "ofi_consent_grants",
     "ofi_tenant_memberships",
     "ofi_tenant_membership_events",
+    "ofi_tenant_invitations",
+    "ofi_tenant_invitation_events",
 )
 
 
