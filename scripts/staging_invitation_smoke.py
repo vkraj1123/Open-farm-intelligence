@@ -50,6 +50,16 @@ def validate_base_url(raw: str) -> str:
     host = hostname.rstrip(".").lower()
     if host == "localhost" or host.endswith(".localhost") or host.endswith(".local"):
         raise ValueError("staging base URL must not target a local host")
+    if (
+        host in {"example.com", "example.net", "example.org", "example", "invalid", "test"}
+        or any(
+            host.endswith("." + suffix)
+            for suffix in ("example.com", "example.net", "example.org", "example", "invalid", "test")
+        )
+    ):
+        raise ValueError(
+            "staging base URL uses a documentation/placeholder hostname; deploy the API and use its real hostname"
+        )
     try:
         ip = ipaddress.ip_address(host)
     except ValueError:

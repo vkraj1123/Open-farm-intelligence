@@ -20,6 +20,10 @@ SPEC.loader.exec_module(smoke)
         "https://staging.example.test/path",
         "https://staging.example.test/?token=leak",
         "https://staging.example.test/#fragment",
+        "https://ofi-staging.example.com",
+        "https://ofi-staging.example.net",
+        "https://ofi-staging.example.org",
+        "https://ofi-staging.invalid",
         "https://localhost",
         "https://api.localhost",
         "https://127.0.0.1",
@@ -34,7 +38,7 @@ def test_base_url_rejects_unsafe_or_ambiguous_targets(url):
 
 
 def test_base_url_accepts_https_origin_and_removes_trailing_slash():
-    assert smoke.validate_base_url("https://ofi-staging.example.test/") == "https://ofi-staging.example.test"
+    assert smoke.validate_base_url("https://ofi-staging.api.myfarm.in/") == "https://ofi-staging.api.myfarm.in"
 
 
 @pytest.mark.parametrize(
