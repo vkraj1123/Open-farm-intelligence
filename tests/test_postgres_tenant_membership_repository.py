@@ -1,6 +1,7 @@
 """PostgreSQL integration checks for durable tenant membership and audit history."""
 import os
 import hashlib
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
@@ -9,6 +10,7 @@ import pytest
 psycopg = pytest.importorskip("psycopg")
 
 from ofi.services.tenant_membership_repository import (
+    InvitationUnavailableError,
     LastTenantAdminError,
     PostgresTenantMembershipRepository,
 )
@@ -101,3 +103,49 @@ def test_postgres_invitation_redemption_is_single_use_and_audited():
             (tenant_id, intended_actor),
         ).fetchone()[0]
     assert count == 1
+
+def test_postgres_concurrent_redemption_consumes_invitation_exactly_once():
+    assert apply_schema(DATABASE_URL) >= 6
+    suffix = uuid4().hex
+    tenant_id = f"invite-race-tenant-{suffix}"
+    intended_actor = f"invite-race-actor-{suffix}"
+    raw_token = f"race-secret-{uuid4().hex}-{uuid4().hex}"
+    token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+    repo = PostgresTenantMembershipRepository(lambda: psycopg.connect(DATABASE_URL))
+    repo.create_invitation(
+        f"invite-race-{suffix}", tenant_id, intended_actor, token_hash,
+        datetime.now(timezone.utc) + timedelta(hours=1), created_by="tenant-admin",
+    )
+
+    def redeem_once(_):
+        try:
+            membership = repo.redeem_invitation(token_hash, intended_actor, tenant_id=tenant_id)
+            return ("redeemed", membership.actor_id)
+        except InvitationUnavailableError:
+            return ("unavailable", None)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = list(executor.map(redeem_once, range(2)))
+
+    assert sorted(outcome for outcome, _actor in outcomes) == ["redeemed", "unavailable"]
+    assert sum(actor == intended_actor for _outcome, actor in outcomes) == 1
+    assert repo.get_active(tenant_id, intended_actor).membership_role == "member"
+    invitation_events = repo.list_invitation_events(tenant_id)
+    assert [event["action"] for event in invitation_events] == ["redeemed", "created"]
+    with psycopg.connect(DATABASE_URL) as connection:
+        membership_rows = connection.execute(
+            "SELECT count(*) FROM ofi_tenant_memberships WHERE tenant_id=%s AND actor_id=%s",
+            (tenant_id, intended_actor),
+        ).fetchone()[0]
+        audit_rows = connection.execute(
+            "SELECT count(*) FROM ofi_tenant_membership_events WHERE tenant_id=%s AND subject_actor_id=%s",
+            (tenant_id, intended_actor),
+        ).fetchone()[0]
+        stored_digest = connection.execute(
+            "SELECT token_sha256 FROM ofi_tenant_invitations WHERE tenant_id=%s AND invited_actor_id=%s",
+            (tenant_id, intended_actor),
+        ).fetchone()[0]
+    assert membership_rows == 1
+    assert audit_rows == 1
+    assert stored_digest == token_hash
+    assert raw_token not in stored_digest

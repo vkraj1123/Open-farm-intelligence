@@ -195,6 +195,8 @@ def test_invitation_is_subject_bound_single_use_and_audited(membership_client):
     repository.grant("tenant-a", "alice", "tenant_admin", granted_by="platform-root")
     created = _create_invitation(client)
     assert created.status_code == 201
+    assert created.headers["cache-control"] == "no-store, private"
+    assert created.headers["pragma"] == "no-cache"
     body = created.json()
     invitation_id = body["invitation"]["invitation_id"]
     secret = body["invitation_token"]
