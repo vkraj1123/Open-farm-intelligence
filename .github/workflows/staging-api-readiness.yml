@@ -1,0 +1,33 @@
+name: staging API readiness
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: "Paste the real Render service origin (for example https://ofi-staging-api.onrender.com)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ofi-staging-api-readiness
+  cancel-in-progress: false
+
+jobs:
+  readiness:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Verify deployed API endpoints
+        env:
+          OFI_STAGING_BASE_URL: ${{ inputs.base_url }}
+        run: python scripts/staging_api_readiness.py
