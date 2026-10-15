@@ -46,6 +46,8 @@ FINGERPRINT_RELATIONS = (
     "evidence_comparison_policy_versions",
     "evidence_comparison_assessments",
     "ofi_consent_grants",
+    "ofi_tenant_invitations",
+    "ofi_tenant_invitation_events",
 )
 
 _PG_ENV = {
