@@ -1,0 +1,22 @@
+name: auth extra packaging
+
+on:
+  push:
+    branches: ["main", "fix/**"]
+  pull_request:
+
+jobs:
+  auth-extra:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+      - name: Install the documented runtime extra
+        run: python -m pip install -e ".[auth]"
+      - name: Install test runner separately
+        run: python -m pip install "pytest>=8,<9"
+      - name: Exercise bearer-token verification without dev extras
+        run: python -m pytest -q tests/test_api_auth.py
