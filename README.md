@@ -2760,3 +2760,19 @@ The staging page advanced beyond the CDN-load error but surfaced a generic initi
 | API security | Unchanged | Render staging API remains in HS256 mode; no API credentials or authorization settings are changed |
 
 After merging, manually deploy `ofi-staging-web`. If setup still fails, use the stage-specific message and Auth0 tenant logs to pinpoint the remaining dashboard configuration issue.
+
+# 80. Auth0 identity and API-audience token issuance verified
+
+**Observed staging result (2026-10-16):** The owner signed in successfully through the deployed OFI staging browser client. The page showed the verified identity and reported that Auth0 issued an access token for the configured API audience `ofi-api` after the owner granted the application user-delegated API access. This is a live browser observation, not a backend authorization test.
+
+| Capability | Status | Evidence / boundary |
+|---|---|---|
+| First-party SPA identity login | Verified in the live staging browser | Auth0 returned to `https://ofi-staging-web.onrender.com` and the page showed identity verified |
+| Auth0 API-audience token issuance | Verified in the live staging browser | Client's silent token request for audience `ofi-api` succeeded; no token contents were displayed or logged |
+| OIDC issuer/JWKS metadata preflight | Pending for the actual Auth0 tenant | Must compare exact `issuer` and `jwks_uri` from the tenant's discovery JSON using the [phone-first preflight workflow](https://github.com/vkraj1123/Open-farm-intelligence/actions/workflows/oidc-provider-preflight.yml) |
+| Trusted OFI role claim | Pending | Auth0 must derive the allowed OFI role from trusted administrator-controlled authorization data; never from user-editable metadata, email, or phone number |
+| Tenant claim and active membership | Pending | Tenant-scoped requests must pass both signed token claim validation and OFI's independent authoritative membership registry |
+| Backend accepts Auth0 tokens | Not yet tested | Render API still uses `OFI_AUTH_MODE=hs256`; Auth0's RS256 access token is not expected to pass until a reviewed staging-only OIDC/JWKS configuration is prepared and tested |
+| Invitation delivery/redemption | Separate pending gate | Successful identity login/token issuance does not prove signed invitation delivery or redemption |
+
+**Next gate:** run Auth0's exact discovery issuer/JWKS through the existing metadata preflight, then design and test the trusted role/tenant claim mapping and active-membership checks. Do not switch the Render API from HS256 to OIDC/JWKS until the claim contract and staged negative/positive authorization tests are ready.
