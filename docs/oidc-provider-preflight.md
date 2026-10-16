@@ -33,8 +33,9 @@ read-only public HTTPS requests. It needs no GitHub variables/secrets, Render
 secret, admin token, client secret, or provider account credential. TLS
 certificate verification stays enabled and HTTP redirects are rejected.
 It rejects credentials/query strings/fragments, non-HTTPS URLs, IP-literal and
-placeholder/non-public hostname patterns. Network responses are bounded in
-size, and response bodies/key material are never printed.
+placeholder hostnames, and DNS answers that include non-public IP addresses.
+Network responses are bounded in size, redirects are rejected, and response
+bodies/key material are never printed.
 
 ## What a pass establishes
 
