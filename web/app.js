@@ -111,13 +111,13 @@
     }
 
     configNotice.hidden = true;
-    if (typeof window.createAuth0Client !== "function") {
+    if (!window.auth0 || typeof window.auth0.createAuth0Client !== "function") {
       setStatus("The Auth0 browser SDK did not load. Check network access and reload this page.", true);
       return;
     }
 
     try {
-      authClient = await window.createAuth0Client({
+      authClient = await window.auth0.createAuth0Client({
         domain: config.domain,
         clientId: config.clientId,
         cacheLocation: "memory",
