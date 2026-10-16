@@ -2664,6 +2664,21 @@ The live Render staging API now passes the bounded-retry readiness check, includ
 | Public signing-key preflight | Implemented in this milestone | Requires unique, public-only RSA signing keys compatible with RS256 and at least 2048-bit modulus |
 | Network and secret safeguards | Implemented in this milestone | HTTPS with verified TLS; redirects rejected; query/userinfo/fragment and IP-literal targets rejected; DNS answers checked for non-public IPs; response bodies and key material are never printed |
 | Phone-first operator flow | Implemented in this milestone | Manual workflow; no credentials, provider secrets, or local computer required |
-| Live identity-provider integration | Still pending | No provider has yet been selected/configured for OFI staging; this check does not validate bearer tokens, audience/claims, user login, tenant membership, or invitation delivery |
+| Public metadata preflight | Passed on 2026-10-16 | Google issuer and JWKS matched exactly; two public RSA signing keys passed RS256/2048-bit checks ([run #1](https://github.com/vkraj1123/Open-farm-intelligence/actions/runs/38846299491)) |
+| Live identity-provider integration | Still pending | Google's metadata has been tested, but final token issuer/broker remains unselected; metadata alone does not validate API audience, OFI role/tenant claims, user login, tenant membership, or invitation delivery |
 
 See the [OIDC provider preflight runbook](docs/oidc-provider-preflight.md) and [manual preflight workflow](https://github.com/vkraj1123/Open-farm-intelligence/actions/workflows/oidc-provider-preflight.yml). Do not change the deployed API to OIDC/JWKS mode just because metadata checks pass; select a provider, configure exact issuer/audience/JWKS settings, and complete real staging token and tenant-authorization tests first.
+
+
+# 74. Google OIDC token compatibility decision
+
+The phone-first metadata preflight passed against Google's public issuer and JWKS endpoints on 2026-10-16. Reviewing OFI's existing verifier after that success established the next safety boundary: OFI accepts RS256 bearer tokens only in opt-in OIDC mode, checks a configured API audience, and requires a role claim from OFI's allow-list. Tenant-scoped access still depends on the authoritative OFI membership registry.
+
+| Capability | Status | Evidence / boundary |
+|---|---|---|
+| Google discovery and signing-key reachability | Verified | [OIDC metadata preflight run #1](https://github.com/vkraj1123/Open-farm-intelligence/actions/runs/38846299491) |
+| Native Google token compatibility with OFI authorization claims | Not established; do not assume | Google's standard ID-token reference documents the issuer, audience, subject and time claims but not OFI's `role` or `tenant_id`; its ID-token audience is an OAuth client ID |
+| Safe provider architecture | Decision required | Select a trusted API token issuer/broker capable of issuing OFI-audience RS256 access tokens with authorization claims from trusted sources, or approve a reviewed alternative identity-mapping architecture |
+| Render auth-mode change | Not performed | Staging remains on its existing HS256 configuration; no auth variables were modified by the preflight |
+
+See [OIDC provider preflight](docs/oidc-provider-preflight.md), [OFI token verification contract](docs/identity-provider.md), and the [Google OIDC ID-token reference](https://developers.google.com/identity/openid-connect/reference). Do not treat a successful discovery/JWKS check as proof of real login or tenant authorization. A user email, hosted domain, or request-supplied role must never grant an OFI role or tenant membership.
