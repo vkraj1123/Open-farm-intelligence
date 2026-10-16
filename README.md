@@ -2698,3 +2698,21 @@ The requested staging sign-in plan now includes two authentication methods throu
 | Render auth-mode change | Not performed | Keep staging's existing `hs256` mode until Auth0 issuer/JWKS, API audience, authorization claims, and real staging token checks pass |
 
 See the [Google + SMS OTP Auth0 staging runbook](docs/auth0-google-sms-staging.md), [OIDC integration guide](docs/identity-provider.md), and optional [verified-phone Auth0 Action template](deploy/auth0/phone-claims-action.js). The Google metadata test passed, but Auth0's own discovery issuer/JWKS preflight and an actual OFI-audience access token are still required. Invitation delivery and redemption remain separate acceptance gates.
+
+
+# 76. Phone-first Auth0 sign-in client scaffold
+
+The staging frontend now has a responsive static sign-in page with separate Google and phone/SMS-code entry points. A Render Blueprint resource `ofi-staging-web` publishes the static `web/` directory, and the setup runbook describes the exact Auth0 SPA callback/origin configuration flow for a phone-only contributor.
+
+| Capability | Status | Evidence / boundary |
+|---|---|---|
+| Mobile-first sign-in screen | Implemented in proposed change | Responsive, keyboard-focusable page with Google and SMS OTP options, status messaging, identity confirmation and sign-out |
+| Auth0 login redirects | Implemented in proposed change | Auth0 SPA SDK redirect flow uses the configured `google-oauth2` and `sms` connections; callback state is handled and OAuth query parameters are removed afterward |
+| Token exposure controls | Implemented in proposed change | SDK memory cache, no refresh-token persistence configured, no token output/logging, no manual browser storage |
+| Static staging deployment | Implemented in proposed change | Render Blueprint includes `ofi-staging-web` with restrictive response headers and a Content Security Policy |
+| Unconfigured state | Implemented in proposed change | Blank Auth0 domain/client ID leave sign-in buttons disabled; no fake identity-provider config is committed |
+| Regression checks | Added in proposed change | Python test suite asserts Google/SMS paths, disabled defaults, token-handling safeguards, authorization disclosure and Blueprint security headers |
+| Live Auth0 configuration | Pending owner setup | Needs a staging Auth0 tenant, SPA application, enabled Google and SMS connections, API audience `ofi-api`, and allowed URLs that match Render's actual static-site hostname |
+| Actual OFI API authorization | Not yet tested by this scaffold | Login and token issuance do not validate OFI role/tenant claims or active membership; API auth mode remains HS256 and protected API calls are intentionally out of scope here |
+
+After merge, use Render's existing Blueprint **Manual sync** to add `ofi-staging-web`. Copy its actual hostname, register it as the Auth0 SPA's exact callback/logout/origin, then update only the public domain and Client ID in `web/auth-config.js` via a reviewed GitHub change. Deploy that static-site commit from Render. Do not change the API's auth mode until the Auth0 token issuer/audience/claim design and real authorization tests are completed.

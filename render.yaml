@@ -32,6 +32,32 @@ services:
       - key: PYTHONUNBUFFERED
         value: "1"
 
+  # Phone-first browser client. Auth0 domain/client ID are public SPA values;
+  # configure them only after the Auth0 application exists.
+  - type: web
+    name: ofi-staging-web
+    runtime: static
+    branch: main
+    buildCommand: echo "OFI staging login client uses static files; no build step required."
+    staticPublishPath: ./web
+    autoDeployTrigger: 'off'
+    headers:
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      - path: /*
+        name: Referrer-Policy
+        value: strict-origin-when-cross-origin
+      - path: /*
+        name: X-Frame-Options
+        value: DENY
+      - path: /*
+        name: Permissions-Policy
+        value: "camera=(), microphone=(), geolocation=()"
+      - path: /*
+        name: Content-Security-Policy
+        value: "default-src 'self'; script-src 'self' https://cdn.auth0.com; connect-src 'self' https://*.auth0.com; frame-src https://*.auth0.com; style-src 'self'; img-src 'self' data:; base-uri 'self'; object-src 'none'; frame-ancestors 'none'"
+
 databases:
   - name: ofi-staging-db
     databaseName: ofi_staging

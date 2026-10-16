@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#10251d">
+  <meta name="description" content="Open Farm Intelligence staging sign-in.">
+  <title>Sign in · Open Farm Intelligence</title>
+  <link rel="stylesheet" href="./styles.css">
+  <script src="./auth-config.js"></script>
+  <script src="https://cdn.auth0.com/js/auth0-spa-js/2.24/auth0-spa-js.production.js" defer></script>
+  <script src="./app.js" defer></script>
+</head>
+<body>
+  <main class="page-shell">
+    <header class="brand">
+      <div class="brand-mark" aria-hidden="true">OFI</div>
+      <div>
+        <p class="eyebrow">OPEN FARM INTELLIGENCE</p>
+        <h1>One identity.<br>Better farm decisions.</h1>
+      </div>
+    </header>
+
+    <section class="login-card" aria-labelledby="signin-title">
+      <div class="status-strip">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span>STAGING ENVIRONMENT</span>
+      </div>
+      <h2 id="signin-title">Welcome to OFI</h2>
+      <p class="intro">Choose a secure sign-in method. Your verification is handled by the identity provider, not by this page.</p>
+
+      <div id="config-notice" class="notice notice-info" role="status">
+        This staging login page needs your Auth0 tenant domain and application client ID before sign-in can be enabled.
+      </div>
+
+      <div class="signin-actions">
+        <button class="button button-google" id="google-login" type="button" disabled>
+          <span class="google-mark" aria-hidden="true">G</span>
+          <span>Continue with Google</span>
+        </button>
+        <button class="button button-phone" id="phone-login" type="button" disabled>
+          <span class="phone-mark" aria-hidden="true">↗</span>
+          <span>Continue with phone</span>
+        </button>
+      </div>
+      <p class="microcopy">Phone sign-in uses a one-time SMS code from Auth0. Message delivery or carrier charges may apply.</p>
+
+      <div id="runtime-status" class="runtime-status" role="status" aria-live="polite">Checking sign-in configuration…</div>
+
+      <section id="signed-in-panel" class="signed-in-panel" hidden aria-labelledby="signed-in-title">
+        <div class="success-icon" aria-hidden="true">✓</div>
+        <h3 id="signed-in-title">Identity verified</h3>
+        <p id="user-label" class="user-label"></p>
+        <p class="notice notice-info">
+          This confirms the identity-provider sign-in only. OFI API permissions and tenant membership have not yet been tested.
+        </p>
+        <button id="logout" class="button button-secondary" type="button">Sign out</button>
+      </section>
+    </section>
+
+    <section class="trust-notes" aria-label="Security notes">
+      <div class="trust-item">
+        <span class="trust-icon" aria-hidden="true">⌁</span>
+        <div><strong>Verified by your provider</strong><p>OFI does not receive or store your SMS code.</p></div>
+      </div>
+      <div class="trust-item">
+        <span class="trust-icon" aria-hidden="true">◎</span>
+        <div><strong>Access is separate from identity</strong><p>A successful sign-in does not grant a farm role or tenant access.</p></div>
+      </div>
+    </section>
+
+    <footer>
+      <a id="api-health-link" href="https://ofi-staging-api.onrender.com/health" target="_blank" rel="noopener noreferrer">View staging API health</a>
+      <span>OFI staging · Do not use production credentials or farmer records.</span>
+    </footer>
+  </main>
+</body>
+</html>

@@ -10,6 +10,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Check Auth0 browser client syntax
+        run: node --check web/app.js && node --check deploy/auth0/phone-claims-action.js
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
