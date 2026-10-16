@@ -17,7 +17,44 @@ This is an integration guide, not a claim that Auth0 has been configured. Config
 - Set the application's allowed callback/logout/web-origin URLs only to the actual app origins you control. Do not use the Render API URL as a login callback unless a real client on that origin handles Auth0 callbacks.
 - Store client secrets in the relevant provider dashboard/secret manager. Never put them in GitHub workflow inputs, the README, a source file, or a chat.
 
-## 2. Enable Google sign-in
+## 2. Deploy the phone-friendly sign-in page
+
+The repository includes a static browser client under `web/`. The Render
+Blueprint creates a second resource, `ofi-staging-web`, separately from the API.
+After this PR is merged:
+
+1. Open the existing Render Blueprint named `open-farm-intelligence` and run
+   **Manual sync**. Review that it adds `ofi-staging-web` and preserves
+   `ofi-staging-api` and `ofi-staging-db`; do not delete or recreate the API
+   or database.
+2. Open the new static site and wait for its first deploy. Copy the exact HTTPS
+   `onrender.com` hostname Render assigns it.
+3. In Auth0, create an **Application → Single Page Application** for OFI
+   staging. Add that exact site origin to **Allowed Callback URLs**, **Allowed
+   Logout URLs**, and **Allowed Web Origins**. Use the origin only, e.g.
+   `https://<actual-static-site-host>`; no paths or trailing slash.
+4. In the repository, open
+   [`web/auth-config.js`](../web/auth-config.js) and set `domain` to the
+   Auth0 tenant hostname only (no `https://`), and `clientId` to the public
+   SPA Client ID. Keep the API audience exactly `ofi-api` unless the Render
+   API's `OFI_AUTH_AUDIENCE` is deliberately changed too.
+5. Open a PR with those two public values, merge it after CI passes, then return
+   to Render and manually deploy the latest commit for `ofi-staging-web`.
+
+The Auth0 SPA Client ID and tenant hostname are public browser configuration,
+not secrets. **Never put a client secret, SMS provider secret, OTP, access
+token, or refresh token in `web/auth-config.js`.** The login controls stay
+disabled while the tenant domain/client ID are empty. The web client obtains
+tokens only through Auth0's SDK, uses its in-memory cache, and never prints a
+token to the page or logs.
+
+The sign-in page can establish an Auth0 identity and request an access token
+for the configured audience. It does not yet call protected OFI endpoints;
+a successful login is not evidence of an accepted OFI role or tenant
+membership. Keep the Render API in its existing HS256 mode until the trusted
+claim path and real API authorization test are complete.
+
+## 3. Enable Google sign-in
 
 In Auth0 Dashboard, navigate to **Authentication → Social** and enable/create the Google connection.
 
@@ -30,7 +67,7 @@ Google provides a verified identity to Auth0. Do not assume that a Google ID tok
 
 Official guide: [Auth0 — Add Google Login](https://auth0.com/docs/authenticate/identity-providers/social-identity-providers/google).
 
-## 3. Enable phone-number login with SMS OTP
+## 4. Enable phone-number login with SMS OTP
 
 In Auth0 Dashboard, configure a **Passwordless → SMS** connection and enable it for the same staging application that uses Google sign-in.
 
@@ -43,7 +80,7 @@ In Auth0 Dashboard, configure a **Passwordless → SMS** connection and enable i
 
 Official guides: [Auth0 — Send a code by SMS](https://auth0.com/docs/api/authentication/passwordless/get-code-or-link), [Auth0 — Authenticate with a passwordless verification code](https://auth0.com/docs/api/authentication/passwordless/authenticate-user), and [Configure phone messaging providers](https://auth0.com/docs/customize/phone-messages/configure-phone-messaging-providers).
 
-## 4. Register the OFI API in Auth0
+## 5. Register the OFI API in Auth0
 
 In Auth0 Dashboard, create a custom API for OFI and select **RS256** as its signing algorithm. Define a stable API Identifier/audience for this environment, and use the exact same value in the OFI API's `OFI_AUTH_AUDIENCE` environment variable.
 
@@ -53,7 +90,7 @@ After obtaining the Auth0 issuer and the JWKS URI from that tenant's own OIDC di
 
 Official guide: [Auth0 — Get Access Tokens](https://auth0.com/docs/secure/tokens/access-tokens/get-access-tokens).
 
-## 5. Configure trusted authorization claims before enabling OIDC in Render
+## 6. Configure trusted authorization claims before enabling OIDC in Render
 
 OFI's current verifier requires:
 
@@ -69,7 +106,7 @@ Auth0 custom claims should use a collision-resistant namespace. OFI supports con
 
 Do not change the deployed Render service from `OFI_AUTH_MODE=hs256` to `oidc_jwks` until the exact Auth0 issuer, JWKS URL, audience and trusted authorization-claim path are configured and a real staging access token is tested end to end. Keep the current auth mode until that checklist is complete.
 
-## 6. Optional verified phone claims
+## 7. Optional verified phone claims
 
 Auth0's user profile uses `phone_number` and `phone_verified` for the SMS identity. If the client genuinely needs the phone number in the access token, use a Post-Login Action that copies the provider's verified phone status into a namespaced claim. Use a namespace under a domain you control; do not use the sample placeholder unchanged.
 
@@ -77,7 +114,7 @@ Use the checked-in [Auth0 phone-claims Action template](../deploy/auth0/phone-cl
 
 This Action intentionally omits phone claims when the provider has not verified the phone number. Do not copy an unverified phone number as verified. Do not use these claims as tenant authorization, and do not assume Google sign-in always returns a verified phone.
 
-## 7. Staging acceptance checklist
+## 8. Staging acceptance checklist
 
 - [ ] Google connection is enabled and tested for the staging application.
 - [ ] SMS/passwordless connection is enabled and tested with a phone number you control.
