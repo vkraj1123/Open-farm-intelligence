@@ -124,3 +124,15 @@ This Action intentionally omits phone claims when the provider has not verified 
 - [ ] Staging invitation delivery is tested separately with a trusted signed delivery bridge; login success alone does not verify invitations or redemption.
 
 Do not use real farmer records or production accounts on the temporary Free-tier staging deployment. Do not treat this runbook or a metadata-only workflow pass as production approval.
+
+
+## Troubleshooting: setup fails before sign-in
+
+If the page reports that Auth0 could not initialize before the user has selected Google or phone sign-in:
+
+1. Confirm the public tenant hostname and Client ID come from the same Auth0 tenant/application.
+2. In that application's **Settings → Application URIs**, add the exact origin `https://ofi-staging-web.onrender.com` to **Allowed Callback URLs**, **Allowed Logout URLs**, and **Allowed Web Origins**, then save.
+3. Open **Monitoring → Logs** in Auth0 and inspect the latest event matching the attempt time. The static site can load while Auth0 client/session initialization still fails.
+4. OFI's browser client initializes without requesting an OFI API token. The `ofi-api` audience is requested only for login/token issuance, so API-token configuration errors should be reported separately from client initialization.
+
+Do not paste access tokens, OTPs, client secrets, or sensitive log payloads into chat. If the error persists, share the Auth0 log event's plain error code/message only after removing email addresses, phone numbers, tokens, and other personal data.
