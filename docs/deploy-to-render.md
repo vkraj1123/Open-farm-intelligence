@@ -21,6 +21,7 @@ After the deployment files are merged into `main`, open:
 Review the Blueprint before approving it. It creates:
 
 - `ofi-staging-api`: Python/FastAPI web service in Singapore, Free plan.
+- `ofi-staging-web`: global static site hosting the phone-first Google/SMS sign-in client.
 - `ofi-staging-db`: PostgreSQL 16 in Singapore, Free plan, restricted to
   Render's private network.
 - Generated HMAC secret for the API's existing HS256 verifier.
@@ -71,6 +72,31 @@ After Render creates the service, open the [Staging API readiness workflow](http
 This read-only workflow checks `/health` and `/ready` over verified HTTPS. It confirms the API is alive and that PostgreSQL, PostGIS, durable persistence, and the complete current migration schema are ready. It rejects placeholder or non-Render URLs, does not follow redirects, does not need credentials, and does not create an invitation. A successful readiness check is a prerequisite—not a substitute—for configuring the identity provider and invitation delivery bridge.
 
 If it fails, open the Render service logs and use the failure message to determine whether startup, database connectivity, PostGIS, or schema migration needs attention. Do not run invitation acceptance until readiness passes and the separate identity/delivery integrations are configured.
+
+## Deploy and configure the staging sign-in client
+
+The Blueprint includes `ofi-staging-web`, a static, mobile-first sign-in page
+under `web/`. After this PR is merged, open the existing Blueprint in Render,
+tap **Manual sync**, and review the resource changes. It should add the static
+site without deleting/recreating the existing API or database. Open the new
+static site and copy the exact HTTPS hostname Render assigns it.
+
+Then follow the [Google + SMS OTP Auth0 staging runbook](auth0-google-sms-staging.md):
+create a dedicated Auth0 Single Page Application, register the static site's
+exact origin in Allowed Callback URLs, Allowed Logout URLs, and Allowed Web
+Origins, and enable Google + SMS connections for that application. Update
+`web/auth-config.js` with only the public Auth0 tenant domain and SPA client ID,
+then merge that configuration change and manually redeploy `ofi-staging-web`.
+
+The client uses Auth0 Universal Login for both Google and SMS OTP; OFI never
+collects SMS codes on its own. The Auth0 SDK keeps its token cache in memory,
+and the page never prints access tokens. It intentionally does not call
+protected OFI API routes in this milestone. The UI tells the user that
+successful sign-in does not prove an OFI role or tenant membership.
+
+The first sync can create the static website while sign-in remains disabled
+because `web/auth-config.js` starts with empty tenant/client values. This is
+intentional; do not put client secrets or SMS provider credentials in that file.
 
 ## Identity and invitations are still separate setup steps
 
