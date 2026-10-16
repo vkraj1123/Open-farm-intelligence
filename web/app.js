@@ -116,21 +116,25 @@
       return;
     }
 
+    let failedStage = "creating the Auth0 browser client";
     try {
       authClient = await window.auth0.createAuth0Client({
         domain: config.domain,
         clientId: config.clientId,
         cacheLocation: "memory",
         useRefreshTokens: false,
+        // Do not request an OFI API token during client initialization.
+        // The audience is requested only when starting login or checking
+        // API-token issuance, so an API setup issue cannot block the login UI.
         authorizationParams: {
           redirect_uri: window.location.origin,
-          audience: config.audience,
           scope: "openid profile email"
         }
       });
 
       const params = new URLSearchParams(window.location.search);
       if (params.has("state") && (params.has("code") || params.has("error"))) {
+        failedStage = "processing the Auth0 redirect callback";
         try {
           await authClient.handleRedirectCallback();
         } finally {
@@ -141,11 +145,18 @@
 
       googleButton.disabled = false;
       phoneButton.disabled = false;
+      failedStage = "checking the existing Auth0 session";
       await refreshSession();
     } catch (_) {
       googleButton.disabled = true;
       phoneButton.disabled = true;
-      setStatus("Auth0 setup did not complete. Verify the tenant domain, SPA client ID, API audience, enabled connections, and callback URL.", true);
+      if (failedStage === "creating the Auth0 browser client") {
+        setStatus("Auth0 could not initialize. In Auth0 Application Settings, check the tenant domain and Client ID, then add https://ofi-staging-web.onrender.com to Allowed Callback URLs, Allowed Logout URLs, and Allowed Web Origins. Check Auth0 Dashboard → Monitoring → Logs for the exact cause.", true);
+      } else if (failedStage === "processing the Auth0 redirect callback") {
+        setStatus("Auth0 returned an error while completing sign-in. Check the Auth0 application callback URL and the tenant logs; no token was displayed or stored by OFI.", true);
+      } else {
+        setStatus("Auth0 initialized but could not read the current session. Check the Auth0 application’s Allowed Web Origins and recent tenant logs.", true);
+      }
     }
   }
 
