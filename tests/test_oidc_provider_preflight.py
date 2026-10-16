@@ -170,7 +170,7 @@ def test_fetch_json_rejects_redirects():
             raise HTTPError(request.full_url, 302, "Found", {}, None)
 
     with pytest.raises(PreflightFailure, match="redirect; redirects are not followed"):
-        fetch_json(ISSUER, opener=RedirectingOpener())
+        fetch_json(ISSUER, opener=RedirectingOpener(), host_validator=lambda _host: None)
 
 
 def test_fetch_json_rejects_oversized_response():
@@ -193,4 +193,39 @@ def test_fetch_json_rejects_oversized_response():
             return FakeResponse()
 
     with pytest.raises(PreflightFailure, match="exceeded the allowed response size"):
-        fetch_json(ISSUER, opener=FakeOpener())
+        fetch_json(ISSUER, opener=FakeOpener(), host_validator=lambda _host: None)
+
+
+
+def test_public_dns_rejects_private_addresses(monkeypatch):
+    private_record = (
+        2,
+        1,
+        6,
+        "",
+        ("10.2.3.4", 443),
+    )
+    monkeypatch.setattr(_preflight.socket, "getaddrinfo", lambda *a, **kw: [private_record])
+    with pytest.raises(PreflightFailure, match="non-public IP address"):
+        _preflight._assert_public_dns("login.example-idp.net")
+
+
+def test_public_dns_accepts_global_address(monkeypatch):
+    public_record = (
+        2,
+        1,
+        6,
+        "",
+        ("8.8.8.8", 443),
+    )
+    monkeypatch.setattr(_preflight.socket, "getaddrinfo", lambda *a, **kw: [public_record])
+    _preflight._assert_public_dns("login.example-idp.net")
+
+
+def test_public_dns_rejects_unresolvable_host(monkeypatch):
+    def fail_resolution(*args, **kwargs):
+        raise OSError("not found")
+
+    monkeypatch.setattr(_preflight.socket, "getaddrinfo", fail_resolution)
+    with pytest.raises(PreflightFailure, match="did not resolve"):
+        _preflight._assert_public_dns("login.example-idp.net")
