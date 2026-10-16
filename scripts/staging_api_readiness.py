@@ -7,11 +7,14 @@ import os
 import re
 import ssl
 import sys
+import time
 from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 MAX_RESPONSE_BYTES = 64 * 1024
 DEFAULT_TIMEOUT_SECONDS = 12
+MAX_REQUEST_ATTEMPTS = 4
+RETRY_DELAYS_SECONDS = (3, 6, 9)
 _RENDER_HOST_SUFFIX = ".onrender.com"
 _DOMAIN_RE = re.compile(
     r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
@@ -85,16 +88,52 @@ def fetch_json(url: str, timeout: int = DEFAULT_TIMEOUT_SECONDS, opener=None) ->
     client = opener or build_opener(_NoRedirectHandler)
     path = "/" + url.split("/", 3)[-1].split("?", 1)[0] if "://" in url else url
 
-    try:
-        response = client.open(request, timeout=timeout)
-    except HTTPError as exc:
-        if 300 <= exc.code < 400:
-            raise CheckFailure(f"{path} returned HTTP {exc.code}; redirects are not followed.") from None
-        raise CheckFailure(f"{path} returned HTTP {exc.code}; expected HTTP 200.") from None
-    except (URLError, TimeoutError, OSError, ssl.SSLError):
+    response = None
+    for attempt in range(MAX_REQUEST_ATTEMPTS):
+        try:
+            response = client.open(request, timeout=timeout)
+            break
+        except HTTPError as exc:
+            if 300 <= exc.code < 400:
+                raise CheckFailure(
+                    f"{path} returned HTTP {exc.code}; redirects are not followed."
+                ) from None
+            if exc.code in {502, 503, 504} and attempt < MAX_REQUEST_ATTEMPTS - 1:
+                if exc.fp is not None:
+                    exc.close()
+            elif exc.code in {502, 503, 504}:
+                raise CheckFailure(
+                    f"{path} stayed unavailable after {MAX_REQUEST_ATTEMPTS} attempts "
+                    f"(HTTP {exc.code}); check Render service status and deployment logs."
+                ) from None
+            else:
+                raise CheckFailure(
+                    f"{path} returned HTTP {exc.code}; expected HTTP 200."
+                ) from None
+        except ssl.SSLError:
+            raise CheckFailure(
+                f"{path} failed TLS verification; certificate validation remains enabled."
+            ) from None
+        except (URLError, TimeoutError, OSError) as exc:
+            reason = getattr(exc, "reason", None)
+            if isinstance(reason, ssl.SSLError):
+                raise CheckFailure(
+                    f"{path} failed TLS verification; certificate validation remains enabled."
+                ) from None
+            if attempt == MAX_REQUEST_ATTEMPTS - 1:
+                raise CheckFailure(
+                    f"{path} could not be reached after {MAX_REQUEST_ATTEMPTS} attempts "
+                    "over verified HTTPS; a Free Render service may be waking from idle. "
+                    "Check the hostname and deployment logs."
+                ) from None
+
+        if attempt < MAX_REQUEST_ATTEMPTS - 1:
+            time.sleep(RETRY_DELAYS_SECONDS[attempt])
+
+    if response is None:
         raise CheckFailure(
-            f"{path} could not be reached over verified HTTPS; check the hostname and deployment logs."
-        ) from None
+            f"{path} could not be reached after {MAX_REQUEST_ATTEMPTS} attempts."
+        )
 
     try:
         with response:

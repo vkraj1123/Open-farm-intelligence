@@ -2634,6 +2634,21 @@ The first live Render staging readiness run passed on 2026-10-16. Its annotation
 |---|---|---|
 | Node.js action runtime | Updated in proposed change | `actions/checkout@v7` and `actions/setup-python@v7`; upstream action documentation identifies these as current releases |
 | Runner image determinism | Updated in proposed change | Pinned to `ubuntu-24.04` to avoid an unplanned `ubuntu-latest` image migration |
-| Post-merge warning-free verification | Pending | Must rerun the manual readiness workflow on `main` after the change is merged; the current green run proves endpoint readiness, while its annotations identify maintenance work |
+| Runtime migration | Verified in GitHub Actions | Post-merge run used Ubuntu 24.04, `actions/checkout@v7`, and `actions/setup-python@v7`; the endpoint request then timed out separately |
 
 This maintenance does not alter the API contract or database checks. Passing readiness remains separate from production hardening, backup retention, identity-provider setup, and invitation delivery/redemption.
+
+
+# 72. Render free-tier cold-start retry handling
+
+The live readiness workflow has a successful run (#1 at 2026-10-16 02:37:43 UTC) followed by run #2 failing to reach `/health` at 02:55:34 UTC, 17 minutes 51 seconds later. Render documents that Free web services spin down after 15 minutes of inactivity and take about one minute to start again ([Render Free service limitations](https://render.com/docs/free#spinning-down-on-idle)). The previous smoke check used a single 12-second request timeout, too short for this expected cold-start path.
+
+| Capability | Status | Evidence / boundary |
+|---|---|---|
+| Root-cause hypothesis | Evidence-supported | Run timing matches Render's 15-minute idle spin-down window; failure was an HTTPS reachability timeout, not a workflow-runtime failure |
+| Transient startup retry | Added in proposed change | Up to four attempts per endpoint with bounded waits; retries only network failures and gateway statuses 502/503/504 |
+| HTTPS and redirect safeguards | Preserved | TLS verification remains enabled; redirects are still rejected; permanent HTTP errors fail immediately |
+| Regression coverage | Added in proposed change | Offline tests cover temporary network failure, transient 503 recovery, and non-retryable 404 |
+| Cold-start recovery in live Render | Pending | After merge, rerun the manual check on `main`; do not infer a pass from unit tests alone |
+
+The readiness workflow remains read-only. The retry budget is bounded so the job stays within its three-minute timeout in the typical cold-start case. If all retries fail, inspect Render's service events, deploy logs, and runtime logs to distinguish an asleep service from a startup/database crash. Readiness still does not certify identity-provider integration, invitation delivery/redemption, backups, or production readiness.

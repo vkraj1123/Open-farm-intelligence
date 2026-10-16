@@ -180,3 +180,93 @@ def test_fetch_json_rejects_oversized_responses(monkeypatch):
 
     with pytest.raises(CheckFailure, match="unexpectedly large"):
         fetch_json("https://ofi-staging-api.onrender.com/health", opener=FakeOpener())
+
+
+def test_fetch_json_retries_temporary_network_failure(monkeypatch):
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def getcode(self):
+            return 200
+
+        def read(self, limit):
+            return b'{"status":"ok"}'
+
+    class FlakyOpener:
+        def __init__(self):
+            self.calls = 0
+
+        def open(self, request, timeout):
+            self.calls += 1
+            if self.calls < 3:
+                from urllib.error import URLError
+                raise URLError(TimeoutError("timed out"))
+            return FakeResponse()
+
+    sleeps = []
+    monkeypatch.setattr(_readiness.time, "sleep", sleeps.append)
+    opener = FlakyOpener()
+
+    assert fetch_json("https://ofi-staging-api.onrender.com/health", opener=opener) == {
+        "status": "ok"
+    }
+    assert opener.calls == 3
+    assert sleeps == list(_readiness.RETRY_DELAYS_SECONDS[:2])
+
+
+def test_fetch_json_retries_transient_gateway_status(monkeypatch):
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def getcode(self):
+            return 200
+
+        def read(self, limit):
+            return b'{"status":"ok"}'
+
+    class FlakyOpener:
+        def __init__(self):
+            self.calls = 0
+
+        def open(self, request, timeout):
+            self.calls += 1
+            if self.calls == 1:
+                raise HTTPError(request.full_url, 503, "Service Unavailable", {}, None)
+            return FakeResponse()
+
+    sleeps = []
+    monkeypatch.setattr(_readiness.time, "sleep", sleeps.append)
+    opener = FlakyOpener()
+
+    assert fetch_json("https://ofi-staging-api.onrender.com/health", opener=opener) == {
+        "status": "ok"
+    }
+    assert opener.calls == 2
+    assert sleeps == list(_readiness.RETRY_DELAYS_SECONDS[:1])
+
+
+def test_fetch_json_does_not_retry_permanent_http_errors(monkeypatch):
+    class FailingOpener:
+        def __init__(self):
+            self.calls = 0
+
+        def open(self, request, timeout):
+            self.calls += 1
+            raise HTTPError(request.full_url, 404, "Not Found", {}, None)
+
+    sleeps = []
+    monkeypatch.setattr(_readiness.time, "sleep", sleeps.append)
+    opener = FailingOpener()
+
+    with pytest.raises(CheckFailure, match="HTTP 404"):
+        fetch_json("https://ofi-staging-api.onrender.com/health", opener=opener)
+    assert opener.calls == 1
+    assert sleeps == []
