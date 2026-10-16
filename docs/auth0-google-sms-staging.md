@@ -27,16 +27,12 @@ After this PR is merged:
    **Manual sync**. Review that it adds `ofi-staging-web` and preserves
    `ofi-staging-api` and `ofi-staging-db`; do not delete or recreate the API
    or database.
-2. Open the new static site and wait for its first deploy. Copy the exact HTTPS
-   `onrender.com` hostname Render assigns it.
+2. The current static-site origin is `https://ofi-staging-web.onrender.com`. Open it and confirm the first deploy is live.
 3. In Auth0, create an **Application → Single Page Application** for OFI
    staging. Add that exact site origin to **Allowed Callback URLs**, **Allowed
    Logout URLs**, and **Allowed Web Origins**. Use the origin only, e.g.
-   `https://<actual-static-site-host>`; no paths or trailing slash.
-4. In the repository, open
-   [`web/auth-config.js`](../web/auth-config.js) and set `domain` to the
-   Auth0 tenant hostname only (no `https://`), and `clientId` to the public
-   SPA Client ID. Keep the API audience exactly `ofi-api` unless the Render
+   `https://ofi-staging-web.onrender.com`; no paths or trailing slash.
+4. The reviewed configuration change uses the supplied public Auth0 tenant hostname and the owner-created first-party SPA Client ID. The `domain` value is hostname-only (no `https://`). Keep the API audience exactly `ofi-api` unless the Render
    API's `OFI_AUTH_AUDIENCE` is deliberately changed too.
 5. Open a PR with those two public values, merge it after CI passes, then return
    to Render and manually deploy the latest commit for `ofi-staging-web`.
