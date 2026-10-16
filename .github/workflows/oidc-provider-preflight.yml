@@ -1,0 +1,38 @@
+name: OIDC provider metadata preflight
+
+on:
+  workflow_dispatch:
+    inputs:
+      issuer:
+        description: "Exact OIDC issuer URL from your provider (no query or fragment)"
+        required: true
+        type: string
+      jwks_url:
+        description: "Exact HTTPS jwks_uri from the provider's discovery document"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ofi-oidc-provider-preflight
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - name: Verify public OIDC metadata and signing keys
+        env:
+          OFI_OIDC_ISSUER: ${{ inputs.issuer }}
+          OFI_OIDC_JWKS_URL: ${{ inputs.jwks_url }}
+        run: python scripts/oidc_provider_preflight.py
