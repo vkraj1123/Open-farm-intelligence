@@ -62,3 +62,12 @@ def test_render_blueprint_declares_static_client_and_security_headers():
     assert "Content-Security-Policy" in render
     assert "X-Content-Type-Options" in render
     assert "value: hs256" in render
+
+
+def test_client_uses_official_auth0_cdn_global_namespace():
+    index = read_repo_file("web/index.html")
+    app = read_repo_file("web/app.js")
+    assert "https://cdn.auth0.com/js/auth0-spa-js/2.24/auth0-spa-js.production.js" in index
+    assert 'window.auth0.createAuth0Client' in app
+    assert 'typeof window.auth0.createAuth0Client !== "function"' in app
+    assert 'window.createAuth0Client' not in app
