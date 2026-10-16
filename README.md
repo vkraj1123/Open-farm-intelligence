@@ -2746,3 +2746,17 @@ The live staging sign-in page displayed the Auth0 SDK-load error after the publi
 | API authentication mode | Unchanged | Staging API remains on HS256; no API environment variables or authorization policy are changed by this frontend fix |
 
 Source: Auth0 SPA SDK documentation and FAQ show the CDN global as `auth0.createAuth0Client`. See the [SDK documentation](https://auth0.github.io/auth0-spa-js/) and [SDK FAQ](https://github.com/auth0/auth0-spa-js/blob/main/FAQ.md).
+
+# 79. Separate Auth0 client initialization from API token issuance
+
+The staging page advanced beyond the CDN-load error but surfaced a generic initialization error. The client was requesting the `ofi-api` audience as a default authorization parameter during SDK construction, which also performs a session check. This made frontend initialization and API-token configuration unnecessarily coupled.
+
+| Capability | Status | Evidence / boundary |
+|---|---|---|
+| Initialization/token separation | Proposed change | The initial SDK client uses only the redirect URI and OpenID profile/email scopes; the API audience remains requested at login and API-token checks |
+| Stage-specific diagnostics | Proposed change | UI distinguishes client construction, redirect callback handling, and current-session checks without displaying exception/token contents |
+| Dashboard troubleshooting | Documented | Exact origin to verify in Allowed Callback URLs, Allowed Logout URLs, and Allowed Web Origins; check Auth0 Monitoring → Logs |
+| Live Auth0 success | Not yet verified | The fix cannot replace correct tenant/app pairing, URL allow-lists, enabled Google/SMS connections, or a registered API audience |
+| API security | Unchanged | Render staging API remains in HS256 mode; no API credentials or authorization settings are changed |
+
+After merging, manually deploy `ofi-staging-web`. If setup still fails, use the stage-specific message and Auth0 tenant logs to pinpoint the remaining dashboard configuration issue.
