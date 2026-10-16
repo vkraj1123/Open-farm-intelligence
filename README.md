@@ -2716,3 +2716,18 @@ The staging frontend now has a responsive static sign-in page with separate Goog
 | Actual OFI API authorization | Not yet tested by this scaffold | Login and token issuance do not validate OFI role/tenant claims or active membership; API auth mode remains HS256 and protected API calls are intentionally out of scope here |
 
 After merge, use Render's existing Blueprint **Manual sync** to add `ofi-staging-web`. Copy its actual hostname, register it as the Auth0 SPA's exact callback/logout/origin, then update only the public domain and Client ID in `web/auth-config.js` via a reviewed GitHub change. Deploy that static-site commit from Render. Do not change the API's auth mode until the Auth0 token issuer/audience/claim design and real authorization tests are completed.
+
+# 77. Auth0 staging SPA public configuration
+
+The staging browser client configuration now has the public Auth0 tenant hostname and Single Page Application client ID supplied by the project owner. The exact Render static-site origin is documented for the Auth0 application URL allow-list.
+
+| Capability | Status | Evidence / boundary |
+|---|---|---|
+| Public Auth0 browser configuration | Added in this milestone | `web/auth-config.js` contains only the tenant hostname and public SPA client ID; no client secret, SMS-provider credential, OTP, or token |
+| Render site origin | Identified | `https://ofi-staging-web.onrender.com` must be registered exactly in Allowed Callback URLs, Allowed Logout URLs, and Allowed Web Origins |
+| Config regression coverage | Updated in this milestone | Tests validate non-empty hostname-shaped domain and client ID and reject secret-like configuration keys |
+| Auth0 connection/API setup | Still requires dashboard verification | Google and SMS connections must be enabled for the SPA; the custom OFI API Identifier must match `ofi-api` |
+| Live sign-in/token validation | Pending | A configured page does not prove callback allow-list correctness, SMS delivery, API-audience token issuance, or OFI authorization |
+| API authentication mode | Unchanged | Staging API remains on HS256; do not switch it until issuer/JWKS/audience and trusted role/tenant authorization tests pass |
+
+The owner must confirm the site origin is in all three Auth0 URL allow-lists, Google and SMS are enabled for the app, and an Auth0 API with Identifier `ofi-api` exists. After the reviewed change is merged, manually deploy the latest commit to the Render static site, then perform a test sign-in using a controlled test identity. Never share an OTP, secret, or access token in chat or logs.
