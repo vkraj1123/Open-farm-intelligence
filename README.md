@@ -2649,6 +2649,21 @@ The live readiness workflow has a successful run (#1 at 2026-10-16 02:37:43 UTC)
 | Transient startup retry | Implemented and merged in PR #86 | Up to four attempts per endpoint with bounded waits; retries only network failures and gateway statuses 502/503/504 |
 | HTTPS and redirect safeguards | Preserved | TLS verification remains enabled; redirects are still rejected; permanent HTTP errors fail immediately |
 | Regression coverage | Implemented and merged in PR #86 | Offline tests for temporary network failure, transient 503 recovery, and non-retryable 404 passed in CI |
-| Cold-start recovery in live Render | Pending | Run the manual workflow on `main` with the actual service URL; unit tests alone do not prove live recovery |
+| Cold-start recovery in live Render | Passed on 2026-10-16 | Manual readiness run #3 passed after PR #86; `/health` returned HTTP 200 and `/ready` confirmed PostgreSQL, PostGIS, durable storage, and schema version 6/6 ([run #3](https://github.com/vkraj1123/Open-farm-intelligence/actions/runs/38844036717)) |
 
 The readiness workflow remains read-only. The retry budget is bounded so the job stays within its three-minute timeout in the typical cold-start case. If all retries fail, inspect Render's service events, deploy logs, and runtime logs to distinguish an asleep service from a startup/database crash. Readiness still does not certify identity-provider integration, invitation delivery/redemption, backups, or production readiness.
+
+
+# 73. Phone-launchable OIDC provider metadata preflight
+
+The live Render staging API now passes the bounded-retry readiness check, including schema version 6/6. The next integration boundary is selecting and configuring a trusted OIDC provider. A read-only manual GitHub Actions workflow now checks the provider's discovery metadata and public signing-key set from a phone before any Render authentication change is made.
+
+| Capability | Status | Evidence / boundary |
+|---|---|---|
+| Issuer/JWKS metadata agreement | Implemented in this milestone | Discovery `issuer` and `jwks_uri` must exactly match the operator-supplied values |
+| Public signing-key preflight | Implemented in this milestone | Requires unique, public-only RSA signing keys compatible with RS256 and at least 2048-bit modulus |
+| Network and secret safeguards | Implemented in this milestone | HTTPS with verified TLS; redirects rejected; query/userinfo/fragment and IP-literal targets rejected; DNS answers checked for non-public IPs; response bodies and key material are never printed |
+| Phone-first operator flow | Implemented in this milestone | Manual workflow; no credentials, provider secrets, or local computer required |
+| Live identity-provider integration | Still pending | No provider has yet been selected/configured for OFI staging; this check does not validate bearer tokens, audience/claims, user login, tenant membership, or invitation delivery |
+
+See the [OIDC provider preflight runbook](docs/oidc-provider-preflight.md) and [manual preflight workflow](https://github.com/vkraj1123/Open-farm-intelligence/actions/workflows/oidc-provider-preflight.yml). Do not change the deployed API to OIDC/JWKS mode just because metadata checks pass; select a provider, configure exact issuer/audience/JWKS settings, and complete real staging token and tenant-authorization tests first.

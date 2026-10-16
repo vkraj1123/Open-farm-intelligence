@@ -74,7 +74,7 @@ client, and does not implement group synchronization, email verification, MFA
 policy, token issuance, or key-management operations. Tenant invitations and an
 opt-in signed HTTPS delivery webhook are implemented as a separate OFI boundary;
 the webhook does not replace provider identity proofing or membership claims.
-See [the invitation delivery runbook](tenant-invitation-delivery.md). Neither
+Before deployment configuration, use the [phone-first OIDC metadata preflight](oidc-provider-preflight.md) to compare the issuer and JWKS URI and verify the public RS256 key set. This preflight does not validate user tokens or tenant authorization. See [the invitation delivery runbook](tenant-invitation-delivery.md). Neither
 synthetic RSA tests nor mocked delivery tests substitute for staging tests with
 the selected identity provider and delivery receiver, or an independent
 production security assessment.
