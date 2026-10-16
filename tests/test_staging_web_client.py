@@ -78,7 +78,7 @@ def test_auth0_initialization_does_not_request_ofi_api_audience():
     init_block = app.split("async function init()", 1)[1].split("googleButton.addEventListener", 1)[0]
     client_setup = init_block.split("window.auth0.createAuth0Client({", 1)[1].split("});", 1)[0]
     assert "audience: config.audience" not in client_setup
-    assert "The audience is requested only when starting login" in init_block
+    assert "The audience is requested only during the post-login API-token check" in init_block
     assert "Allowed Callback URLs" in init_block
     assert "Allowed Logout URLs" in init_block
     assert "Allowed Web Origins" in init_block
