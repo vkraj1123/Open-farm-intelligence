@@ -10,6 +10,7 @@ import base64
 import ipaddress
 import json
 import re
+import socket
 import ssl
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
@@ -60,11 +61,12 @@ def validate_https_url(raw: str, label: str) -> str:
 
     try:
         host = hostname.encode("idna").decode("ascii").lower()
+    except UnicodeError:
+        raise PreflightFailure(f"The provider's {label} hostname is malformed.") from None
+    try:
         ipaddress.ip_address(host)
     except ValueError:
         pass
-    except UnicodeError:
-        raise PreflightFailure(f"The provider's {label} hostname is malformed.") from None
     else:
         raise PreflightFailure(f"The provider's {label} URL must use a DNS hostname, not an IP address.")
 
@@ -85,8 +87,46 @@ def _discovery_url(issuer: str) -> str:
     return issuer + suffix if issuer.endswith("/") else issuer + "/" + suffix
 
 
-def fetch_json(url: str, timeout: int = DEFAULT_TIMEOUT_SECONDS, opener=None) -> dict:
+def _assert_public_dns(hostname: str) -> None:
+    """Refuse provider names that resolve to private, loopback, or special-use IPs."""
+    try:
+        ipaddress.ip_address(hostname)
+    except ValueError:
+        pass
+    else:
+        raise PreflightFailure("Provider metadata must use a public DNS hostname, not an IP address.")
+
+    try:
+        records = socket.getaddrinfo(hostname, 443, type=socket.SOCK_STREAM)
+    except OSError:
+        raise PreflightFailure("Provider hostname did not resolve; check the issuer and JWKS URLs.") from None
+    addresses = {record[4][0].split("%", 1)[0] for record in records}
+    if not addresses:
+        raise PreflightFailure("Provider hostname returned no DNS addresses.")
+    for address in addresses:
+        try:
+            parsed_address = ipaddress.ip_address(address)
+        except ValueError:
+            raise PreflightFailure("Provider hostname returned an invalid DNS address.") from None
+        if not parsed_address.is_global:
+            raise PreflightFailure("Provider hostname resolves to a non-public IP address; refusing the request.")
+
+
+def fetch_json(
+    url: str,
+    timeout: int = DEFAULT_TIMEOUT_SECONDS,
+    opener=None,
+    host_validator=_assert_public_dns,
+) -> dict:
     """Fetch a small JSON object using verified TLS; reject redirects and large bodies."""
+    try:
+        hostname = urlsplit(url).hostname
+    except ValueError:
+        hostname = None
+    if not hostname:
+        raise PreflightFailure("Provider metadata URL has no valid hostname.")
+    host_validator(hostname)
+
     request = Request(
         url,
         headers={
