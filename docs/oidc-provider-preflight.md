@@ -46,6 +46,37 @@ bodies/key material are never printed.
 - The metadata endpoints were reachable with verified HTTPS at the time of the
   check.
 
+## Recorded staging result: Google public metadata
+
+On 2026-10-16, preflight run #1 passed for Google's public OIDC metadata:
+- issuer: `https://accounts.google.com`
+- JWKS URI: `https://www.googleapis.com/oauth2/v3/certs`
+- result: discovery issuer and JWKS URI matched exactly; two unique public RSA
+  signing keys suitable for RS256 (at least 2048 bits) were found.
+- evidence: [successful GitHub Actions run](https://github.com/vkraj1123/Open-farm-intelligence/actions/runs/38846299491).
+
+This result validates the public metadata endpoints at the time of the check. It
+does not select Google as OFI's final token issuer, configure Render, or prove
+that a Google-issued token can authenticate to OFI.
+
+## Google tokens and OFI's claim contract
+
+Google's documented ID-token claims include `iss`, `sub`, `aud`, `iat`,
+and `exp`, along with optional profile claims; Google's documented claim
+reference does not include OFI's `role` or `tenant_id` authorization claims.
+Google's ID-token audience is an OAuth client ID, whereas OFI verifies the
+configured API audience. See the [Google OpenID Connect ID-token reference](https://developers.google.com/identity/openid-connect/reference)
+and [Google OpenID Connect guide](https://developers.google.com/identity/openid-connect/openid-connect).
+
+Therefore, **do not switch OFI staging directly to Google's tokens based only
+on this metadata pass**. OFI currently requires a trusted role claim from the
+token and the API's configured audience; tenant-scoped routes independently
+enforce OFI's own membership registry. A safe Google sign-in design needs a
+trusted token issuer/broker that can issue an RS256 access token for the OFI API
+with OFI-authorized claims, or a deliberate, reviewed change to OFI's identity
+mapping design. A user's email, Google Workspace domain, or client-supplied
+value must never be used to grant an OFI role or tenant membership.
+
 ## What a pass does not establish
 
 This is provider-metadata preflight only. It does **not** validate a real
