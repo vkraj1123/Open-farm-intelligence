@@ -2682,3 +2682,19 @@ The phone-first metadata preflight passed against Google's public issuer and JWK
 | Render auth-mode change | Not performed | Staging remains on its existing HS256 configuration; no auth variables were modified by the preflight |
 
 See [OIDC provider preflight](docs/oidc-provider-preflight.md), [OFI token verification contract](docs/identity-provider.md), and the [Google OIDC ID-token reference](https://developers.google.com/identity/openid-connect/reference). Do not treat a successful discovery/JWKS check as proof of real login or tenant authorization. A user email, hosted domain, or request-supplied role must never grant an OFI role or tenant membership.
+
+
+# 75. Google + phone-number SMS OTP staging sign-in plan
+
+The requested staging sign-in plan now includes two authentication methods through a proposed Auth0 broker: Google social sign-in and passwordless phone-number SMS OTP. The runbook documents provider configuration, phone-provider setup, the OFI API audience/token contract, and the required security boundary between proving an identity and granting farm/tenant access.
+
+| Capability | Status | Evidence / boundary |
+|---|---|---|
+| Google sign-in setup path | Documented | Auth0 Google social connection; owner must supply/configure their own OAuth application credentials in provider dashboards |
+| Phone-number sign-in | Documented; provider setup pending | Auth0 Passwordless SMS OTP; requires a configured supported SMS provider, budget/rate limits, and phone number controlled by the staging tester |
+| Optional verified phone claims | Template added | `deploy/auth0/phone-claims-action.js` emits namespaced `phone_number` and `phone_number_verified` only when Auth0 says the phone is verified |
+| Trusted role/tenant claims | Not automatically provisioned | Phone number, email, Google domain, and editable user metadata must never assign an OFI role or tenant; use a trusted authorization source plus OFI's membership registry |
+| Auth0 tenant/application configured | Pending owner setup | No Auth0 credentials or SMS provider credentials have been supplied to or committed in the repository |
+| Render auth-mode change | Not performed | Keep staging's existing `hs256` mode until Auth0 issuer/JWKS, API audience, authorization claims, and real staging token checks pass |
+
+See the [Google + SMS OTP Auth0 staging runbook](docs/auth0-google-sms-staging.md), [OIDC integration guide](docs/identity-provider.md), and optional [verified-phone Auth0 Action template](deploy/auth0/phone-claims-action.js). The Google metadata test passed, but Auth0's own discovery issuer/JWKS preflight and an actual OFI-audience access token are still required. Invitation delivery and redemption remain separate acceptance gates.
