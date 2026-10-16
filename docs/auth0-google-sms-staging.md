@@ -135,3 +135,9 @@ If the page reports that Auth0 could not initialize before the user has selected
 4. OFI's browser client initializes without requesting an OFI API token. The `ofi-api` audience is requested only for login/token issuance, so API-token configuration errors should be reported separately from client initialization.
 
 Do not paste access tokens, OTPs, client secrets, or sensitive log payloads into chat. If the error persists, share the Auth0 log event's plain error code/message only after removing email addresses, phone numbers, tokens, and other personal data.
+
+## Live staging checkpoint (2026-10-16)
+
+The owner verified in the live browser that Auth0 sign-in succeeds and that a token request for the configured API audience `ofi-api` succeeds after granting User-Delegated Access for the OFI staging SPA. This confirms token issuance only. OFI's deployed API still uses HS256 and has not been changed to accept Auth0 tokens.
+
+Before any API-mode change, run the [OIDC metadata preflight](https://github.com/vkraj1123/Open-farm-intelligence/actions/workflows/oidc-provider-preflight.yml) using the exact `issuer` and `jwks_uri` values from the tenant's `/.well-known/openid-configuration` document. Next, establish trusted OFI role claims and tenant IDs, and test both active and revoked membership paths against disposable staging data. Never grant roles from phone/email/profile input, and do not change the deployed API auth mode just because token issuance succeeds.
