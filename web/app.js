@@ -126,8 +126,8 @@
         cacheLocation: "memory",
         useRefreshTokens: false,
         // Do not request an OFI API token during client initialization.
-        // The audience is requested only when starting login or checking
-        // API-token issuance, so an API setup issue cannot block the login UI.
+        // The audience is requested only during the post-login API-token check,
+        // so an API setup issue cannot block identity sign-in.
         authorizationParams: {
           redirect_uri: window.location.origin,
           scope: "openid profile email"
