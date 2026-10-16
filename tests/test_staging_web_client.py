@@ -1,6 +1,7 @@
-"""Regression checks for the unconfigured, phone-first Auth0 browser client."""
+"""Regression checks for the phone-first Auth0 browser client."""
 
 from pathlib import Path
+import re
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -9,11 +10,15 @@ def read_repo_file(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
 
 
-def test_browser_client_starts_disabled_without_auth0_tenant_values():
+def test_browser_client_has_valid_public_auth0_spa_configuration():
     config = read_repo_file("web/auth-config.js")
     index = read_repo_file("web/index.html")
-    assert 'domain: ""' in config
-    assert 'clientId: ""' in config
+    domain = re.search(r'^\s*domain: "([^"]*)"', config, re.MULTILINE)
+    client_id = re.search(r'^\s*clientId: "([^"]*)"', config, re.MULTILINE)
+    assert domain is not None and re.fullmatch(r"[A-Za-z0-9.-]+", domain.group(1))
+    assert "." in domain.group(1) and ".." not in domain.group(1)
+    assert client_id is not None and client_id.group(1).strip()
+    assert "clientSecret" not in config and "client_secret" not in config
     assert 'audience: "ofi-api"' in config
     assert 'id="google-login" type="button" disabled' in index
     assert 'id="phone-login" type="button" disabled' in index
