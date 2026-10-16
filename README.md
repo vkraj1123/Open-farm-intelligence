@@ -2731,4 +2731,18 @@ The staging browser client configuration uses the public Auth0 tenant hostname a
 | API authentication mode | Unchanged | Staging API remains on HS256; do not switch it until issuer/JWKS/audience and trusted role/tenant authorization tests pass |
 
 The owner must confirm the site origin is in all three Auth0 URL allow-lists, Google and SMS are enabled for the app, and an Auth0 API with Identifier `ofi-api` exists. After the reviewed change is merged, manually deploy the latest commit to the Render static site, then perform a test sign-in using a controlled test identity. Never share an OTP, secret, or access token in chat or logs.
-\n# 78. Auth0 CDN SDK global resolution fix\n\nThe live staging sign-in page displayed the Auth0 SDK-load error after the public SPA configuration was deployed. Code inspection identified a browser-global mismatch: the official Auth0 CDN bundle exposes `createAuth0Client` under `window.auth0`, while the client was checking `window.createAuth0Client` at the top level.\n\n| Capability | Status | Evidence / boundary |\n|---|---|---|\n| SDK global lookup | Fixed in proposed change | Client checks and invokes `window.auth0.createAuth0Client`, matching Auth0's CDN API |\n| Regression test | Added in proposed change | Test checks the CDN URL and ensures the client uses the `window.auth0` namespace rather than the incorrect top-level global |\n| Live browser verification | Pending | Requires merging, manual deployment to Render, and reloading the deployed site; the code fix alone does not prove the network/CDN is reachable from every client network |\n| Identity provider setup | Still pending verification | Google/SMS connection settings, application allow-lists, and the `ofi-api` audience still need to be verified in Auth0 |\n| API authentication mode | Unchanged | Staging API remains on HS256; no API environment variables or authorization policy are changed by this frontend fix |\n\nSource: Auth0 SPA SDK documentation and FAQ show the CDN global as `auth0.createAuth0Client`. See the [SDK documentation](https://auth0.github.io/auth0-spa-js/) and [SDK FAQ](https://github.com/auth0/auth0-spa-js/blob/main/FAQ.md).\n
+
+
+# 78. Auth0 CDN SDK global resolution fix
+
+The live staging sign-in page displayed the Auth0 SDK-load error after the public SPA configuration was deployed. Code inspection identified a browser-global mismatch: the official Auth0 CDN bundle exposes `createAuth0Client` under `window.auth0`, while the client was checking `window.createAuth0Client` at the top level.
+
+| Capability | Status | Evidence / boundary |
+|---|---|---|
+| SDK global lookup | Fixed in proposed change | Client checks and invokes `window.auth0.createAuth0Client`, matching Auth0's CDN API |
+| Regression test | Added in proposed change | Test checks the CDN URL and ensures the client uses the `window.auth0` namespace rather than the incorrect top-level global |
+| Live browser verification | Pending | Requires merging, manual deployment to Render, and reloading the deployed site; the code fix alone does not prove the network/CDN is reachable from every client network |
+| Identity provider setup | Still pending verification | Google/SMS connection settings, application allow-lists, and the `ofi-api` audience still need to be verified in Auth0 |
+| API authentication mode | Unchanged | Staging API remains on HS256; no API environment variables or authorization policy are changed by this frontend fix |
+
+Source: Auth0 SPA SDK documentation and FAQ show the CDN global as `auth0.createAuth0Client`. See the [SDK documentation](https://auth0.github.io/auth0-spa-js/) and [SDK FAQ](https://github.com/auth0/auth0-spa-js/blob/main/FAQ.md).
