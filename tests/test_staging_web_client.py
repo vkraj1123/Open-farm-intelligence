@@ -90,3 +90,12 @@ def test_auth0_initialization_errors_identify_the_stage_without_leaking_tokens()
     assert 'failedStage = "checking the existing Auth0 session"' in app
     assert "authClient.getTokenSilently" in app
     assert "console.log" not in app
+
+
+def test_identity_login_does_not_depend_on_ofi_api_audience():
+    app = read_repo_file("web/app.js")
+    login_block = app.split("async function startLogin(connection)", 1)[1].split("async function refreshSession()", 1)[0]
+    assert "loginWithRedirect" in login_block
+    assert "connection," in login_block
+    assert "audience: config.audience" not in login_block
+    assert "authClient.getTokenSilently" in app
