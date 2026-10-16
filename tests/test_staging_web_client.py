@@ -71,3 +71,31 @@ def test_client_uses_official_auth0_cdn_global_namespace():
     assert 'window.auth0.createAuth0Client' in app
     assert 'typeof window.auth0.createAuth0Client !== "function"' in app
     assert 'window.createAuth0Client' not in app
+
+
+def test_auth0_initialization_does_not_request_ofi_api_audience():
+    app = read_repo_file("web/app.js")
+    init_block = app.split("async function init()", 1)[1].split("googleButton.addEventListener", 1)[0]
+    client_setup = init_block.split("window.auth0.createAuth0Client({", 1)[1].split("});", 1)[0]
+    assert "audience: config.audience" not in client_setup
+    assert "The audience is requested only during the post-login API-token check" in init_block
+    assert "Allowed Callback URLs" in init_block
+    assert "Allowed Logout URLs" in init_block
+    assert "Allowed Web Origins" in init_block
+
+
+def test_auth0_initialization_errors_identify_the_stage_without_leaking_tokens():
+    app = read_repo_file("web/app.js")
+    assert 'failedStage = "processing the Auth0 redirect callback"' in app
+    assert 'failedStage = "checking the existing Auth0 session"' in app
+    assert "authClient.getTokenSilently" in app
+    assert "console.log" not in app
+
+
+def test_identity_login_does_not_depend_on_ofi_api_audience():
+    app = read_repo_file("web/app.js")
+    login_block = app.split("async function startLogin(connection)", 1)[1].split("async function refreshSession()", 1)[0]
+    assert "loginWithRedirect" in login_block
+    assert "connection," in login_block
+    assert "audience: config.audience" not in login_block
+    assert "authClient.getTokenSilently" in app
