@@ -56,9 +56,11 @@
 
     try {
       await authClient.loginWithRedirect({
+        // Establish the user's identity first. Request the OFI API audience
+        // separately after login so an API configuration issue does not block
+        // basic Google/SMS identity sign-in.
         authorizationParams: {
           connection,
-          audience: config.audience,
           scope: "openid profile email"
         }
       });
