@@ -7,6 +7,16 @@ membership. The OFI membership registry remains authoritative for access to a
 tenant, and the issuer must only emit OFI role and tenant claims from trusted
 identity/authorization data.
 
+## Phone-first staging identity-provider plan
+
+For a staged login experience that offers both Google and phone-number SMS OTP,
+see the [Google + SMS OTP Auth0 staging runbook](auth0-google-sms-staging.md).
+Auth0 is a proposed broker for those authentication methods; it must still be
+configured and tested by the account owner. The checked-in
+[verified-phone Action template](../deploy/auth0/phone-claims-action.js) emits
+optional namespaced profile claims only when Auth0 reports the phone as
+verified. Phone claims never grant OFI roles or tenant membership.
+
 ## Modes
 
 - `OFI_AUTH_MODE=hs256` (default): preserves the existing compact HS256 token
