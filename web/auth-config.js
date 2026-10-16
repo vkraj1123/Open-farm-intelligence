@@ -9,7 +9,7 @@ window.OFI_AUTH_CONFIG = Object.freeze({
   // Auth0 tenant hostname only, e.g. "your-tenant.eu.auth0.com" (no https://).
   domain: "dev-20aoubhr6yjq8e3s.us.auth0.com",
   // Auth0 Single Page Application client ID (public, not a client secret).
-  clientId: "tpc_kjNpKHAm8TxAwpHnNFWyGW",
+  clientId: "Mb0Osh30DYEXdNCL4EQfCCKm0O8wS220",
   // Must exactly match the Identifier of the Auth0 API registered for OFI.
   // The current OFI staging API is configured with this audience.
   audience: "ofi-api",
