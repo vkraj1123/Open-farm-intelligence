@@ -3,13 +3,13 @@
  *
  * These values are intentionally public and are not secrets. Never put an
  * Auth0 client secret, SMS provider credential, or API bearer token here.
- * Replace domain/clientId only after creating an Auth0 Single Page Application.
+ * Domain and clientId below are public values from the OFI staging SPA.
  */
 window.OFI_AUTH_CONFIG = Object.freeze({
   // Auth0 tenant hostname only, e.g. "your-tenant.eu.auth0.com" (no https://).
-  domain: "",
+  domain: "dev-20aoubhr6yjq8e3s.us.auth0.com",
   // Auth0 Single Page Application client ID (public, not a client secret).
-  clientId: "",
+  clientId: "tpc_kjNpKHAm8TxAwpHnNFWyGW",
   // Must exactly match the Identifier of the Auth0 API registered for OFI.
   // The current OFI staging API is configured with this audience.
   audience: "ofi-api",
