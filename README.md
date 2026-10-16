@@ -2632,8 +2632,8 @@ The first live Render staging readiness run passed on 2026-10-16. Its annotation
 
 | Capability | Status | Evidence / boundary |
 |---|---|---|
-| Node.js action runtime | Updated in proposed change | `actions/checkout@v7` and `actions/setup-python@v7`; upstream action documentation identifies these as current releases |
-| Runner image determinism | Updated in proposed change | Pinned to `ubuntu-24.04` to avoid an unplanned `ubuntu-latest` image migration |
+| Node.js action runtime | Implemented and merged in PR #85 | `actions/checkout@v7` and `actions/setup-python@v7` were downloaded and initialized successfully in the post-merge run |
+| Runner image determinism | Implemented and merged in PR #85 | The post-merge run executed on `ubuntu-24.04` |
 | Runtime migration | Verified in GitHub Actions | Post-merge run used Ubuntu 24.04, `actions/checkout@v7`, and `actions/setup-python@v7`; the endpoint request then timed out separately |
 
 This maintenance does not alter the API contract or database checks. Passing readiness remains separate from production hardening, backup retention, identity-provider setup, and invitation delivery/redemption.
@@ -2646,9 +2646,9 @@ The live readiness workflow has a successful run (#1 at 2026-10-16 02:37:43 UTC)
 | Capability | Status | Evidence / boundary |
 |---|---|---|
 | Root-cause hypothesis | Evidence-supported | Run timing matches Render's 15-minute idle spin-down window; failure was an HTTPS reachability timeout, not a workflow-runtime failure |
-| Transient startup retry | Added in proposed change | Up to four attempts per endpoint with bounded waits; retries only network failures and gateway statuses 502/503/504 |
+| Transient startup retry | Implemented and merged in PR #86 | Up to four attempts per endpoint with bounded waits; retries only network failures and gateway statuses 502/503/504 |
 | HTTPS and redirect safeguards | Preserved | TLS verification remains enabled; redirects are still rejected; permanent HTTP errors fail immediately |
-| Regression coverage | Added in proposed change | Offline tests cover temporary network failure, transient 503 recovery, and non-retryable 404 |
-| Cold-start recovery in live Render | Pending | After merge, rerun the manual check on `main`; do not infer a pass from unit tests alone |
+| Regression coverage | Implemented and merged in PR #86 | Offline tests for temporary network failure, transient 503 recovery, and non-retryable 404 passed in CI |
+| Cold-start recovery in live Render | Pending | Run the manual workflow on `main` with the actual service URL; unit tests alone do not prove live recovery |
 
 The readiness workflow remains read-only. The retry budget is bounded so the job stays within its three-minute timeout in the typical cold-start case. If all retries fail, inspect Render's service events, deploy logs, and runtime logs to distinguish an asleep service from a startup/database crash. Readiness still does not certify identity-provider integration, invitation delivery/redemption, backups, or production readiness.
