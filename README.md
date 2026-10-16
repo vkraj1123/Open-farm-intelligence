@@ -2719,7 +2719,7 @@ After merge, use Render's existing Blueprint **Manual sync** to add `ofi-staging
 
 # 77. Auth0 staging SPA public configuration
 
-The staging browser client configuration now has the public Auth0 tenant hostname and Single Page Application client ID supplied by the project owner. The exact Render static-site origin is documented for the Auth0 application URL allow-list.
+The staging browser client configuration uses the public Auth0 tenant hostname and owner-created first-party Single Page Application client ID. The exact Render static-site origin is documented for the Auth0 application URL allow-list.
 
 | Capability | Status | Evidence / boundary |
 |---|---|---|
