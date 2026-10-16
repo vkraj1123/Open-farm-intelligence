@@ -32,7 +32,7 @@ After this PR is merged:
    staging. Add that exact site origin to **Allowed Callback URLs**, **Allowed
    Logout URLs**, and **Allowed Web Origins**. Use the origin only, e.g.
    `https://ofi-staging-web.onrender.com`; no paths or trailing slash.
-4. The repository config is being populated with the supplied public Auth0 tenant hostname and SPA Client ID in a reviewed change. The `domain` value is hostname-only (no `https://`). Keep the API audience exactly `ofi-api` unless the Render
+4. The reviewed configuration change uses the supplied public Auth0 tenant hostname and the owner-created first-party SPA Client ID. The `domain` value is hostname-only (no `https://`). Keep the API audience exactly `ofi-api` unless the Render
    API's `OFI_AUTH_AUDIENCE` is deliberately changed too.
 5. Open a PR with those two public values, merge it after CI passes, then return
    to Render and manually deploy the latest commit for `ofi-staging-web`.
