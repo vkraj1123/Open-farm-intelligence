@@ -99,7 +99,6 @@ def fetch_json(url: str, timeout: int = DEFAULT_TIMEOUT_SECONDS, opener=None) ->
                     f"{path} returned HTTP {exc.code}; redirects are not followed."
                 ) from None
             if exc.code in {502, 503, 504} and attempt < MAX_REQUEST_ATTEMPTS - 1:
-                last_error = f"HTTP {exc.code}"
                 if exc.fp is not None:
                     exc.close()
             elif exc.code in {502, 503, 504}:
@@ -121,7 +120,6 @@ def fetch_json(url: str, timeout: int = DEFAULT_TIMEOUT_SECONDS, opener=None) ->
                 raise CheckFailure(
                     f"{path} failed TLS verification; certificate validation remains enabled."
                 ) from None
-            last_error = "network timeout or connection error"
             if attempt == MAX_REQUEST_ATTEMPTS - 1:
                 raise CheckFailure(
                     f"{path} could not be reached after {MAX_REQUEST_ATTEMPTS} attempts "
