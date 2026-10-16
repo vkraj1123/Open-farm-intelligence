@@ -44,8 +44,7 @@ disabled while the tenant domain/client ID are empty. The web client obtains
 tokens only through Auth0's SDK, uses its in-memory cache, and never prints a
 token to the page or logs.
 
-The sign-in page can establish an Auth0 identity and request an access token
-for the configured audience. It does not yet call protected OFI endpoints;
+The sign-in page first establishes an Auth0 identity without requiring the OFI API audience; it then separately requests an access token for the configured audience. It does not yet call protected OFI endpoints;
 a successful login is not evidence of an accepted OFI role or tenant
 membership. Keep the Render API in its existing HS256 mode until the trusted
 claim path and real API authorization test are complete.
