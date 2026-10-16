@@ -2753,7 +2753,7 @@ The staging page advanced beyond the CDN-load error but surfaced a generic initi
 
 | Capability | Status | Evidence / boundary |
 |---|---|---|
-| Initialization/token separation | Proposed change | The initial SDK client uses only the redirect URI and OpenID profile/email scopes; the API audience remains requested at login and API-token checks |
+| Initialization/token separation | Proposed change | The initial SDK client uses only the redirect URI and OpenID profile/email scopes; the API audience is requested only for an explicit API-token check after identity sign-in |
 | Stage-specific diagnostics | Proposed change | UI distinguishes client construction, redirect callback handling, and current-session checks without displaying exception/token contents |
 | Dashboard troubleshooting | Documented | Exact origin to verify in Allowed Callback URLs, Allowed Logout URLs, and Allowed Web Origins; check Auth0 Monitoring → Logs |
 | Live Auth0 success | Not yet verified | The fix cannot replace correct tenant/app pairing, URL allow-lists, enabled Google/SMS connections, or a registered API audience |
