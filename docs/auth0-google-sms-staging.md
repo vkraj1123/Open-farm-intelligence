@@ -73,27 +73,7 @@ Do not change the deployed Render service from `OFI_AUTH_MODE=hs256` to `oidc_jw
 
 Auth0's user profile uses `phone_number` and `phone_verified` for the SMS identity. If the client genuinely needs the phone number in the access token, use a Post-Login Action that copies the provider's verified phone status into a namespaced claim. Use a namespace under a domain you control; do not use the sample placeholder unchanged.
 
-Example Action body (replace the namespace before publishing):
-
-```javascript
-exports.onExecutePostLogin = async (event, api) => {
-  const namespace = "https://YOUR-DOMAIN-YOU-CONTROL/claims/";
-
-  // Replace this placeholder with a namespace you control before publishing.
-  if (namespace.includes("YOUR-DOMAIN-YOU-CONTROL")) {
-    api.access.deny("OFI claim namespace must be configured");
-    return;
-  }
-
-  const phone = event.user && event.user.phone_number;
-  const verified = event.user && event.user.phone_verified === true;
-
-  if (typeof phone === "string" && phone.length > 0 && verified) {
-    api.accessToken.setCustomClaim(namespace + "phone_number", phone);
-    api.accessToken.setCustomClaim(namespace + "phone_number_verified", true);
-  }
-};
-```
+Use the checked-in [Auth0 phone-claims Action template](../deploy/auth0/phone-claims-action.js) as the starting point. In the Auth0 Action's settings, set `OFI_CLAIM_NAMESPACE` to a namespace under a domain you control, ending in `/`. The template adds namespaced phone claims only when Auth0's `phone_verified` profile property is exactly `true`; if the namespace is absent or invalid, login continues but the optional phone claims are omitted.
 
 This Action intentionally omits phone claims when the provider has not verified the phone number. Do not copy an unverified phone number as verified. Do not use these claims as tenant authorization, and do not assume Google sign-in always returns a verified phone.
 
