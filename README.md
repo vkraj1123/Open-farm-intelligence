@@ -2597,7 +2597,7 @@ Added a Render Blueprint and startup entrypoint to move OFI from CI-only code to
 | Durable long-lived staging / production | Not provided by the included free configuration | Render documents a 30-day expiry for Free Postgres; upgrade or select a database plan with appropriate retention/backups before keeping data |
 | Live identity provider and invitation delivery bridge | Still outstanding | Auth issuer is deliberately non-routable; delivery remains in manual mode until a trusted provider bridge is deployed |
 
-**Next acceptance step:** deploy the Blueprint, then verify that the actual `/health` endpoint returns HTTP 200 and `/ready` confirms PostgreSQL, PostGIS and the complete current schema. The staging invitation workflow remains blocked until the real URL, trusted identity issuer and signed delivery bridge are configured. A CI pass does not claim that hosting is live.
+**Deployment acceptance update (2026-10-16):** The owner launched the Render Blueprint service `ofi-staging-api` and ran the manual [staging API readiness workflow](https://github.com/vkraj1123/Open-farm-intelligence/actions/workflows/staging-api-readiness.yml). The workflow passed, confirming the deployed service responded as required on `/health` and `/ready`, including durable PostgreSQL, PostGIS, and complete current schema relations. The staging invitation workflow remains blocked until a trusted identity issuer and signed delivery bridge are configured. This does not establish production readiness, backup suitability, live authentication, or invitation delivery/redemption.
 
 
 # 69. Staging URL placeholder fail-fast validation
@@ -2620,7 +2620,20 @@ A read-only manual GitHub Actions workflow now lets the repository owner verify 
 | Health and readiness validation | Added and unit-tested | Requires `/health` = `ok`; `/ready` = ready with PostgreSQL, PostGIS, durable storage, and complete current schema |
 | URL and network safeguards | Added and unit-tested | HTTPS only; Render `.onrender.com` host only; placeholder/path/query/credential/port ambiguity rejected; redirects are not followed |
 | Secret and data exposure | Designed to be read-only | No credentials or invitation data required; response bodies are not printed |
-| Live service verification | Still pending | Requires the owner to approve Render deployment, then run the workflow with the actual assigned hostname |
+| Live service verification | Passed on 2026-10-16 | Owner ran the manual readiness workflow against `ofi-staging-api.onrender.com`; the green job verifies `/health`, durable PostgreSQL/PostGIS, and complete current schema relations |
 
 See the [phone-first Render deployment guide](docs/deploy-to-render.md) and [Staging API readiness workflow](https://github.com/vkraj1123/Open-farm-intelligence/actions/workflows/staging-api-readiness.yml). A green readiness workflow proves deployment/database readiness only; it does not prove live authentication, invitation delivery, redemption, backups, or production readiness.
 
+
+
+# 71. Staging readiness workflow runtime maintenance
+
+The first live Render staging readiness run passed on 2026-10-16. Its annotation also exposed an upcoming runner transition, so the workflow is being updated to use current Node.js 24-compatible actions and a stable Ubuntu runner label rather than relying on the moving `ubuntu-latest` label.
+
+| Capability | Status | Evidence / boundary |
+|---|---|---|
+| Node.js action runtime | Updated in proposed change | `actions/checkout@v7` and `actions/setup-python@v7`; upstream action documentation identifies these as current releases |
+| Runner image determinism | Updated in proposed change | Pinned to `ubuntu-24.04` to avoid an unplanned `ubuntu-latest` image migration |
+| Post-merge warning-free verification | Pending | Must rerun the manual readiness workflow on `main` after the change is merged; the current green run proves endpoint readiness, while its annotations identify maintenance work |
+
+This maintenance does not alter the API contract or database checks. Passing readiness remains separate from production hardening, backup retention, identity-provider setup, and invitation delivery/redemption.
