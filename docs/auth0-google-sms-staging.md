@@ -99,6 +99,22 @@ Neither a Google connection nor an SMS connection supplies the OFI role and tena
 
 Auth0 custom claims should use a collision-resistant namespace. OFI supports configurable claim names via `OFI_AUTH_ROLE_CLAIM` and `OFI_AUTH_TENANT_CLAIM`; if using namespaced keys, set these environment variables to the exact claim names and test them. The namespaced phone claims described below are profile/verification signals, not authorization claims.
 
+## 6.1 Optional trusted role/tenant claim Action template
+
+The repository includes [`trusted-role-tenant-claims-action.js`](../deploy/auth0/trusted-role-tenant-claims-action.js) as a starting point for an Auth0 **Post-Login Action**. It copies only two administrator-controlled `app_metadata` fields into namespaced **access-token** claims:
+
+- `ofi_role` → `<OFI_CLAIM_NAMESPACE>role`
+- `ofi_tenant_id` → `<OFI_CLAIM_NAMESPACE>tenant_id`
+
+Set the Action secret `OFI_CLAIM_NAMESPACE` to a namespace under a domain the project controls, ending in `/`. Do not copy the sample placeholder or choose an unrelated domain. This Action intentionally has no default role: if the namespace or role is missing/invalid, it omits the role claim, and OFI's verifier rejects that token for OFI API use.
+
+Populate `event.user.app_metadata.ofi_role` and `event.user.app_metadata.ofi_tenant_id` only through a trusted operator/onboarding process after checking identity and authorization. Never derive roles or tenants from `user_metadata`, submitted browser fields, an email address, phone number, or an untrusted identity-provider group. The `system` role is privileged and must never be assigned to ordinary users. App metadata is not itself a substitute for OFI's membership registry.
+
+Before enabling OIDC in Render, set `OFI_AUTH_ROLE_CLAIM` and `OFI_AUTH_TENANT_CLAIM` to the exact namespaced claim keys (including the full namespace). Then verify the issued access token's issuer, audience, role and tenant claims. Every tenant-scoped request must still pass OFI's active membership registry; revoked/suspended memberships must be denied even if a token still contains a tenant claim.
+
+This template is not yet installed in the Auth0 tenant and does not bootstrap a tenant, create memberships, or switch the deployed API from HS256. Complete the OIDC preflight and the staged positive/negative authorization tests first.
+
+
 Do not change the deployed Render service from `OFI_AUTH_MODE=hs256` to `oidc_jwks` until the exact Auth0 issuer, JWKS URL, audience and trusted authorization-claim path are configured and a real staging access token is tested end to end. Keep the current auth mode until that checklist is complete.
 
 ## 7. Optional verified phone claims
@@ -141,19 +157,3 @@ Do not paste access tokens, OTPs, client secrets, or sensitive log payloads into
 The owner verified in the live browser that Auth0 sign-in succeeds and that a token request for the configured API audience `ofi-api` succeeds after granting User-Delegated Access for the OFI staging SPA. This confirms token issuance only. OFI's deployed API still uses HS256 and has not been changed to accept Auth0 tokens.
 
 Before any API-mode change, run the [OIDC metadata preflight](https://github.com/vkraj1123/Open-farm-intelligence/actions/workflows/oidc-provider-preflight.yml) using the exact `issuer` and `jwks_uri` values from the tenant's `/.well-known/openid-configuration` document. Next, establish trusted OFI role claims and tenant IDs, and test both active and revoked membership paths against disposable staging data. Never grant roles from phone/email/profile input, and do not change the deployed API auth mode just because token issuance succeeds.
-
-
-## 6.1 Optional trusted role/tenant claim Action template
-
-The repository includes [`trusted-role-tenant-claims-action.js`](../deploy/auth0/trusted-role-tenant-claims-action.js) as a starting point for an Auth0 **Post-Login Action**. It copies only two administrator-controlled `app_metadata` fields into namespaced **access-token** claims:
-
-- `ofi_role` → `<OFI_CLAIM_NAMESPACE>role`
-- `ofi_tenant_id` → `<OFI_CLAIM_NAMESPACE>tenant_id`
-
-Set the Action secret `OFI_CLAIM_NAMESPACE` to a namespace under a domain the project controls, ending in `/`. Do not copy the sample placeholder or choose an unrelated domain. This Action intentionally has no default role: if the namespace or role is missing/invalid, it omits the role claim, and OFI's verifier rejects that token for OFI API use.
-
-Populate `event.user.app_metadata.ofi_role` and `event.user.app_metadata.ofi_tenant_id` only through a trusted operator/onboarding process after checking identity and authorization. Never derive roles or tenants from `user_metadata`, submitted browser fields, an email address, phone number, or an untrusted identity-provider group. The `system` role is privileged and must never be assigned to ordinary users. App metadata is not itself a substitute for OFI's membership registry.
-
-Before enabling OIDC in Render, set `OFI_AUTH_ROLE_CLAIM` and `OFI_AUTH_TENANT_CLAIM` to the exact namespaced claim keys (including the full namespace). Then verify the issued access token's issuer, audience, role and tenant claims. Every tenant-scoped request must still pass OFI's active membership registry; revoked/suspended memberships must be denied even if a token still contains a tenant claim.
-
-This template is not yet installed in the Auth0 tenant and does not bootstrap a tenant, create memberships, or switch the deployed API from HS256. Complete the OIDC preflight and the staged positive/negative authorization tests first.
