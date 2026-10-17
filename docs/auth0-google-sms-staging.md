@@ -157,3 +157,13 @@ Do not paste access tokens, OTPs, client secrets, or sensitive log payloads into
 The owner verified in the live browser that Auth0 sign-in succeeds and that a token request for the configured API audience `ofi-api` succeeds after granting User-Delegated Access for the OFI staging SPA. This confirms token issuance only. OFI's deployed API still uses HS256 and has not been changed to accept Auth0 tokens.
 
 Before any API-mode change, run the [OIDC metadata preflight](https://github.com/vkraj1123/Open-farm-intelligence/actions/workflows/oidc-provider-preflight.yml) using the exact `issuer` and `jwks_uri` values from the tenant's `/.well-known/openid-configuration` document. Next, establish trusted OFI role claims and tenant IDs, and test both active and revoked membership paths against disposable staging data. Never grant roles from phone/email/profile input, and do not change the deployed API auth mode just because token issuance succeeds.
+
+## 6.2 Behavioral test coverage for the role/tenant Action
+
+CI runs the Action under Node with a mocked Auth0 `event` and `api.accessToken` surface. The runtime tests verify expected namespaced claims for trusted metadata, each allowed role, missing/invalid role behavior, invalid namespace rejection, and invalid tenant omission. These tests validate the Action's mapping logic; they do not validate Auth0 tenant settings, prove that `app_metadata` was provisioned by a trusted process, or replace end-to-end issuance and API authorization tests.
+
+Run locally with Node.js 20 or later using:
+
+```sh
+node --test tests/test_auth0_role_tenant_action.js
+```

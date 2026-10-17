@@ -45,3 +45,10 @@ def test_auth0_authorization_action_documents_api_claim_configuration_and_member
     assert "OFI_AUTH_TENANT_CLAIM" in action
     assert "membership registry" in action
     assert "Keep the API in HS256 mode" in action
+
+
+def test_auth0_role_tenant_action_has_runtime_behavioral_suite():
+    workflow1 = read_repo_file(".github/workflows/test.yml")
+    workflow2 = read_repo_file(".github/workflows/tests.yml")
+    assert "node --test tests/test_auth0_role_tenant_action.js" in workflow1
+    assert "node --test tests/test_auth0_role_tenant_action.js" in workflow2

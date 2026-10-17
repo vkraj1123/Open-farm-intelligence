@@ -27,6 +27,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Check Auth0 browser client syntax
         run: node --check web/app.js && node --check deploy/auth0/phone-claims-action.js && node --check deploy/auth0/trusted-role-tenant-claims-action.js
+      - name: Run trusted Auth0 claim Action behavior tests
+        run: node --test tests/test_auth0_role_tenant_action.js
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
