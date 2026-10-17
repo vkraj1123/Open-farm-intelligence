@@ -2791,3 +2791,18 @@ Added a reviewed starting point for mapping pre-authorized OFI claims into an Au
 | API authentication migration | Not performed | Render staging API remains on HS256 pending exact Auth0 preflight, token claim validation, and positive/negative tenant authorization tests |
 
 Do not grant the `system` role to ordinary users. This Action is only a token-claim mapping component: it does not create tenants or memberships, validate business identity, or replace OFI's active membership registry.
+
+# 82. Runtime tests for trusted Auth0 authorization claims
+
+Extended the Auth0 Post-Login Action coverage from source-shape assertions to real Node execution with a mocked Auth0 event/token API.
+
+| Capability | Status | Evidence / boundary |
+|---|---|---|
+| Runtime claim mapping tests | Added | `node --test tests/test_auth0_role_tenant_action.js` exercises the Action's actual exported handler with mock event/API objects |
+| Positive-path claims | Tested | Allowed roles and trimmed tenant IDs are emitted using the configured namespace |
+| Negative-path claims | Tested | Missing/invalid namespace or role emit no authorization claims; invalid tenant IDs are omitted |
+| CI integration | Added | Both regular test workflows execute the Node behavioral suite in addition to syntax checks and pytest |
+| Live Auth0 Action | Pending | Repository tests do not prove tenant deployment or trusted app_metadata provisioning |
+| Backend OIDC rollout | Blocked by remaining acceptance gates | Keep Render in HS256 mode until Auth0 issuer/JWKS metadata passes, token claims are validated, and active/revoked membership tests pass |
+
+These tests never contact Auth0 or Render and contain no real identity data, secrets, or tokens.
