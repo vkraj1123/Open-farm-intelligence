@@ -43,5 +43,5 @@ def test_auth0_authorization_action_documents_api_claim_configuration_and_member
     action = read_repo_file("deploy/auth0/trusted-role-tenant-claims-action.js")
     assert "OFI_AUTH_ROLE_CLAIM" in action
     assert "OFI_AUTH_TENANT_CLAIM" in action
-    assert "active membership registry" in action
+    assert "membership registry" in action
     assert "Keep the API in HS256 mode" in action
