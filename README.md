@@ -2806,3 +2806,26 @@ Extended the Auth0 Post-Login Action coverage from source-shape assertions to re
 | Backend OIDC rollout | Blocked by remaining acceptance gates | Keep Render in HS256 mode until Auth0 issuer/JWKS metadata passes, token claims are validated, and active/revoked membership tests pass |
 
 These tests never contact Auth0 or Render and contain no real identity data, secrets, or tokens.
+
+# 83. OIDC-to-membership acceptance tests
+
+Added synthetic RS256 integration tests that exercise the real OFI JWT verifier, FastAPI authentication dependency, and active-membership enforcement while stubbing only the remote JWKS key lookup.
+
+| Scenario | Expected result |
+|---|---|
+| Valid namespaced role/tenant claims plus active membership | Request passes auth/membership and reaches resource lookup (404 only because the test case ID is intentionally absent) |
+| Correctly signed tenant claim without membership | Denied with 403 |
+| Suspended or revoked membership | Denied with 403 despite an otherwise valid token |
+| Token tenant differs from the membership tenant | Denied with 403 |
+| Missing trusted role claim | Rejected with 401 |
+
+**Preflight checkpoint:** the owner reported that the Auth0 tenant OIDC metadata preflight passed on 2026-10-17. This milestone uses synthetic issuer/key material for deterministic CI tests; it does not prove a real Auth0-issued token has the required namespaced role/tenant claims or that the live API accepts it.
+
+| Remaining release gate | Status |
+|---|---|
+| Auth0 Post-Login Action installed with a project-controlled namespace | Pending owner-side Auth0 configuration |
+| Trusted `app_metadata` role/tenant provisioning and Auth0-issued token inspection | Pending |
+| End-to-end request using an actual disposable Auth0 access token | Pending |
+| Render API auth mode | Unchanged; remains HS256 |
+
+Do not switch the live API to OIDC/JWKS until actual-token verification and positive/negative membership tests are complete in the staging deployment.
