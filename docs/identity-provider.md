@@ -88,3 +88,10 @@ Before deployment configuration, use the [phone-first OIDC metadata preflight](o
 synthetic RSA tests nor mocked delivery tests substitute for staging tests with
 the selected identity provider and delivery receiver, or an independent
 production security assessment.
+
+
+## OIDC integration test coverage after metadata preflight
+
+The repository test `tests/test_oidc_tenant_membership_acceptance.py` signs synthetic RS256 tokens and exercises the real OFI token verifier, FastAPI request dependency, and current membership repository. It covers an active member, a valid token without membership, suspended and revoked memberships, cross-tenant mismatch, and a token without the trusted role claim.
+
+These are deterministic integration tests with a stubbed JWKS key lookup. They do not contact Auth0, prove the live Post-Login Action is installed, or validate a real token. Once the Auth0 metadata preflight passes, the remaining live test must use a disposable Auth0 identity whose `sub` is provisioned by a trusted operator, whose namespaced role/tenant claims were emitted by the installed Action, and whose current membership exists in OFI. Repeat against suspended/revoked membership and confirm those requests are denied. Keep the deployed API on HS256 until these tests pass end to end.
