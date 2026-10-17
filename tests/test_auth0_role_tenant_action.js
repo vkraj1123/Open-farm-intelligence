@@ -5,7 +5,9 @@ const { onExecutePostLogin } = require("../deploy/auth0/trusted-role-tenant-clai
 
 const NAMESPACE = "https://claims.example.org/ofi/";
 
-async function execute({ namespace = NAMESPACE, metadata = {} } = {}) {
+async function execute(options = {}) {
+  const namespace = Object.hasOwn(options, "namespace") ? options.namespace : NAMESPACE;
+  const metadata = Object.hasOwn(options, "metadata") ? options.metadata : {};
   const claims = {};
   const event = {
     secrets: namespace === undefined ? {} : { OFI_CLAIM_NAMESPACE: namespace },
