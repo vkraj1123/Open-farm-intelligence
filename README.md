@@ -2776,3 +2776,18 @@ After merging, manually deploy `ofi-staging-web`. If setup still fails, use the 
 | Invitation delivery/redemption | Separate pending gate | Successful identity login/token issuance does not prove signed invitation delivery or redemption |
 
 **Next gate:** run Auth0's exact discovery issuer/JWKS through the existing metadata preflight, then design and test the trusted role/tenant claim mapping and active-membership checks. Do not switch the Render API from HS256 to OIDC/JWKS until the claim contract and staged negative/positive authorization tests are ready.
+
+# 81. Trusted Auth0 role/tenant claim Action template
+
+Added a reviewed starting point for mapping pre-authorized OFI claims into an Auth0 RS256 access token without deriving authorization from user-supplied profile data.
+
+| Capability | Status | Evidence / boundary |
+|---|---|---|
+| Auth0 Post-Login Action template | Added | `deploy/auth0/trusted-role-tenant-claims-action.js` maps only trusted `app_metadata.ofi_role` and optional `app_metadata.ofi_tenant_id` into explicit namespaced access-token claims |
+| Fail-closed role handling | Implemented in template | Missing or invalid namespace/role emits no role claim; OFI's verifier rejects tokens without an allowed role |
+| Tenant safety | Preserved | A signed tenant claim does not grant membership; the API still checks its authoritative active membership registry |
+| Regression tests | Added | Checks trusted metadata source, role allow-list, namespace validation, and no default-role behavior |
+| Live Auth0 Action deployment | Pending | The owner must configure a project-controlled claim namespace, install/test the Action, and populate app_metadata only through trusted onboarding/admin processes |
+| API authentication migration | Not performed | Render staging API remains on HS256 pending exact Auth0 preflight, token claim validation, and positive/negative tenant authorization tests |
+
+Do not grant the `system` role to ordinary users. This Action is only a token-claim mapping component: it does not create tenants or memberships, validate business identity, or replace OFI's active membership registry.
